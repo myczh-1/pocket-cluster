@@ -103,6 +103,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		ModifiedAt: now,
 		ModifiedBy: s.cfg.NodeID,
 	}
+	if err := s.prepareFilePut(f); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
 	if err := s.store.UpsertFile(f); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -130,6 +134,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		"chunk_count":    len(chunkIDs),
 		"version_id":     f.VersionID,
 		"replica_status": string(replicaStatus),
+		"conflict_of":    f.ConflictOf,
 	})})
 }
 

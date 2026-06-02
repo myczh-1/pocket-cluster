@@ -38,6 +38,9 @@ func (s *Server) applyEvent(e types.Event) error {
 		if err := json.Unmarshal(e.Payload, &f); err != nil {
 			return err
 		}
+		if err := s.prepareFilePut(&f); err != nil {
+			return err
+		}
 		return s.store.UpsertFile(&f)
 	case types.EventChunkReplicaAdd:
 		var r types.Replica
