@@ -202,10 +202,8 @@ function NodesPage() {
           <div className="mt-4 bg-gray-50 rounded p-3">
             <p className="text-xs text-gray-500 mb-1">Join token</p>
             <code className="block text-sm break-all">{invite.join_token}</code>
-            <p className="text-xs text-gray-500 mt-3 mb-1">Command</p>
-            <code className="block text-xs break-all">
-              {`./agent -join ${window.location.origin} -join-token ${invite.join_token}`}
-            </code>
+            <p className="text-xs text-gray-500 mt-3 mb-1">New node: open its UI and paste the bootstrap address + token</p>
+            <code className="block text-xs break-all text-gray-600">{window.location.origin}</code>
             <p className="text-xs text-gray-400 mt-2">Expires {new Date(invite.expires_at).toLocaleString()}</p>
           </div>
         )}
@@ -217,8 +215,93 @@ function NodesPage() {
   );
 }
 
+function JoinPage() {
+  const [bootstrap, setBootstrap] = useState("");
+  const [token, setToken] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleJoin = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await api("/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bootstrap, join_token: token }),
+      });
+      if (res.ok) {
+        window.location.reload();
+      } else {
+        setError(res.error?.message || "Join failed");
+      }
+    } catch (err) {
+      setError(err.message || "Network error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="bg-white rounded-lg shadow p-8 w-full max-w-md">
+        <h1 className="text-xl font-bold mb-2">PocketCluster</h1>
+        <p className="text-sm text-gray-500 mb-6">
+          This node is not part of a pool yet. Enter the bootstrap node address and invite token to join.
+        </p>
+        <form onSubmit={handleJoin} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Bootstrap node address</label>
+            <input
+              type="text"
+              value={bootstrap}
+              onChange={(e) => setBootstrap(e.target.value)}
+              placeholder="http://192.168.1.10:7788"
+              required
+              className="w-full border rounded px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Invite token</label>
+            <input
+              type="text"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="Paste invite token"
+              required
+              className="w-full border rounded px-3 py-2 text-sm"
+            />
+          </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-600 text-white rounded px-4 py-2 text-sm hover:bg-blue-700 disabled:opacity-50"
+          >
+            {loading ? "Joining…" : "Join pool"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [tab, setTab] = useState("files");
+  const [clusterId, setClusterId] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api("/node/info").then((r) => {
+      setClusterId(r.data?.cluster_id || "");
+      setLoading(false);
+    });
+  }, []);
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Loading…</div>;
+  if (!clusterId) return <JoinPage />;
+
   return (
     <div className="min-h-screen">
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">

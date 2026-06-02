@@ -54,6 +54,58 @@ func TestJoinRequiresValidInviteToken(t *testing.T) {
 	}
 }
 
+func TestJoinClusterViaUI(t *testing.T) {
+	bootstrapCfg, bootstrapStore, bootstrapSrv := newJoinTestServer(t, "bootstrap")
+	if err := bootstrapStore.UpsertNode(&types.Node{NodeID: "bootstrap", Name: "bootstrap", Address: "127.0.0.1:7788", Status: "online", TotalBytes: 2000, AvailableBytes: 1800}); err != nil {
+		t.Fatal(err)
+	}
+	defer bootstrapStore.Close()
+	bootstrapCfg.ClusterID = "test-cluster"
+	if err := bootstrapCfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapHTTP := httptest.NewServer(bootstrapSrv.Handler())
+	defer bootstrapHTTP.Close()
+
+	token := createInviteToken(t, bootstrapSrv)
+
+	joinerCfg, joinerStore, joinerSrv := newJoinTestServer(t, "joiner")
+	if err := joinerStore.UpsertNode(&types.Node{NodeID: "joiner", Name: "joiner", Address: "127.0.0.1:7789", Status: "online", TotalBytes: 1000, AvailableBytes: 900}); err != nil {
+		t.Fatal(err)
+	}
+	joinerCfg.ClusterID = ""
+	if err := joinerCfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	defer joinerStore.Close()
+	if joinerCfg.ClusterID != "" {
+		t.Fatalf("joiner already has cluster_id %q", joinerCfg.ClusterID)
+	}
+
+	body := mustJSON(t, map[string]string{"bootstrap": bootstrapHTTP.URL, "join_token": token})
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/join", bytes.NewReader(body))
+	joinerSrv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("join status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+
+	reloaded, err := config.Load(joinerCfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ClusterID != "test-cluster" {
+		t.Fatalf("cluster_id = %q, want test-cluster", reloaded.ClusterID)
+	}
+	bootstrapNode, err := joinerStore.GetNode("bootstrap")
+	if err != nil {
+		t.Fatalf("bootstrap node not found: %v", err)
+	}
+	if !bootstrapNode.Trusted {
+		t.Fatal("bootstrap node not trusted")
+	}
+}
+
 func newJoinTestServer(t *testing.T, nodeID string) (*config.Config, *store.Store, *Server) {
 	t.Helper()
 	st, err := store.Open(t.TempDir())

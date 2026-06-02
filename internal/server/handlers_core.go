@@ -27,16 +27,49 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNodeInfo(w http.ResponseWriter, r *http.Request) {
 	n, err := s.store.GetNode(s.cfg.NodeID)
-	if err != nil {
-		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
-			"node_id":  s.cfg.NodeID,
-			"name":     s.cfg.Name,
-			"platform": s.cfg.Platform,
-			"status":   "online",
-		})})
+	info := map[string]any{
+		"node_id":    s.cfg.NodeID,
+		"name":       s.cfg.Name,
+		"platform":   s.cfg.Platform,
+		"cluster_id": s.cfg.ClusterID,
+	}
+	if err == nil {
+		info["status"] = n.Status
+		info["total_bytes"] = n.TotalBytes
+		info["used_bytes"] = n.UsedBytes
+		info["available_bytes"] = n.AvailableBytes
+	} else {
+		info["status"] = "online"
+	}
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(info)})
+}
+
+func (s *Server) handleJoinCluster(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.ClusterID != "" {
+		writeError(w, http.StatusConflict, "ALREADY_JOINED", "node already belongs to a cluster")
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(n)})
+	var req struct {
+		Bootstrap string `json:"bootstrap"`
+		JoinToken string `json:"join_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if req.Bootstrap == "" || req.JoinToken == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "bootstrap and join_token required")
+		return
+	}
+	if err := s.JoinViaBootstrap(req.Bootstrap, req.JoinToken); err != nil {
+		writeError(w, http.StatusBadGateway, "JOIN_FAILED", err.Error())
+		return
+	}
+	nodes, _ := s.store.ListNodes()
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+		"cluster_id": s.cfg.ClusterID,
+		"node_count": len(nodes),
+	})})
 }
 
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
