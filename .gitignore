@@ -12,3 +12,4 @@ web/dist/
 
 # Test/build outputs
 coverage.out
+dist/
