@@ -47,16 +47,36 @@ func (s *Server) handleStoreChunk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "hash mismatch")
 		return
 	}
+	now := time.Now()
 	if !s.chunks.Exists(actualHash) {
 		chunkPath := s.chunks.Path(actualHash)
-		os.MkdirAll(filepath.Dir(chunkPath), 0o755)
-		os.WriteFile(chunkPath, body, 0o644)
-		s.store.UpsertChunk(&types.Chunk{ChunkID: actualHash, SizeBytes: int64(len(body)), StoredAt: time.Now()})
+		if err := os.MkdirAll(filepath.Dir(chunkPath), 0o755); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		if err := os.WriteFile(chunkPath, body, 0o644); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		if err := s.store.UpsertChunk(&types.Chunk{ChunkID: actualHash, SizeBytes: int64(len(body)), StoredAt: now}); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+	}
+	replica := &types.Replica{ChunkID: actualHash, NodeID: s.cfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}
+	if err := s.store.UpsertReplica(replica); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if _, err := s.appendEvent(types.EventChunkReplicaAdd, replica); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
 		"hash":       actualHash,
 		"size_bytes": len(body),
 		"stored":     true,
+		"replica":    replica,
 	})})
 }
 

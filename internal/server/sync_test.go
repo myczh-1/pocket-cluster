@@ -97,6 +97,75 @@ func TestFetchMissingChunksCopiesReplicaAndPublishesLocalReplica(t *testing.T) {
 	}
 }
 
+func TestRepairChunkReplicasPushesLocalChunkToTrustedPeer(t *testing.T) {
+	content := []byte("chunk needing a second replica")
+
+	remoteStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remoteStore.Close()
+	remoteChunks := chunk.New(t.TempDir())
+	if err := remoteChunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	remoteCfg := &config.Config{NodeID: "remote", ClusterID: "cluster"}
+	remoteSrv := New(remoteCfg, remoteStore, remoteChunks)
+	remoteHTTP := httptest.NewServer(remoteSrv.Handler())
+	defer remoteHTTP.Close()
+
+	localStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer localStore.Close()
+	localChunks := chunk.New(t.TempDir())
+	if err := localChunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	localCfg := &config.Config{NodeID: "local", ClusterID: "cluster"}
+	localSrv := New(localCfg, localStore, localChunks)
+	hash, size, err := localChunks.Store(bytes.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := localStore.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: size, StoredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := localStore.UpsertReplica(&types.Replica{ChunkID: hash, NodeID: localCfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := localStore.UpsertNode(&types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := localStore.ListNodes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := localSrv.repairChunkReplicas(context.Background(), hash, nodes); err != nil {
+		t.Fatal(err)
+	}
+	if !remoteChunks.Exists(hash) {
+		t.Fatal("remote peer did not store pushed chunk")
+	}
+	replicas, err := localStore.GetReplicas(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	available := availableReplicaNodes(replicas)
+	if _, ok := available[localCfg.NodeID]; !ok {
+		t.Fatal("local replica missing after repair")
+	}
+	if _, ok := available[remoteCfg.NodeID]; !ok {
+		t.Fatal("remote replica missing after repair")
+	}
+	if status := localSrv.replicaStatusForChunks([]string{hash}); status != types.ReplicaHealthy {
+		t.Fatalf("replica status = %s, want %s", status, types.ReplicaHealthy)
+	}
+}
+
 func TestPullEventsIgnoresEnvironmentHTTPProxy(t *testing.T) {
 	ip, ok := nonLoopbackIPv4()
 	if !ok {

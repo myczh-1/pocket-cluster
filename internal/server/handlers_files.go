@@ -111,10 +111,18 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	replicaStatus := types.ReplicaUnderReplicated
-	if len(chunkIDs) == 0 {
-		replicaStatus = types.ReplicaHealthy
+	nodes, err := s.store.ListNodes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
 	}
+	for _, chunkID := range chunkIDs {
+		if err := s.repairChunkReplicas(r.Context(), chunkID, nodes); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+	}
+	replicaStatus := s.replicaStatusForChunks(chunkIDs)
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
 		"file_id":        f.FileID,
 		"path":           f.Path,

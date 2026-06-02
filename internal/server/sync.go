@@ -14,7 +14,10 @@ import (
 	"github.com/pocketcluster/agent/internal/types"
 )
 
-const syncRequestTimeout = 15 * time.Second
+const (
+	syncRequestTimeout = 15 * time.Second
+	targetReplicaCount = 2
+)
 
 var peerHTTPClient = peernet.NewHTTPClient()
 
@@ -43,7 +46,7 @@ func (s *Server) SyncOnce(ctx context.Context) error {
 	}
 	var firstErr error
 	for _, n := range nodes {
-		if n.NodeID == s.cfg.NodeID || n.Address == "" || n.Status == "offline" {
+		if n.NodeID == s.cfg.NodeID || n.Address == "" || n.Status == "offline" || !n.Trusted {
 			continue
 		}
 		if err := s.pullEvents(ctx, n); err != nil && firstErr == nil {
@@ -104,6 +107,10 @@ func (s *Server) fetchMissingChunks(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	nodes, err := s.store.ListNodes()
+	if err != nil {
+		return err
+	}
 	seen := make(map[string]struct{})
 	for _, f := range files {
 		for _, chunkID := range f.ChunkIDs {
@@ -111,15 +118,47 @@ func (s *Server) fetchMissingChunks(ctx context.Context) error {
 				continue
 			}
 			seen[chunkID] = struct{}{}
-			if s.chunks.Exists(chunkID) {
-				continue
-			}
-			if err := s.fetchChunkFromReplica(ctx, chunkID); err != nil {
+			if err := s.repairChunkReplicas(ctx, chunkID, nodes); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func (s *Server) repairChunkReplicas(ctx context.Context, chunkID string, nodes []types.Node) error {
+	replicas, err := s.store.GetReplicas(chunkID)
+	if err != nil {
+		return err
+	}
+	available := availableReplicaNodes(replicas)
+	if len(available) >= targetReplicaCount {
+		return nil
+	}
+	if s.chunks.Exists(chunkID) {
+		_, err := s.pushChunkToPeer(ctx, chunkID, available, nodes)
+		return err
+	}
+	if err := s.fetchChunkFromReplica(ctx, chunkID); err != nil {
+		return nil
+	}
+	return nil
+}
+
+func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing map[string]struct{}, nodes []types.Node) (bool, error) {
+	for _, n := range nodes {
+		if n.NodeID == s.cfg.NodeID || n.Address == "" || n.Status == "offline" || !n.Trusted {
+			continue
+		}
+		if _, ok := existing[n.NodeID]; ok {
+			continue
+		}
+		if err := s.storeChunkToPeer(ctx, n, chunkID); err != nil {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 func (s *Server) fetchChunkFromReplica(ctx context.Context, chunkID string) error {
@@ -157,6 +196,49 @@ func (s *Server) fetchChunkFromReplica(ctx context.Context, chunkID string) erro
 		return err
 	}
 	return fmt.Errorf("no available replica for chunk %s", chunkID)
+}
+
+func (s *Server) storeChunkToPeer(ctx context.Context, n types.Node, chunkID string) error {
+	cf, size, err := s.chunks.Open(chunkID)
+	if err != nil {
+		return err
+	}
+	defer cf.Close()
+
+	ctx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+n.Address+"/api/chunks", cf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Chunk-Hash", chunkID)
+	req.ContentLength = size
+	resp, err := peerHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("chunk store status %d", resp.StatusCode)
+	}
+	var envelope types.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return err
+	}
+	if !envelope.OK {
+		return fmt.Errorf("chunk store api error")
+	}
+	var payload struct {
+		Replica *types.Replica `json:"replica"`
+	}
+	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
+		return err
+	}
+	if payload.Replica != nil {
+		return s.store.UpsertReplica(payload.Replica)
+	}
+	now := time.Now()
+	return s.store.UpsertReplica(&types.Replica{ChunkID: chunkID, NodeID: n.NodeID, Status: "available", StoredAt: now, VerifiedAt: now})
 }
 
 func (s *Server) storeRemoteChunk(ctx context.Context, address, chunkID string) (string, int64, error) {
@@ -213,4 +295,35 @@ func (s *Server) writeChunk(ctx context.Context, w io.Writer, chunkID string) er
 		return err
 	}
 	return fmt.Errorf("chunk unavailable: %s", strings.TrimSpace(chunkID))
+}
+
+func (s *Server) replicaStatusForChunks(chunkIDs []string) types.ReplicaStatus {
+	if len(chunkIDs) == 0 {
+		return types.ReplicaHealthy
+	}
+	status := types.ReplicaHealthy
+	for _, chunkID := range chunkIDs {
+		replicas, err := s.store.GetReplicas(chunkID)
+		if err != nil {
+			return types.ReplicaUnavailable
+		}
+		count := len(availableReplicaNodes(replicas))
+		if count == 0 {
+			return types.ReplicaUnavailable
+		}
+		if count < targetReplicaCount {
+			status = types.ReplicaUnderReplicated
+		}
+	}
+	return status
+}
+
+func availableReplicaNodes(replicas []types.Replica) map[string]struct{} {
+	available := make(map[string]struct{}, len(replicas))
+	for _, replica := range replicas {
+		if replica.Status == "available" {
+			available[replica.NodeID] = struct{}{}
+		}
+	}
+	return available
 }
