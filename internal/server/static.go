@@ -15,6 +15,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/node/info", s.handleNodeInfo)
 	mux.HandleFunc("GET /api/nodes", s.handleListNodes)
 	mux.HandleFunc("POST /api/invites", s.handleCreateInvite)
+	mux.HandleFunc("POST /api/cluster", s.handleCreateCluster)
 	mux.HandleFunc("POST /api/join", s.handleJoinCluster)
 	mux.HandleFunc("POST /api/join/request", s.handleJoinRequest)
 	mux.HandleFunc("POST /api/join/approve", s.handleJoinApprove)

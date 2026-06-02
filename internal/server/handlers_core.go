@@ -44,6 +44,21 @@ func (s *Server) handleNodeInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(info)})
 }
 
+func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.ClusterID != "" {
+		writeError(w, http.StatusConflict, "ALREADY_JOINED", "node already belongs to a cluster")
+		return
+	}
+	s.cfg.ClusterID = uuid.New().String()
+	if err := s.cfg.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+		"cluster_id": s.cfg.ClusterID,
+	})})
+}
+
 func (s *Server) handleJoinCluster(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.ClusterID != "" {
 		writeError(w, http.StatusConflict, "ALREADY_JOINED", "node already belongs to a cluster")

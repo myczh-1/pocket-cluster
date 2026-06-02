@@ -221,6 +221,23 @@ function JoinPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const handleCreate = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await api("/cluster", { method: "POST" });
+      if (res.ok) {
+        window.location.reload();
+      } else {
+        setError(res.error?.message || "Create failed");
+      }
+    } catch (err) {
+      setError(err.message || "Network error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleJoin = async (e) => {
     e.preventDefault();
     setError(null);
@@ -248,40 +265,54 @@ function JoinPage() {
       <div className="bg-white rounded-lg shadow p-8 w-full max-w-md">
         <h1 className="text-xl font-bold mb-2">PocketCluster</h1>
         <p className="text-sm text-gray-500 mb-6">
-          This node is not part of a pool yet. Enter the bootstrap node address and invite token to join.
+          This node is not part of a pool yet.
         </p>
-        <form onSubmit={handleJoin} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Bootstrap node address</label>
-            <input
-              type="text"
-              value={bootstrap}
-              onChange={(e) => setBootstrap(e.target.value)}
-              placeholder="http://192.168.1.10:7788"
-              required
-              className="w-full border rounded px-3 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Invite token</label>
-            <input
-              type="text"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="Paste invite token"
-              required
-              className="w-full border rounded px-3 py-2 text-sm"
-            />
-          </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
+
+        <div className="mb-8">
+          <h2 className="text-sm font-semibold text-gray-700 mb-3">First node?</h2>
           <button
-            type="submit"
+            onClick={handleCreate}
             disabled={loading}
-            className="w-full bg-blue-600 text-white rounded px-4 py-2 text-sm hover:bg-blue-700 disabled:opacity-50"
+            className="w-full bg-green-600 text-white rounded px-4 py-2 text-sm hover:bg-green-700 disabled:opacity-50"
           >
-            {loading ? "Joining…" : "Join pool"}
+            {loading ? "Creating…" : "Create new pool"}
           </button>
-        </form>
+        </div>
+
+        <div className="border-t pt-6">
+          <h2 className="text-sm font-semibold text-gray-700 mb-3">Joining an existing pool?</h2>
+          <form onSubmit={handleJoin} className="space-y-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Bootstrap node address</label>
+              <input
+                type="text"
+                value={bootstrap}
+                onChange={(e) => setBootstrap(e.target.value)}
+                placeholder="http://192.168.1.10:7788"
+                className="w-full border rounded px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Invite token</label>
+              <input
+                type="text"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="Paste invite token"
+                className="w-full border rounded px-3 py-2 text-sm"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading || !bootstrap || !token}
+              className="w-full bg-blue-600 text-white rounded px-4 py-2 text-sm hover:bg-blue-700 disabled:opacity-50"
+            >
+              {loading ? "Joining…" : "Join pool"}
+            </button>
+          </form>
+        </div>
+
+        {error && <p className="text-sm text-red-600 mt-4">{error}</p>}
       </div>
     </div>
   );
