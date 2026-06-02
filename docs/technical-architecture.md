@@ -52,9 +52,10 @@ Responsibilities:
 - Show total capacity and used capacity.
 - Show online and offline nodes.
 - Show file list and search results.
-- Upload files.
+- Upload files to the resource pool. This is a copy-style cloud-drive upload and must not delete or move the user's local source file.
 - Download files.
-- Move local files into the resource pool.
+- Browse files on the current node's local filesystem for the separate move-to-pool workflow.
+- Move selected local files into the resource pool; only this explicit workflow may delete or ask to delete the local source after pool write and replication succeed.
 - Show health status: healthy, under-replicated, unavailable.
 - Provide advanced views for node, replica and sync status.
 
