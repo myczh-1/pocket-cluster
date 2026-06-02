@@ -6,18 +6,20 @@ import (
 )
 
 type Node struct {
-	NodeID         string    `json:"node_id"`
-	Name           string    `json:"name"`
-	Platform       string    `json:"platform"`
-	Address        string    `json:"address"`
-	PublicKey      string    `json:"public_key"`
-	TotalBytes     int64     `json:"total_bytes"`
-	UsedBytes      int64     `json:"used_bytes"`
-	AvailableBytes int64     `json:"available_bytes"`
-	Status         string    `json:"status"`
-	Trusted        bool      `json:"trusted"`
-	LastSeen       time.Time `json:"last_seen"`
-	JoinedAt       time.Time `json:"joined_at"`
+	NodeID             string    `json:"node_id"`
+	Name               string    `json:"name"`
+	Platform           string    `json:"platform"`
+	Address            string    `json:"address"`
+	AddressCandidates  []string  `json:"address_candidates,omitempty"`
+	LastWorkingAddress string    `json:"last_working_address,omitempty"`
+	PublicKey          string    `json:"public_key"`
+	TotalBytes         int64     `json:"total_bytes"`
+	UsedBytes          int64     `json:"used_bytes"`
+	AvailableBytes     int64     `json:"available_bytes"`
+	Status             string    `json:"status"`
+	Trusted            bool      `json:"trusted"`
+	LastSeen           time.Time `json:"last_seen"`
+	JoinedAt           time.Time `json:"joined_at"`
 }
 
 type File struct {
@@ -118,17 +120,19 @@ type JoinResponse struct {
 }
 
 type NodeRef struct {
-	NodeID         string    `json:"node_id"`
-	Name           string    `json:"name,omitempty"`
-	Platform       string    `json:"platform,omitempty"`
-	Address        string    `json:"address"`
-	PublicKey      string    `json:"public_key"`
-	TotalBytes     int64     `json:"total_bytes,omitempty"`
-	UsedBytes      int64     `json:"used_bytes,omitempty"`
-	AvailableBytes int64     `json:"available_bytes,omitempty"`
-	Status         string    `json:"status,omitempty"`
-	LastSeen       time.Time `json:"last_seen,omitempty"`
-	JoinedAt       time.Time `json:"joined_at,omitempty"`
+	NodeID             string    `json:"node_id"`
+	Name               string    `json:"name,omitempty"`
+	Platform           string    `json:"platform,omitempty"`
+	Address            string    `json:"address"`
+	AddressCandidates  []string  `json:"address_candidates,omitempty"`
+	LastWorkingAddress string    `json:"last_working_address,omitempty"`
+	PublicKey          string    `json:"public_key"`
+	TotalBytes         int64     `json:"total_bytes,omitempty"`
+	UsedBytes          int64     `json:"used_bytes,omitempty"`
+	AvailableBytes     int64     `json:"available_bytes,omitempty"`
+	Status             string    `json:"status,omitempty"`
+	LastSeen           time.Time `json:"last_seen,omitempty"`
+	JoinedAt           time.Time `json:"joined_at,omitempty"`
 }
 type APIResponse struct {
 	OK    bool            `json:"ok"`

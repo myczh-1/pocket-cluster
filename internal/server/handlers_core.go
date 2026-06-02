@@ -181,19 +181,25 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	address := addressFromRemote(r.RemoteAddr, req.DeviceInfo.Address)
+	advertisedAddress := normalizeNodeAddress(req.DeviceInfo.Address)
+	observedAddress := addressFromRemote(r.RemoteAddr, advertisedAddress)
+	if advertisedAddress == "" {
+		advertisedAddress = observedAddress
+	}
 	newNode := &types.Node{
-		NodeID:         req.NodeID,
-		Name:           req.DeviceInfo.Name,
-		Platform:       req.DeviceInfo.Platform,
-		Address:        address,
-		PublicKey:      req.PublicKey,
-		TotalBytes:     req.DeviceInfo.TotalBytes,
-		AvailableBytes: req.DeviceInfo.AvailableBytes,
-		Status:         "online",
-		Trusted:        true,
-		LastSeen:       now,
-		JoinedAt:       now,
+		NodeID:             req.NodeID,
+		Name:               req.DeviceInfo.Name,
+		Platform:           req.DeviceInfo.Platform,
+		Address:            advertisedAddress,
+		AddressCandidates:  mergeAddresses(advertisedAddress, observedAddress),
+		LastWorkingAddress: observedAddress,
+		PublicKey:          req.PublicKey,
+		TotalBytes:         req.DeviceInfo.TotalBytes,
+		AvailableBytes:     req.DeviceInfo.AvailableBytes,
+		Status:             "online",
+		Trusted:            true,
+		LastSeen:           now,
+		JoinedAt:           now,
 	}
 	if err := s.store.UpdateNodeFull(newNode); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
@@ -208,17 +214,19 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 	for _, n := range nodes {
 		if n.NodeID != req.NodeID {
 			refs = append(refs, types.NodeRef{
-				NodeID:         n.NodeID,
-				Name:           n.Name,
-				Platform:       n.Platform,
-				Address:        n.Address,
-				PublicKey:      n.PublicKey,
-				TotalBytes:     n.TotalBytes,
-				UsedBytes:      n.UsedBytes,
-				AvailableBytes: n.AvailableBytes,
-				Status:         n.Status,
-				LastSeen:       n.LastSeen,
-				JoinedAt:       n.JoinedAt,
+				NodeID:             n.NodeID,
+				Name:               n.Name,
+				Platform:           n.Platform,
+				Address:            n.Address,
+				AddressCandidates:  n.AddressCandidates,
+				LastWorkingAddress: n.LastWorkingAddress,
+				PublicKey:          n.PublicKey,
+				TotalBytes:         n.TotalBytes,
+				UsedBytes:          n.UsedBytes,
+				AvailableBytes:     n.AvailableBytes,
+				Status:             n.Status,
+				LastSeen:           n.LastSeen,
+				JoinedAt:           n.JoinedAt,
 			})
 		}
 	}

@@ -39,19 +39,22 @@ func (s *Server) JoinViaBootstrap(bootstrap, joinToken string) error {
 		if lastSeen.IsZero() {
 			lastSeen = now
 		}
+		candidates := mergeAddressCandidates(ref.AddressCandidates, ref.Address, ref.LastWorkingAddress)
 		if err := s.store.UpdateNodeFull(&types.Node{
-			NodeID:         ref.NodeID,
-			Name:           ref.Name,
-			Platform:       ref.Platform,
-			Address:        normalizeNodeAddress(ref.Address),
-			PublicKey:      ref.PublicKey,
-			TotalBytes:     ref.TotalBytes,
-			UsedBytes:      ref.UsedBytes,
-			AvailableBytes: ref.AvailableBytes,
-			Status:         status,
-			Trusted:        true,
-			LastSeen:       lastSeen,
-			JoinedAt:       ref.JoinedAt,
+			NodeID:             ref.NodeID,
+			Name:               ref.Name,
+			Platform:           ref.Platform,
+			Address:            normalizeNodeAddress(ref.Address),
+			AddressCandidates:  candidates,
+			LastWorkingAddress: normalizeNodeAddress(ref.LastWorkingAddress),
+			PublicKey:          ref.PublicKey,
+			TotalBytes:         ref.TotalBytes,
+			UsedBytes:          ref.UsedBytes,
+			AvailableBytes:     ref.AvailableBytes,
+			Status:             status,
+			Trusted:            true,
+			LastSeen:           lastSeen,
+			JoinedAt:           ref.JoinedAt,
 		}); err != nil {
 			return err
 		}

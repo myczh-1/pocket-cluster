@@ -241,7 +241,7 @@ func TestPushEventsPropagatesNodeUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := localSrv.pushEvents(context.Background(), remoteNode); err != nil {
+	if _, err := localSrv.pushEvents(context.Background(), remoteNode); err != nil {
 		t.Fatal(err)
 	}
 	got, err := remoteStore.GetNode(localCfg.NodeID)
@@ -367,6 +367,61 @@ func TestSyncOnceRetriesOfflinePeer(t *testing.T) {
 	}
 }
 
+func TestSyncOnceUsesAddressCandidatesAndStoresWorkingAddress(t *testing.T) {
+	localCfg := newTestConfig(t, "local")
+	remoteCfg := newTestConfig(t, "remote")
+	remoteStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remoteStore.Close()
+	remoteChunks := chunk.New(t.TempDir())
+	if err := remoteChunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := remoteStore.UpdateNodeFull(&types.Node{NodeID: localCfg.NodeID, PublicKey: localCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+	remoteHTTP := httptest.NewServer(New(remoteCfg, remoteStore, remoteChunks).Handler())
+	defer remoteHTTP.Close()
+	workingAddress := strings.TrimPrefix(remoteHTTP.URL, "http://")
+
+	localStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer localStore.Close()
+	localChunks := chunk.New(t.TempDir())
+	if err := localChunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := localStore.UpdateNodeFull(&types.Node{
+		NodeID:            remoteCfg.NodeID,
+		Address:           "127.0.0.1:1",
+		AddressCandidates: []string{"127.0.0.1:1", workingAddress},
+		PublicKey:         remoteCfg.PublicKey,
+		Status:            "offline",
+		Trusted:           true,
+		LastSeen:          time.Now().Add(-nodeOfflineAfter - time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	localSrv := New(localCfg, localStore, localChunks)
+
+	if err := localSrv.SyncOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := localStore.GetNode(remoteCfg.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "online" {
+		t.Fatalf("status = %q, want online", got.Status)
+	}
+	if got.LastWorkingAddress != workingAddress {
+		t.Fatalf("last working address = %q, want %q", got.LastWorkingAddress, workingAddress)
+	}
+}
 func TestSyncOnceRefreshesResponsivePeerLastSeen(t *testing.T) {
 	remoteStore, err := store.Open(t.TempDir())
 	if err != nil {
@@ -531,7 +586,7 @@ func TestPullEventsIgnoresEnvironmentHTTPProxy(t *testing.T) {
 	localSrv := New(localCfg, localStore, localChunks)
 
 	remoteNode := types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), PublicKey: remoteCfg.PublicKey, Status: "online", Trusted: true}
-	if err := localSrv.pullEvents(context.Background(), remoteNode); err != nil {
+	if _, err := localSrv.pullEvents(context.Background(), remoteNode); err != nil {
 		t.Fatal(err)
 	}
 	if proxyHits.Load() != 0 {

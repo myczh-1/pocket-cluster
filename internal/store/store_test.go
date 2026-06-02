@@ -177,3 +177,38 @@ func TestUseInviteIsOneTimeAndExpires(t *testing.T) {
 		t.Fatal("expired invite was accepted")
 	}
 }
+
+func TestUpdateNodeFullPersistsAddressCandidates(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	wantCandidates := []string{"192.168.1.10:7788", "10.8.0.10:7788"}
+	if err := s.UpdateNodeFull(&types.Node{
+		NodeID:             "peer",
+		Address:            wantCandidates[0],
+		AddressCandidates:  wantCandidates,
+		LastWorkingAddress: wantCandidates[1],
+		Status:             "online",
+		Trusted:            true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetNode("peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastWorkingAddress != wantCandidates[1] {
+		t.Fatalf("last_working_address = %q, want %q", got.LastWorkingAddress, wantCandidates[1])
+	}
+	if len(got.AddressCandidates) != len(wantCandidates) {
+		t.Fatalf("address candidates = %#v, want %#v", got.AddressCandidates, wantCandidates)
+	}
+	for i := range wantCandidates {
+		if got.AddressCandidates[i] != wantCandidates[i] {
+			t.Fatalf("address candidates = %#v, want %#v", got.AddressCandidates, wantCandidates)
+		}
+	}
+}

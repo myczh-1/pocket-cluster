@@ -192,19 +192,21 @@ func buildSelfNode(cfg *config.Config, dataDir string, port int) (*types.Node, e
 		usedBytes = 0
 	}
 	now := time.Now()
+	address := fmt.Sprintf("%s:%d", localAddress(), port)
 	return &types.Node{
-		NodeID:         cfg.NodeID,
-		Name:           cfg.Name,
-		Platform:       cfg.Platform,
-		Address:        fmt.Sprintf("%s:%d", localAddress(), port),
-		PublicKey:      cfg.PublicKey,
-		Status:         "online",
-		Trusted:        true,
-		TotalBytes:     totalBytes,
-		UsedBytes:      usedBytes,
-		AvailableBytes: availableBytes,
-		LastSeen:       now,
-		JoinedAt:       now,
+		NodeID:            cfg.NodeID,
+		Name:              cfg.Name,
+		Platform:          cfg.Platform,
+		Address:           address,
+		AddressCandidates: []string{address},
+		PublicKey:         cfg.PublicKey,
+		Status:            "online",
+		Trusted:           true,
+		TotalBytes:        totalBytes,
+		UsedBytes:         usedBytes,
+		AvailableBytes:    availableBytes,
+		LastSeen:          now,
+		JoinedAt:          now,
 	}, err
 }
 

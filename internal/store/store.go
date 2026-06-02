@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -49,7 +50,9 @@ func (s *Store) migrate() error {
 			status TEXT NOT NULL DEFAULT 'offline',
 			trusted INTEGER NOT NULL DEFAULT 0,
 			last_seen INTEGER NOT NULL DEFAULT 0,
-			joined_at INTEGER NOT NULL DEFAULT 0
+			joined_at INTEGER NOT NULL DEFAULT 0,
+			address_candidates TEXT NOT NULL DEFAULT '[]',
+			last_working_address TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS files (
 			file_id TEXT PRIMARY KEY,
@@ -98,25 +101,40 @@ func (s *Store) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_node_seq ON events(node_id, seq)`,
 		`CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)`,
+		`ALTER TABLE nodes ADD COLUMN address_candidates TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE nodes ADD COLUMN last_working_address TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, m := range migrations {
 		if _, err := s.db.Exec(m); err != nil {
+			if isDuplicateColumnError(err) {
+				continue
+			}
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
 	return nil
 }
 
+func isDuplicateColumnError(err error) bool {
+	return strings.Contains(err.Error(), "duplicate column name")
+}
+
 // Node operations
 
 func (s *Store) UpsertNode(n *types.Node) error {
-	_, err := s.db.Exec(`INSERT INTO nodes
-		(node_id, name, platform, address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	candidates, err := json.Marshal(n.AddressCandidates)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO nodes
+		(node_id, name, platform, address, address_candidates, last_working_address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(node_id) DO UPDATE SET
 			name = CASE WHEN excluded.name != '' THEN excluded.name ELSE nodes.name END,
 			platform = CASE WHEN excluded.platform != '' THEN excluded.platform ELSE nodes.platform END,
 			address = CASE WHEN excluded.address != '' THEN excluded.address ELSE nodes.address END,
+			address_candidates = CASE WHEN excluded.address_candidates != '[]' THEN excluded.address_candidates ELSE nodes.address_candidates END,
+			last_working_address = CASE WHEN excluded.last_working_address != '' THEN excluded.last_working_address ELSE nodes.last_working_address END,
 			public_key = CASE WHEN excluded.public_key != '' THEN excluded.public_key ELSE nodes.public_key END,
 			total_bytes = CASE WHEN excluded.total_bytes != 0 THEN excluded.total_bytes ELSE nodes.total_bytes END,
 			used_bytes = excluded.used_bytes,
@@ -125,7 +143,7 @@ func (s *Store) UpsertNode(n *types.Node) error {
 			trusted = CASE WHEN excluded.trusted != 0 THEN excluded.trusted ELSE nodes.trusted END,
 			last_seen = CASE WHEN excluded.last_seen != 0 THEN excluded.last_seen ELSE nodes.last_seen END,
 			joined_at = CASE WHEN excluded.joined_at != 0 THEN excluded.joined_at ELSE nodes.joined_at END`,
-		n.NodeID, n.Name, n.Platform, n.Address, n.PublicKey, n.TotalBytes, n.UsedBytes, n.AvailableBytes,
+		n.NodeID, n.Name, n.Platform, n.Address, string(candidates), n.LastWorkingAddress, n.PublicKey, n.TotalBytes, n.UsedBytes, n.AvailableBytes,
 		n.Status, boolToInt(n.Trusted), timeMillis(n.LastSeen), timeMillis(n.JoinedAt))
 	return err
 }
@@ -136,14 +154,26 @@ func (s *Store) UpdateNodeStatus(nodeID, status string, lastSeen time.Time) erro
 	return err
 }
 
+func (s *Store) UpdateNodeLastWorkingAddress(nodeID, address string, lastSeen time.Time) error {
+	_, err := s.db.Exec(`UPDATE nodes SET last_working_address = ?, status = 'online', last_seen = ? WHERE node_id = ?`,
+		address, timeMillis(lastSeen), nodeID)
+	return err
+}
+
 func (s *Store) UpdateNodeFull(n *types.Node) error {
-	_, err := s.db.Exec(`INSERT INTO nodes
-		(node_id, name, platform, address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	candidates, err := json.Marshal(n.AddressCandidates)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO nodes
+		(node_id, name, platform, address, address_candidates, last_working_address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(node_id) DO UPDATE SET
 			name = excluded.name,
 			platform = excluded.platform,
 			address = excluded.address,
+			address_candidates = excluded.address_candidates,
+			last_working_address = excluded.last_working_address,
 			public_key = excluded.public_key,
 			total_bytes = excluded.total_bytes,
 			used_bytes = excluded.used_bytes,
@@ -152,24 +182,25 @@ func (s *Store) UpdateNodeFull(n *types.Node) error {
 			trusted = excluded.trusted,
 			last_seen = excluded.last_seen,
 			joined_at = CASE WHEN excluded.joined_at != 0 THEN excluded.joined_at ELSE nodes.joined_at END`,
-		n.NodeID, n.Name, n.Platform, n.Address, n.PublicKey, n.TotalBytes, n.UsedBytes, n.AvailableBytes,
+		n.NodeID, n.Name, n.Platform, n.Address, string(candidates), n.LastWorkingAddress, n.PublicKey, n.TotalBytes, n.UsedBytes, n.AvailableBytes,
 		n.Status, boolToInt(n.Trusted), timeMillis(n.LastSeen), timeMillis(n.JoinedAt))
 	return err
 }
 
 func (s *Store) GetNode(nodeID string) (*types.Node, error) {
-	row := s.db.QueryRow(`SELECT node_id, name, platform, address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes WHERE node_id = ?`, nodeID)
+	row := s.db.QueryRow(`SELECT node_id, name, platform, address, address_candidates, last_working_address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes WHERE node_id = ?`, nodeID)
 	return scanNode(row)
 }
 
 func (s *Store) HasTrustedNodeAtAddress(address string) bool {
 	var count int
-	s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE address = ? AND trusted = 1`, address).Scan(&count)
+	s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE trusted = 1 AND (address = ? OR last_working_address = ? OR address_candidates LIKE ?)`,
+		address, address, "%\""+address+"\"%").Scan(&count)
 	return count > 0
 }
 
 func (s *Store) ListNodes() ([]types.Node, error) {
-	rows, err := s.db.Query(`SELECT node_id, name, platform, address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes`)
+	rows, err := s.db.Query(`SELECT node_id, name, platform, address, address_candidates, last_working_address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes`)
 	if err != nil {
 		return nil, err
 	}
@@ -448,11 +479,13 @@ func scanNode(row scannable) (*types.Node, error) {
 	var n types.Node
 	var lastSeen, joinedAt int64
 	var trusted int
-	if err := row.Scan(&n.NodeID, &n.Name, &n.Platform, &n.Address, &n.PublicKey,
+	var candidatesJSON string
+	if err := row.Scan(&n.NodeID, &n.Name, &n.Platform, &n.Address, &candidatesJSON, &n.LastWorkingAddress, &n.PublicKey,
 		&n.TotalBytes, &n.UsedBytes, &n.AvailableBytes,
 		&n.Status, &trusted, &lastSeen, &joinedAt); err != nil {
 		return nil, err
 	}
+	_ = json.Unmarshal([]byte(candidatesJSON), &n.AddressCandidates)
 	n.Trusted = intToBool(trusted)
 	n.LastSeen = time.UnixMilli(lastSeen)
 	n.JoinedAt = time.UnixMilli(joinedAt)
