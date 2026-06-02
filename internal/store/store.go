@@ -118,7 +118,7 @@ func (s *Store) UpsertNode(n *types.Node) error {
 			last_seen = CASE WHEN excluded.last_seen != 0 THEN excluded.last_seen ELSE nodes.last_seen END,
 			joined_at = CASE WHEN excluded.joined_at != 0 THEN excluded.joined_at ELSE nodes.joined_at END`,
 		n.NodeID, n.Name, n.Platform, n.Address, n.PublicKey, n.TotalBytes, n.UsedBytes, n.AvailableBytes,
-		n.Status, boolToInt(n.Trusted), n.LastSeen.UnixMilli(), n.JoinedAt.UnixMilli())
+		n.Status, boolToInt(n.Trusted), timeMillis(n.LastSeen), timeMillis(n.JoinedAt))
 	return err
 }
 
@@ -362,6 +362,13 @@ func (s *Store) TotalChunkBytes() (int64, error) {
 }
 
 // Helpers
+
+func timeMillis(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
+}
 
 func boolToInt(b bool) int {
 	if b {

@@ -78,3 +78,29 @@ func TestUpsertNodePreservesTrustWhenDiscoveryUpdatesAddress(t *testing.T) {
 		t.Fatalf("address = %q, want new:7788", n.Address)
 	}
 }
+
+func TestUpsertNodeZeroTimeDoesNotOverwriteLastSeen(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	seen := time.UnixMilli(1234)
+	if err := s.UpsertNode(&types.Node{NodeID: "node-c", Status: "online", LastSeen: seen}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertNode(&types.Node{NodeID: "node-c", Status: "offline"}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.GetNode("node-c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !n.LastSeen.Equal(seen) {
+		t.Fatalf("last_seen = %s, want %s", n.LastSeen, seen)
+	}
+	if n.Status != "offline" {
+		t.Fatalf("status = %q, want offline", n.Status)
+	}
+}

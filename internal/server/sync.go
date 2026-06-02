@@ -17,6 +17,7 @@ import (
 const (
 	syncRequestTimeout = 15 * time.Second
 	targetReplicaCount = 2
+	nodeOfflineAfter   = 30 * time.Second
 )
 
 var peerHTTPClient = peernet.NewHTTPClient()
@@ -49,7 +50,16 @@ func (s *Server) SyncOnce(ctx context.Context) error {
 		if n.NodeID == s.cfg.NodeID || n.Address == "" || n.Status == "offline" || !n.Trusted {
 			continue
 		}
-		if err := s.pullEvents(ctx, n); err != nil && firstErr == nil {
+		if err := s.pullEvents(ctx, n); err != nil {
+			if markErr := s.markPeerOfflineIfStale(n, time.Now()); markErr != nil && firstErr == nil {
+				firstErr = markErr
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if err := s.markPeerOnline(n.NodeID, time.Now()); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -57,6 +67,21 @@ func (s *Server) SyncOnce(ctx context.Context) error {
 		firstErr = err
 	}
 	return firstErr
+}
+
+func (s *Server) markPeerOnline(nodeID string, now time.Time) error {
+	return s.store.UpsertNode(&types.Node{NodeID: nodeID, Status: "online", LastSeen: now})
+}
+
+func (s *Server) markPeerOfflineIfStale(n types.Node, now time.Time) error {
+	if !isNodeStale(n, now) {
+		return nil
+	}
+	return s.store.UpsertNode(&types.Node{NodeID: n.NodeID, Status: "offline"})
+}
+
+func isNodeStale(n types.Node, now time.Time) bool {
+	return n.LastSeen.IsZero() || now.Sub(n.LastSeen) >= nodeOfflineAfter
 }
 
 func (s *Server) pullEvents(ctx context.Context, n types.Node) error {
@@ -131,12 +156,14 @@ func (s *Server) repairChunkReplicas(ctx context.Context, chunkID string, nodes 
 	if err != nil {
 		return err
 	}
-	available := availableReplicaNodes(replicas)
+	online := onlineNodeSet(nodes, s.cfg.NodeID)
+	available := availableOnlineReplicaNodes(replicas, online)
 	if len(available) >= targetReplicaCount {
 		return nil
 	}
+	existing := availableReplicaNodes(replicas)
 	if s.chunks.Exists(chunkID) {
-		_, err := s.pushChunkToPeer(ctx, chunkID, available, nodes)
+		_, err := s.pushChunkToPeer(ctx, chunkID, existing, nodes)
 		return err
 	}
 	if err := s.fetchChunkFromReplica(ctx, chunkID); err != nil {
@@ -171,7 +198,7 @@ func (s *Server) fetchChunkFromReplica(ctx context.Context, chunkID string) erro
 			continue
 		}
 		n, err := s.store.GetNode(replica.NodeID)
-		if err != nil || n.Address == "" {
+		if err != nil || n.Address == "" || n.Status == "offline" || !n.Trusted {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
@@ -274,7 +301,7 @@ func (s *Server) writeChunk(ctx context.Context, w io.Writer, chunkID string) er
 			continue
 		}
 		n, err := s.store.GetNode(replica.NodeID)
-		if err != nil || n.Address == "" {
+		if err != nil || n.Address == "" || n.Status == "offline" || !n.Trusted {
 			continue
 		}
 		url := "http://" + n.Address + "/api/chunks/" + chunkID
@@ -301,13 +328,18 @@ func (s *Server) replicaStatusForChunks(chunkIDs []string) types.ReplicaStatus {
 	if len(chunkIDs) == 0 {
 		return types.ReplicaHealthy
 	}
+	nodes, err := s.store.ListNodes()
+	if err != nil {
+		return types.ReplicaUnavailable
+	}
+	online := onlineNodeSet(nodes, s.cfg.NodeID)
 	status := types.ReplicaHealthy
 	for _, chunkID := range chunkIDs {
 		replicas, err := s.store.GetReplicas(chunkID)
 		if err != nil {
 			return types.ReplicaUnavailable
 		}
-		count := len(availableReplicaNodes(replicas))
+		count := len(availableOnlineReplicaNodes(replicas, online))
 		if count == 0 {
 			return types.ReplicaUnavailable
 		}
@@ -316,6 +348,32 @@ func (s *Server) replicaStatusForChunks(chunkIDs []string) types.ReplicaStatus {
 		}
 	}
 	return status
+}
+
+func onlineNodeSet(nodes []types.Node, selfNodeID string) map[string]struct{} {
+	online := map[string]struct{}{selfNodeID: {}}
+	for _, n := range nodes {
+		if n.NodeID == selfNodeID {
+			continue
+		}
+		if n.Status == "online" && n.Trusted {
+			online[n.NodeID] = struct{}{}
+		}
+	}
+	return online
+}
+
+func availableOnlineReplicaNodes(replicas []types.Replica, online map[string]struct{}) map[string]struct{} {
+	available := make(map[string]struct{}, len(replicas))
+	for _, replica := range replicas {
+		if replica.Status != "available" {
+			continue
+		}
+		if _, ok := online[replica.NodeID]; ok {
+			available[replica.NodeID] = struct{}{}
+		}
+	}
+	return available
 }
 
 func availableReplicaNodes(replicas []types.Replica) map[string]struct{} {

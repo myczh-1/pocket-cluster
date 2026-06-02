@@ -22,6 +22,21 @@ function StatusBadge({ status }) {
   );
 }
 
+function formatLastSeen(value) {
+  if (!value) return "never seen";
+  const ts = new Date(value).getTime();
+  if (!Number.isFinite(ts)) return "never seen";
+  const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
 function NodeCard({ node }) {
   const usedPct = node.total_bytes > 0 ? Math.round((node.used_bytes / node.total_bytes) * 100) : 0;
   return (
@@ -32,6 +47,7 @@ function NodeCard({ node }) {
       </div>
       <p className="text-xs text-gray-500 mb-1">{node.platform} · {node.node_id.slice(0, 8)}…</p>
       <p className="text-xs text-gray-500 mb-2">{node.address}</p>
+      <p className="text-xs text-gray-500 mb-2">Last seen {formatLastSeen(node.last_seen)}</p>
       <div className="w-full bg-gray-200 rounded-full h-2">
         <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${usedPct}%` }} />
       </div>
@@ -128,9 +144,14 @@ function FilesPage() {
 
 function NodesPage() {
   const [nodes, setNodes] = useState([]);
-  useEffect(() => {
+  const loadNodes = useCallback(() => {
     api("/nodes").then((r) => { if (r.ok) setNodes(r.data || []); });
   }, []);
+  useEffect(() => {
+    loadNodes();
+    const id = setInterval(loadNodes, 3000);
+    return () => clearInterval(id);
+  }, [loadNodes]);
   const totalBytes = nodes.reduce((s, n) => s + (n.total_bytes || 0), 0);
   const usedBytes = nodes.reduce((s, n) => s + (n.used_bytes || 0), 0);
   const onlineCount = nodes.filter((n) => n.status === "online").length;
