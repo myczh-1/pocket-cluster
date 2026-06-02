@@ -1,0 +1,14 @@
+.DS_Store
+agent
+*.log
+
+# Runtime data
+.pocketcluster/
+data/
+
+# Node dependencies/build artifacts
+web/node_modules/
+web/dist/
+
+# Test/build outputs
+coverage.out
