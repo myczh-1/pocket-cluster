@@ -32,13 +32,15 @@ func (s *Server) JoinViaBootstrap(bootstrap, joinToken string) error {
 			continue
 		}
 		if err := s.store.UpdateNodeFull(&types.Node{
-			NodeID:    ref.NodeID,
-			Name:      ref.Name,
-			Address:   normalizeNodeAddress(ref.Address),
-			PublicKey: ref.PublicKey,
-			Status:    "online",
-			Trusted:   true,
-			LastSeen:  now,
+			NodeID:         ref.NodeID,
+			Name:           ref.Name,
+			Address:        normalizeNodeAddress(ref.Address),
+			PublicKey:      ref.PublicKey,
+			TotalBytes:     ref.TotalBytes,
+			AvailableBytes: ref.AvailableBytes,
+			Status:         "online",
+			Trusted:        true,
+			LastSeen:       now,
 		}); err != nil {
 			return err
 		}

@@ -214,7 +214,7 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 	var refs []types.NodeRef
 	for _, n := range nodes {
 		if n.NodeID != req.NodeID {
-			refs = append(refs, types.NodeRef{NodeID: n.NodeID, Name: n.Name, Address: n.Address, PublicKey: n.PublicKey})
+			refs = append(refs, types.NodeRef{NodeID: n.NodeID, Name: n.Name, Address: n.Address, PublicKey: n.PublicKey, TotalBytes: n.TotalBytes, AvailableBytes: n.AvailableBytes})
 		}
 	}
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(types.JoinResponse{

@@ -63,6 +63,7 @@ func main() {
 		Name:           cfg.Name,
 		Platform:       cfg.Platform,
 		Address:        fmt.Sprintf("%s:%d", localAddress(), *port),
+		PublicKey:      cfg.PublicKey,
 		Status:         "online",
 		Trusted:        true,
 		TotalBytes:     totalBytes,
@@ -70,7 +71,7 @@ func main() {
 		LastSeen:       now,
 		JoinedAt:       now,
 	}
-	s.UpsertNode(selfNode)
+	s.UpdateNodeFull(selfNode)
 	srv := server.New(cfg, s, cs)
 	handler := srv.Handler()
 

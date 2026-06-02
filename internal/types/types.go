@@ -118,12 +118,13 @@ type JoinResponse struct {
 }
 
 type NodeRef struct {
-	NodeID    string `json:"node_id"`
-	Name      string `json:"name,omitempty"`
-	Address   string `json:"address"`
-	PublicKey string `json:"public_key"`
+	NodeID         string `json:"node_id"`
+	Name           string `json:"name,omitempty"`
+	Address        string `json:"address"`
+	PublicKey      string `json:"public_key"`
+	TotalBytes     int64  `json:"total_bytes,omitempty"`
+	AvailableBytes int64  `json:"available_bytes,omitempty"`
 }
-
 type APIResponse struct {
 	OK    bool            `json:"ok"`
 	Data  json.RawMessage `json:"data,omitempty"`

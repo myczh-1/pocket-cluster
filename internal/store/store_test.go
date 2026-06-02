@@ -105,6 +105,41 @@ func TestUpsertNodeZeroTimeDoesNotOverwriteLastSeen(t *testing.T) {
 	}
 }
 
+func TestUpdateNodeFullOverwritesZeroCapacity(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Simulate: node first stored with zero capacity (failed auto-join)
+	if err := s.UpsertNode(&types.Node{NodeID: "peer", Name: "peer", Address: "10.0.0.1:7788", Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.GetNode("peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.TotalBytes != 0 {
+		t.Fatalf("initial total_bytes = %d, want 0", n.TotalBytes)
+	}
+
+	// Simulate: node re-joined with real capacity
+	if err := s.UpdateNodeFull(&types.Node{NodeID: "peer", Name: "peer", Address: "10.0.0.1:7788", Status: "online", Trusted: true, TotalBytes: 500, AvailableBytes: 400}); err != nil {
+		t.Fatal(err)
+	}
+	n, err = s.GetNode("peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.TotalBytes != 500 {
+		t.Fatalf("total_bytes = %d, want 500", n.TotalBytes)
+	}
+	if n.AvailableBytes != 400 {
+		t.Fatalf("available_bytes = %d, want 400", n.AvailableBytes)
+	}
+}
+
 func TestUseInviteIsOneTimeAndExpires(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
