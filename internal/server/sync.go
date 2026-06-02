@@ -70,14 +70,14 @@ func (s *Server) SyncOnce(ctx context.Context) error {
 }
 
 func (s *Server) markPeerOnline(nodeID string, now time.Time) error {
-	return s.store.UpsertNode(&types.Node{NodeID: nodeID, Status: "online", LastSeen: now})
+	return s.store.UpdateNodeStatus(nodeID, "online", now)
 }
 
 func (s *Server) markPeerOfflineIfStale(n types.Node, now time.Time) error {
 	if !isNodeStale(n, now) {
 		return nil
 	}
-	return s.store.UpsertNode(&types.Node{NodeID: n.NodeID, Status: "offline"})
+	return s.store.UpdateNodeStatus(n.NodeID, "offline", n.LastSeen)
 }
 
 func isNodeStale(n types.Node, now time.Time) bool {

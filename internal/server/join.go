@@ -33,6 +33,7 @@ func (s *Server) JoinViaBootstrap(bootstrap, joinToken string) error {
 		}
 		if err := s.store.UpsertNode(&types.Node{
 			NodeID:    ref.NodeID,
+			Name:      ref.Name,
 			Address:   normalizeNodeAddress(ref.Address),
 			PublicKey: ref.PublicKey,
 			Status:    "online",

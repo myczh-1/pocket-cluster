@@ -130,6 +130,12 @@ func (s *Store) UpsertNode(n *types.Node) error {
 	return err
 }
 
+func (s *Store) UpdateNodeStatus(nodeID, status string, lastSeen time.Time) error {
+	_, err := s.db.Exec(`UPDATE nodes SET status = ?, last_seen = ? WHERE node_id = ?`,
+		status, timeMillis(lastSeen), nodeID)
+	return err
+}
+
 func (s *Store) GetNode(nodeID string) (*types.Node, error) {
 	row := s.db.QueryRow(`SELECT node_id, name, platform, address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes WHERE node_id = ?`, nodeID)
 	return scanNode(row)
