@@ -69,8 +69,8 @@ func (s *Server) handleJoinCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
-	if req.Bootstrap == "" || req.JoinToken == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "bootstrap and join_token required")
+	if req.Bootstrap == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "bootstrap required")
 		return
 	}
 	if err := s.JoinViaBootstrap(req.Bootstrap, req.JoinToken); err != nil {

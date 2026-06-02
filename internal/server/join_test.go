@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pocketcluster/agent/internal/chunk"
@@ -107,6 +108,60 @@ func TestJoinClusterViaUI(t *testing.T) {
 	}
 	if !bootstrapNode.Trusted {
 		t.Fatal("bootstrap node not trusted")
+	}
+}
+
+func TestJoinClusterAutoModeAcceptsBareAddressWithoutToken(t *testing.T) {
+	bootstrapCfg, bootstrapStore, bootstrapSrv := newJoinTestServer(t, "bootstrap")
+	if err := bootstrapStore.UpdateNodeFull(&types.Node{
+		NodeID:         "bootstrap",
+		Name:           "bootstrap",
+		Address:        "127.0.0.1:7788",
+		PublicKey:      bootstrapCfg.PublicKey,
+		Status:         "online",
+		Trusted:        true,
+		TotalBytes:     2000,
+		AvailableBytes: 1800,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer bootstrapStore.Close()
+	bootstrapCfg.DiscoveryMode = "auto"
+	bootstrapCfg.ClusterID = "auto-cluster"
+	if err := bootstrapCfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapHTTP := httptest.NewServer(bootstrapSrv.Handler())
+	defer bootstrapHTTP.Close()
+
+	joinerCfg, joinerStore, joinerSrv := newJoinTestServer(t, "joiner")
+	if err := joinerStore.UpdateNodeFull(&types.Node{
+		NodeID:         "joiner",
+		Name:           "joiner",
+		Address:        "127.0.0.1:7789",
+		PublicKey:      joinerCfg.PublicKey,
+		Status:         "online",
+		Trusted:        true,
+		TotalBytes:     1000,
+		AvailableBytes: 900,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer joinerStore.Close()
+
+	body := mustJSON(t, map[string]string{"bootstrap": strings.TrimPrefix(bootstrapHTTP.URL, "http://")})
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/join", bytes.NewReader(body))
+	joinerSrv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("auto join status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	reloaded, err := config.Load(joinerCfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ClusterID != "auto-cluster" {
+		t.Fatalf("cluster_id = %q, want auto-cluster", reloaded.ClusterID)
 	}
 }
 

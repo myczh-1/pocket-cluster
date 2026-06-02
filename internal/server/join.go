@@ -49,7 +49,7 @@ func (s *Server) JoinViaBootstrap(bootstrap, joinToken string) error {
 }
 
 func callJoinRequest(bootstrap, joinToken string, cfg *config.Config, self *types.Node) (*types.JoinResponse, error) {
-	bootstrap = strings.TrimRight(bootstrap, "/")
+	bootstrap = normalizeBootstrapURL(bootstrap)
 	reqBody := types.JoinRequest{
 		JoinToken: joinToken,
 		NodeID:    cfg.NodeID,
@@ -94,6 +94,15 @@ func callJoinRequest(bootstrap, joinToken string, cfg *config.Config, self *type
 		return nil, err
 	}
 	return &join, nil
+}
+
+func normalizeBootstrapURL(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimRight(value, "/")
+	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+		return value
+	}
+	return "http://" + value
 }
 
 func normalizeNodeAddress(value string) string {
