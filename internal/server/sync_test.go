@@ -178,9 +178,82 @@ func unusedTCPAddress() (string, error) {
 	}
 	address := listener.Addr().String()
 	if err := listener.Close(); err != nil {
+
 		return "", err
 	}
 	return address, nil
+}
+
+func TestPushEventsPropagatesNodeUpdate(t *testing.T) {
+	localCfg := newTestConfig(t, "local")
+	remoteCfg := newTestConfig(t, "remote")
+
+	remoteStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remoteStore.Close()
+	remoteChunks := chunk.New(t.TempDir())
+	if err := remoteChunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := remoteStore.UpdateNodeFull(&types.Node{NodeID: localCfg.NodeID, PublicKey: localCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+	remoteSrv := New(remoteCfg, remoteStore, remoteChunks)
+	remoteHTTP := httptest.NewServer(remoteSrv.Handler())
+	defer remoteHTTP.Close()
+
+	localStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer localStore.Close()
+	localChunks := chunk.New(t.TempDir())
+	if err := localChunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	remoteNode := types.Node{
+		NodeID:    remoteCfg.NodeID,
+		Address:   strings.TrimPrefix(remoteHTTP.URL, "http://"),
+		PublicKey: remoteCfg.PublicKey,
+		Status:    "online",
+		Trusted:   true,
+	}
+	if err := localStore.UpdateNodeFull(&remoteNode); err != nil {
+		t.Fatal(err)
+	}
+	localSrv := New(localCfg, localStore, localChunks)
+	update := &types.Node{
+		NodeID:         localCfg.NodeID,
+		Name:           "local",
+		Platform:       "test",
+		Address:        "127.0.0.1:7788",
+		PublicKey:      localCfg.PublicKey,
+		TotalBytes:     1234,
+		AvailableBytes: 1000,
+		Status:         "online",
+		Trusted:        true,
+		LastSeen:       time.Now(),
+		JoinedAt:       time.Now(),
+	}
+	if err := localSrv.PublishNodeUpdate(update); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := localSrv.pushEvents(context.Background(), remoteNode); err != nil {
+		t.Fatal(err)
+	}
+	got, err := remoteStore.GetNode(localCfg.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TotalBytes != update.TotalBytes {
+		t.Fatalf("total bytes = %d, want %d", got.TotalBytes, update.TotalBytes)
+	}
+	if got.Status != "online" {
+		t.Fatalf("status = %q, want online", got.Status)
+	}
 }
 
 func TestSyncOnceRefreshesResponsivePeerLastSeen(t *testing.T) {

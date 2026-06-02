@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -58,6 +59,9 @@ func (s *Server) SyncOnce(ctx context.Context) error {
 				firstErr = err
 			}
 			continue
+		}
+		if err := s.pushEvents(ctx, n); err != nil && firstErr == nil {
+			firstErr = err
 		}
 		if err := s.markPeerOnline(n.NodeID, time.Now()); err != nil && firstErr == nil {
 			firstErr = err
@@ -126,6 +130,39 @@ func (s *Server) pullEvents(ctx context.Context, n types.Node) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func (s *Server) pushEvents(ctx context.Context, n types.Node) error {
+	ctx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
+	defer cancel()
+	events, err := s.store.GetEventsSince("", 1000)
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+n.Address+"/api/events/push", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := s.signPeerRequest(req, sha256Hex(body)); err != nil {
+		return err
+	}
+	resp, err := peerHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("push events to %s: %w", n.NodeID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("push events to %s: status %d", n.NodeID, resp.StatusCode)
 	}
 	return nil
 }
