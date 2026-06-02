@@ -24,12 +24,20 @@ import (
 	"github.com/pocketcluster/agent/internal/types"
 )
 
+var version = "dev"
+
 func main() {
 	dataDir := flag.String("data", defaultDataDir(), "data directory path")
 	port := flag.Int("port", 7788, "HTTP listen port")
 	joinBootstrap := flag.String("join", "", "bootstrap base URL to join")
 	joinToken := flag.String("join-token", "", "invite token for joining an existing cluster")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("PocketCluster Agent", version)
+		os.Exit(0)
+	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Printf("PocketCluster Agent starting (platform=%s, data=%s)", runtime.GOOS, *dataDir)
