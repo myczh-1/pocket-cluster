@@ -5,43 +5,32 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import com.pocketcluster.agent.MainActivity
 import com.pocketcluster.agent.PocketClusterApp
 import com.pocketcluster.agent.R
-import com.pocketcluster.agent.config.NodeConfig
-import com.pocketcluster.agent.discovery.MdnsDiscovery
-import com.pocketcluster.agent.server.HttpServer
+import java.io.BufferedReader
 import java.io.File
+import java.io.InputStreamReader
 
 class AgentService : Service() {
 
     companion object {
         private const val TAG = "AgentService"
         private const val NOTIFICATION_ID = 1
-
+        private const val GO_BINARY_NAME = "libpocketcluster.so"
+        private const val DEFAULT_PORT = 7788
         var isRunning: Boolean = false
             private set
-
-        var currentNodeConfig: NodeConfig? = null
-            private set
-
-        fun start(context: Context) {
-            val intent = Intent(context, AgentService::class.java)
-            context.startForegroundService(intent)
-        }
-
-        fun stop(context: Context) {
-            val intent = Intent(context, AgentService::class.java)
-            context.stopService(intent)
-        }
     }
 
-    private var httpServer: HttpServer? = null
-    private var discovery: MdnsDiscovery? = null
+    private var process: Process? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
+    private var logThread: Thread? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -51,7 +40,7 @@ class AgentService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, buildNotification("Starting..."))
+        startForeground(NOTIFICATION_ID, buildNotification("Starting Go agent..."))
         startAgent()
         return START_STICKY
     }
@@ -63,34 +52,76 @@ class AgentService : Service() {
 
     private fun startAgent() {
         try {
+            val binary = File(applicationInfo.nativeLibraryDir, GO_BINARY_NAME)
+            Log.i(TAG, "Looking for binary at: ${binary.absolutePath}")
+
+            if (!binary.exists()) {
+                Log.e(TAG, "Go binary not found at ${binary.absolutePath}")
+                stopSelf()
+                return
+            }
+
+            if (!binary.canExecute()) {
+                Log.e(TAG, "Go binary not executable at ${binary.absolutePath}")
+                stopSelf()
+                return
+            }
+
             val dataDir = File(filesDir, "pocketcluster")
-            val config = NodeConfig.load(dataDir) ?: NodeConfig.create(this, dataDir)
-            currentNodeConfig = config
+            dataDir.mkdirs()
 
-            Log.i(TAG, "Node ID: ${config.nodeId}")
-            Log.i(TAG, "Name: ${config.name}")
-            Log.i(TAG, "Port: ${config.httpPort}")
-
-            // Start mDNS discovery
-            discovery = MdnsDiscovery(
-                context = this,
-                selfNodeId = config.nodeId,
-                selfName = config.name,
-                selfPort = config.httpPort,
-            ).also { it.start() }
-
-            // Start HTTP server
-            httpServer = HttpServer(config, discovery!!).also { it.start() }
-
-            // Acquire partial wake lock to keep CPU running
+            // Acquire wake lock to keep CPU running
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PocketCluster::Agent").apply {
                 acquire()
             }
 
+            // Acquire multicast lock for mDNS
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            multicastLock = wm.createMulticastLock("PocketCluster::mDNS").apply {
+                setReferenceCounted(true)
+                acquire()
+            }
+
+            val pb = ProcessBuilder(
+                binary.absolutePath,
+                "-data", dataDir.absolutePath,
+                "-port", DEFAULT_PORT.toString(),
+            )
+            pb.redirectErrorStream(true)
+            pb.environment()["HOME"] = filesDir.absolutePath
+
+            process = pb.start()
+
+            // Read stdout in background thread for logging
+            logThread = Thread {
+                try {
+                    val reader = BufferedReader(InputStreamReader(process!!.inputStream))
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        Log.i(TAG, "[agent] $line")
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "Log reader stopped: ${e.message}")
+                }
+            }.apply { isDaemon = true; start() }
+
             isRunning = true
-            updateNotification("Running on port ${config.httpPort}")
-            Log.i(TAG, "Agent started successfully")
+            updateNotification("Running on port $DEFAULT_PORT")
+            Log.i(TAG, "Go agent started (pid=${process?.hashCode()})")
+
+            // Monitor process exit
+            Thread {
+                try {
+                    val exitCode = process?.waitFor()
+                    Log.w(TAG, "Go agent exited with code $exitCode")
+                    isRunning = false
+                    updateNotification("Agent stopped (exit=$exitCode)")
+                } catch (e: InterruptedException) {
+                    Log.d(TAG, "Process monitor interrupted")
+                }
+            }.apply { isDaemon = true; start() }
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start agent", e)
             stopSelf()
@@ -98,11 +129,29 @@ class AgentService : Service() {
     }
 
     private fun stopAgent() {
-        wakeLock?.let { if (it.isHeld) it.release() }
-        discovery?.stop()
-        httpServer?.stop()
         isRunning = false
-        currentNodeConfig = null
+
+        process?.let {
+            if (it.isAlive) {
+                it.destroy()
+                // Give it a moment, then force kill
+                Thread.sleep(500)
+                if (it.isAlive) {
+                    it.destroyForcibly()
+                }
+            }
+        }
+        process = null
+
+        logThread?.interrupt()
+        logThread = null
+
+        multicastLock?.let { if (it.isHeld) it.release() }
+        multicastLock = null
+
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+
         Log.i(TAG, "Agent stopped")
     }
 
@@ -110,12 +159,12 @@ class AgentService : Service() {
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            PendingIntent.FLAG_IMMUTABLE,
         )
         return Notification.Builder(this, PocketClusterApp.CHANNEL_ID)
             .setContentTitle("PocketCluster")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()

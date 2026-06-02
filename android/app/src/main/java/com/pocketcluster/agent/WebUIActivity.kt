@@ -9,12 +9,15 @@ import android.webkit.WebChromeClient
 import android.webkit.ConsoleMessage
 import android.util.Log
 import android.app.Activity
-import com.pocketcluster.agent.agent.AgentService
+import android.graphics.Color
+import android.view.View
+import android.view.WindowInsetsController
 
 class WebUIActivity : Activity() {
 
     companion object {
         private const val TAG = "WebUI"
+        private const val PORT = 7788
     }
 
     private lateinit var webView: WebView
@@ -22,6 +25,15 @@ class WebUIActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Edge-to-edge display
+        window.decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        )
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
 
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -31,7 +43,6 @@ class WebUIActivity : Activity() {
 
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    // Stay within the WebView for local agent URLs
                     val host = request.url.host
                     if (host == "localhost" || host == "127.0.0.1") return false
                     return false
@@ -47,10 +58,7 @@ class WebUIActivity : Activity() {
         }
 
         setContentView(webView)
-
-        // Load the WebUI from the local agent
-        val port = AgentService.currentNodeConfig?.httpPort ?: 7788
-        webView.loadUrl("http://localhost:$port/")
+        webView.loadUrl("http://localhost:$PORT/")
     }
 
     override fun onBackPressed() {

@@ -43,8 +43,8 @@ class MainActivity : Activity() {
 
     private fun onToggleClicked() {
         if (AgentService.isRunning) {
-            AgentService.stop(this)
-            updateUI()
+            stopService(Intent(this, AgentService::class.java))
+            btnToggle.postDelayed({ updateUI() }, 500)
         } else {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
@@ -57,7 +57,7 @@ class MainActivity : Activity() {
                     return
                 }
             }
-            toggleAgent()
+            startAgent()
         }
     }
 
@@ -69,15 +69,16 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_NOTIFICATION) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                toggleAgent()
+                startAgent()
             } else {
                 Toast.makeText(this, "Notification permission required for foreground service", Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    private fun toggleAgent() {
-        AgentService.start(this)
+    private fun startAgent() {
+        val intent = Intent(this, AgentService::class.java)
+        startForegroundService(intent)
         btnToggle.postDelayed({ updateUI() }, 500)
     }
 
@@ -86,20 +87,8 @@ class MainActivity : Activity() {
             tvStatus.text = "Running"
             tvStatus.setTextColor(0xFF4CAF50.toInt())
             btnToggle.text = "Stop Agent"
-
-            val config = AgentService.currentNodeConfig
-            if (config != null) {
-                tvNodeInfo.text = buildString {
-                    append("Node ID: ${config.nodeId.take(8)}...\n")
-                    append("Name: ${config.name}\n")
-                    append("Platform: ${config.platform}\n")
-                    append("Port: ${config.httpPort}\n")
-                    if (config.clusterId.isNotEmpty()) {
-                        append("Cluster: ${config.clusterId.take(8)}...\n")
-                    }
-                }
-                tvNodeInfo.visibility = View.VISIBLE
-            }
+            tvNodeInfo.text = "Go agent running on port 7788"
+            tvNodeInfo.visibility = View.VISIBLE
             btnWebUI.visibility = View.VISIBLE
         } else {
             tvStatus.text = "Stopped"

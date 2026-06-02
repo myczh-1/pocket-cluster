@@ -26,6 +26,7 @@
         android:label="PocketCluster"
         android:supportsRtl="true"
         android:theme="@style/Theme.PocketCluster"
+        android:extractNativeLibs="true"
         android:networkSecurityConfig="@xml/network_security_config">
 
         <activity

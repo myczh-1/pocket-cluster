@@ -113,6 +113,12 @@ function FilesPage() {
           onChange={(e) => setSearch(e.target.value)}
           className="border rounded px-3 py-1.5 text-sm flex-1 max-w-xs"
         />
+        <button
+          onClick={loadFiles}
+          className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-300"
+        >
+          ↻ Refresh
+        </button>
         <label className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm cursor-pointer hover:bg-blue-700">
           {uploading ? "Uploading…" : "Upload"}
           <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
@@ -425,7 +431,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen">
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
+      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
         <h1 className="text-lg font-bold">PocketCluster</h1>
         <nav className="flex gap-4">
           {["files", "nodes"].map((t) => (

@@ -19,6 +19,7 @@ GOOS=darwin  GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ${BUILD_DIR}/agent-d
 GOOS=darwin  GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ${BUILD_DIR}/agent-darwin-arm64  ./cmd/agent
 GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ${BUILD_DIR}/agent-windows-amd64.exe ./cmd/agent
 GOOS=windows GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ${BUILD_DIR}/agent-windows-arm64.exe ./cmd/agent
+GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="${LDFLAGS}" -o ${BUILD_DIR}/agent-android-arm64 ./cmd/agent
 
 echo ""
 echo "Build complete:"
