@@ -26,6 +26,8 @@ import (
 
 var version = "dev"
 
+const nodeCapacityUpdateInterval = 30 * time.Second
+
 func main() {
 	dataDir := flag.String("data", defaultDataDir(), "data directory path")
 	port := flag.Int("port", 7788, "HTTP listen port")
@@ -59,27 +61,13 @@ func main() {
 		log.Fatalf("init chunk storage: %v", err)
 	}
 
-	disk, _ := config.GetDiskStats(*dataDir)
-	totalBytes, availableBytes := int64(0), int64(0)
-	if disk != nil {
-		totalBytes = disk.TotalBytes
-		availableBytes = disk.AvailableBytes
+	selfNode, err := buildSelfNode(cfg, *dataDir, *port)
+	if err != nil {
+		log.Printf("read disk capacity: %v", err)
 	}
-	now := time.Now()
-	selfNode := &types.Node{
-		NodeID:         cfg.NodeID,
-		Name:           cfg.Name,
-		Platform:       cfg.Platform,
-		Address:        fmt.Sprintf("%s:%d", localAddress(), *port),
-		PublicKey:      cfg.PublicKey,
-		Status:         "online",
-		Trusted:        true,
-		TotalBytes:     totalBytes,
-		AvailableBytes: availableBytes,
-		LastSeen:       now,
-		JoinedAt:       now,
+	if err := s.UpdateNodeFull(selfNode); err != nil {
+		log.Fatalf("update self node: %v", err)
 	}
-	s.UpdateNodeFull(selfNode)
 	srv := server.New(cfg, s, cs)
 	handler := srv.Handler()
 
@@ -116,6 +104,7 @@ func main() {
 		log.Printf("joined cluster %s via %s", cfg.ClusterID, bootstrap)
 	}
 	go srv.StartSync(ctx, 2*time.Second)
+	go refreshSelfNode(ctx, cfg, s, srv, *dataDir, *port)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -141,6 +130,7 @@ func syncDiscoveredNodes(ctx context.Context, s *store.Store, srv *server.Server
 		case <-ticker.C:
 			now := time.Now()
 			discovered := disc.Nodes()
+
 			joined := false
 
 			for _, n := range discovered {
@@ -185,6 +175,60 @@ func syncDiscoveredNodes(ctx context.Context, s *store.Store, srv *server.Server
 				}
 			} else {
 				ticksWithoutCluster = 0
+			}
+		}
+	}
+}
+
+func buildSelfNode(cfg *config.Config, dataDir string, port int) (*types.Node, error) {
+	disk, err := config.GetDiskStats(dataDir)
+	totalBytes, availableBytes := int64(0), int64(0)
+	if disk != nil {
+		totalBytes = disk.TotalBytes
+		availableBytes = disk.AvailableBytes
+	}
+	usedBytes := totalBytes - availableBytes
+	if usedBytes < 0 {
+		usedBytes = 0
+	}
+	now := time.Now()
+	return &types.Node{
+		NodeID:         cfg.NodeID,
+		Name:           cfg.Name,
+		Platform:       cfg.Platform,
+		Address:        fmt.Sprintf("%s:%d", localAddress(), port),
+		PublicKey:      cfg.PublicKey,
+		Status:         "online",
+		Trusted:        true,
+		TotalBytes:     totalBytes,
+		UsedBytes:      usedBytes,
+		AvailableBytes: availableBytes,
+		LastSeen:       now,
+		JoinedAt:       now,
+	}, err
+}
+
+func refreshSelfNode(ctx context.Context, cfg *config.Config, s *store.Store, srv *server.Server, dataDir string, port int) {
+	ticker := time.NewTicker(nodeCapacityUpdateInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := buildSelfNode(cfg, dataDir, port)
+			if err != nil {
+				log.Printf("refresh self node: %v", err)
+				continue
+			}
+			if err := s.UpdateNodeFull(n); err != nil {
+				log.Printf("update self node: %v", err)
+				continue
+			}
+			if cfg.ClusterID != "" {
+				if err := srv.PublishNodeUpdate(n); err != nil {
+					log.Printf("publish node update: %v", err)
+				}
 			}
 		}
 	}

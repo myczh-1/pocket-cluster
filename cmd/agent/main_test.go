@@ -3,6 +3,8 @@ package main
 import (
 	"testing"
 
+	"github.com/pocketcluster/agent/internal/config"
+
 	"github.com/pocketcluster/agent/internal/store"
 	"github.com/pocketcluster/agent/internal/types"
 )
@@ -16,6 +18,26 @@ func TestNormalizeJoinAddresses(t *testing.T) {
 	}
 	if got := normalizePeerAddress("https://node.local:7788/"); got != "node.local:7788" {
 		t.Fatalf("normalizePeerAddress https = %q", got)
+	}
+}
+
+func TestBuildSelfNodeReportsCapacity(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := buildSelfNode(cfg, t.TempDir(), 7788)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.PublicKey != cfg.PublicKey {
+		t.Fatal("self node public key not populated")
+	}
+	if node.TotalBytes <= 0 {
+		t.Fatalf("total bytes = %d, want > 0", node.TotalBytes)
+	}
+	if node.AvailableBytes <= 0 {
+		t.Fatalf("available bytes = %d, want > 0", node.AvailableBytes)
+	}
+	if node.UsedBytes < 0 {
+		t.Fatalf("used bytes = %d, want >= 0", node.UsedBytes)
 	}
 }
 
@@ -34,4 +56,13 @@ func TestDiscoveredStatusKeepsUntrustedPeersOutOfOnlineSet(t *testing.T) {
 	if got := discoveredStatus(st, "peer"); got != "online" {
 		t.Fatalf("trusted discovered status = %q, want online", got)
 	}
+}
+
+func testConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg, err := config.Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
 }

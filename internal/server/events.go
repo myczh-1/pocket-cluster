@@ -31,6 +31,11 @@ func (s *Server) appendEvent(eventType types.EventType, payload any) (*types.Eve
 	return e, nil
 }
 
+func (s *Server) PublishNodeUpdate(n *types.Node) error {
+	_, err := s.appendEvent(types.EventNodeUpdate, n)
+	return err
+}
+
 func (s *Server) applyEvent(e types.Event) error {
 	switch e.Type {
 	case types.EventFilePut:
@@ -53,7 +58,7 @@ func (s *Server) applyEvent(e types.Event) error {
 		if err := json.Unmarshal(e.Payload, &n); err != nil {
 			return err
 		}
-		return s.store.UpsertNode(&n)
+		return s.store.UpdateNodeFull(&n)
 	default:
 		return nil
 	}
