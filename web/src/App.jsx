@@ -144,6 +144,8 @@ function FilesPage() {
 
 function NodesPage() {
   const [nodes, setNodes] = useState([]);
+  const [invite, setInvite] = useState(null);
+  const [creatingInvite, setCreatingInvite] = useState(false);
   const loadNodes = useCallback(() => {
     api("/nodes").then((r) => { if (r.ok) setNodes(r.data || []); });
   }, []);
@@ -155,6 +157,16 @@ function NodesPage() {
   const totalBytes = nodes.reduce((s, n) => s + (n.total_bytes || 0), 0);
   const usedBytes = nodes.reduce((s, n) => s + (n.used_bytes || 0), 0);
   const onlineCount = nodes.filter((n) => n.status === "online").length;
+  const createInvite = async () => {
+    setCreatingInvite(true);
+    try {
+      const res = await api("/invites", { method: "POST" });
+      if (res.ok) setInvite(res.data);
+    } finally {
+      setCreatingInvite(false);
+    }
+  };
+
 
   return (
     <div>
@@ -171,6 +183,32 @@ function NodesPage() {
           <p className="text-2xl font-bold">{formatBytes(totalBytes)}</p>
           <p className="text-xs text-gray-500">Total · {formatBytes(usedBytes)} used</p>
         </div>
+      </div>
+      <div className="bg-white rounded-lg shadow p-4 mb-6">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="font-semibold text-sm">Invite a node</h2>
+            <p className="text-xs text-gray-500">Creates a one-time token that expires in 15 minutes.</p>
+          </div>
+          <button
+            onClick={createInvite}
+            disabled={creatingInvite}
+            className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+          >
+            {creatingInvite ? "Creating…" : "Create invite"}
+          </button>
+        </div>
+        {invite && (
+          <div className="mt-4 bg-gray-50 rounded p-3">
+            <p className="text-xs text-gray-500 mb-1">Join token</p>
+            <code className="block text-sm break-all">{invite.join_token}</code>
+            <p className="text-xs text-gray-500 mt-3 mb-1">Command</p>
+            <code className="block text-xs break-all">
+              {`./agent -join ${window.location.origin} -join-token ${invite.join_token}`}
+            </code>
+            <p className="text-xs text-gray-400 mt-2">Expires {new Date(invite.expires_at).toLocaleString()}</p>
+          </div>
+        )}
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {nodes.map((n) => <NodeCard key={n.node_id} node={n} />)}

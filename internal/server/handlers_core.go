@@ -1,6 +1,10 @@
 package server
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -44,17 +48,70 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(nodes)})
 }
 
+func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
+	token, err := newInviteToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	now := time.Now()
+	expiresAt := now.Add(15 * time.Minute)
+	invite := &types.Invite{
+		TokenHash: inviteTokenHash(token),
+		CreatedAt: now,
+		ExpiresAt: expiresAt,
+		CreatedBy: s.cfg.NodeID,
+	}
+	if err := s.store.CreateInvite(invite); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+		"join_token": token,
+		"expires_at": expiresAt,
+	})})
+}
+
+func newInviteToken() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+func inviteTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 	var req types.JoinRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	now := time.Now()
+	if req.JoinToken == "" {
+		writeError(w, http.StatusForbidden, "JOIN_TOKEN_REQUIRED", "join token required")
+		return
+	}
+	accepted, err := s.store.UseInvite(inviteTokenHash(req.JoinToken), now)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if !accepted {
+		writeError(w, http.StatusForbidden, "JOIN_TOKEN_INVALID", "join token is invalid, expired, or already used")
+		return
+	}
 	if s.cfg.ClusterID == "" {
 		s.cfg.ClusterID = uuid.New().String()
-		s.cfg.Save()
+		if err := s.cfg.Save(); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
 	}
-	now := time.Now()
 	address := req.DeviceInfo.Address
 	if address == "" {
 		address = r.RemoteAddr

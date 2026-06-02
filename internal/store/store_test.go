@@ -104,3 +104,41 @@ func TestUpsertNodeZeroTimeDoesNotOverwriteLastSeen(t *testing.T) {
 		t.Fatalf("status = %q, want offline", n.Status)
 	}
 }
+
+func TestUseInviteIsOneTimeAndExpires(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.UnixMilli(1000)
+	if err := s.CreateInvite(&types.Invite{TokenHash: "active", CreatedAt: now, ExpiresAt: now.Add(time.Minute), CreatedBy: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := s.UseInvite("active", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("active invite was not accepted")
+	}
+	ok, err = s.UseInvite("active", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("used invite was accepted a second time")
+	}
+
+	if err := s.CreateInvite(&types.Invite{TokenHash: "expired", CreatedAt: now, ExpiresAt: now.Add(-time.Second), CreatedBy: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	ok, err = s.UseInvite("expired", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expired invite was accepted")
+	}
+}

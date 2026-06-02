@@ -88,8 +88,16 @@ func (s *Store) migrate() error {
 			timestamp INTEGER NOT NULL,
 			payload TEXT NOT NULL DEFAULT '{}'
 		)`,
+		`CREATE TABLE IF NOT EXISTS invites (
+			token_hash TEXT PRIMARY KEY,
+			created_at INTEGER NOT NULL DEFAULT 0,
+			expires_at INTEGER NOT NULL DEFAULT 0,
+			used_at INTEGER NOT NULL DEFAULT 0,
+			created_by TEXT NOT NULL DEFAULT ''
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_node_seq ON events(node_id, seq)`,
+		`CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)`,
 	}
 	for _, m := range migrations {
 		if _, err := s.db.Exec(m); err != nil {
@@ -290,6 +298,24 @@ func (s *Store) GetReplicas(chunkID string) ([]types.Replica, error) {
 		reps = append(reps, r)
 	}
 	return reps, rows.Err()
+}
+
+// Invite operations
+
+func (s *Store) CreateInvite(invite *types.Invite) error {
+	_, err := s.db.Exec(`INSERT INTO invites (token_hash, created_at, expires_at, used_at, created_by) VALUES (?, ?, ?, ?, ?)`,
+		invite.TokenHash, timeMillis(invite.CreatedAt), timeMillis(invite.ExpiresAt), timeMillis(invite.UsedAt), invite.CreatedBy)
+	return err
+}
+
+func (s *Store) UseInvite(tokenHash string, now time.Time) (bool, error) {
+	res, err := s.db.Exec(`UPDATE invites SET used_at = ? WHERE token_hash = ? AND used_at = 0 AND expires_at > ?`,
+		timeMillis(now), tokenHash, timeMillis(now))
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	return rows == 1, err
 }
 
 // Event operations

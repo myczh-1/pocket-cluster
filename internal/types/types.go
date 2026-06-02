@@ -54,15 +54,15 @@ type Replica struct {
 type EventType string
 
 const (
-	EventNodeJoin          EventType = "NODE_JOIN"
-	EventNodeUpdate        EventType = "NODE_UPDATE"
-	EventFilePut           EventType = "FILE_PUT"
-	EventFileDelete        EventType = "FILE_DELETE"
-	EventFileRename        EventType = "FILE_RENAME"
-	EventFileConflict      EventType = "FILE_CONFLICT"
-	EventChunkReplicaAdd   EventType = "CHUNK_REPLICA_ADD"
+	EventNodeJoin           EventType = "NODE_JOIN"
+	EventNodeUpdate         EventType = "NODE_UPDATE"
+	EventFilePut            EventType = "FILE_PUT"
+	EventFileDelete         EventType = "FILE_DELETE"
+	EventFileRename         EventType = "FILE_RENAME"
+	EventFileConflict       EventType = "FILE_CONFLICT"
+	EventChunkReplicaAdd    EventType = "CHUNK_REPLICA_ADD"
 	EventChunkReplicaRemove EventType = "CHUNK_REPLICA_REMOVE"
-	EventSnapshotCreated   EventType = "SNAPSHOT_CREATED"
+	EventSnapshotCreated    EventType = "SNAPSHOT_CREATED"
 )
 
 type Event struct {
@@ -87,6 +87,14 @@ const (
 	ReplicaUnderReplicated ReplicaStatus = "under_replicated"
 	ReplicaUnavailable     ReplicaStatus = "unavailable"
 )
+
+type Invite struct {
+	TokenHash string    `json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	UsedAt    time.Time `json:"used_at,omitempty"`
+	CreatedBy string    `json:"created_by"`
+}
 
 type JoinRequest struct {
 	JoinToken  string     `json:"join_token"`
