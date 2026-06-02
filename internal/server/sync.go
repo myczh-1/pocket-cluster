@@ -48,23 +48,22 @@ func (s *Server) SyncOnce(ctx context.Context) error {
 	}
 	var firstErr error
 	for _, n := range nodes {
-		if n.NodeID == s.cfg.NodeID || n.Address == "" || n.Status == "offline" || !n.Trusted {
+		if n.NodeID == s.cfg.NodeID || n.Address == "" || !n.Trusted {
 			continue
 		}
-		if err := s.pullEvents(ctx, n); err != nil {
-			if markErr := s.markPeerOfflineIfStale(n, time.Now()); markErr != nil && firstErr == nil {
-				firstErr = markErr
-			}
-			if firstErr == nil {
+		pullErr := s.pullEvents(ctx, n)
+		pushErr := s.pushEvents(ctx, n)
+		if pullErr == nil || pushErr == nil {
+			if err := s.markPeerOnline(n.NodeID, time.Now()); err != nil && firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
-		if err := s.pushEvents(ctx, n); err != nil && firstErr == nil {
-			firstErr = err
+		if markErr := s.markPeerOfflineIfStale(n, time.Now()); markErr != nil && firstErr == nil {
+			firstErr = markErr
 		}
-		if err := s.markPeerOnline(n.NodeID, time.Now()); err != nil && firstErr == nil {
-			firstErr = err
+		if firstErr == nil {
+			firstErr = fmt.Errorf("pull events from %s: %w; push events: %v", n.NodeID, pullErr, pushErr)
 		}
 	}
 	if err := s.fetchMissingChunks(ctx); err != nil && firstErr == nil {
@@ -141,8 +140,8 @@ func (s *Server) pushEvents(ctx context.Context, n types.Node) error {
 	if err != nil {
 		return err
 	}
-	if len(events) == 0 {
-		return nil
+	if events == nil {
+		events = []types.Event{}
 	}
 	body, err := json.Marshal(map[string]any{"events": events})
 	if err != nil {

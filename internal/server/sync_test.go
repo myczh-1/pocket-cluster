@@ -256,6 +256,117 @@ func TestPushEventsPropagatesNodeUpdate(t *testing.T) {
 	}
 }
 
+func TestSyncOncePushesWhenPullFails(t *testing.T) {
+	localCfg := newTestConfig(t, "local")
+	var pushed atomic.Int32
+	remoteHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events":
+			http.Error(w, "pull disabled", http.StatusServiceUnavailable)
+		case "/api/events/push":
+			pushed.Add(1)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer remoteHTTP.Close()
+
+	localStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer localStore.Close()
+	localChunks := chunk.New(t.TempDir())
+	if err := localChunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	oldSeen := time.Now().Add(-nodeOfflineAfter - time.Second)
+	remoteNode := types.Node{
+		NodeID:   "remote",
+		Address:  strings.TrimPrefix(remoteHTTP.URL, "http://"),
+		Status:   "online",
+		Trusted:  true,
+		LastSeen: oldSeen,
+	}
+	if err := localStore.UpdateNodeFull(&remoteNode); err != nil {
+		t.Fatal(err)
+	}
+	localSrv := New(localCfg, localStore, localChunks)
+	if err := localSrv.PublishNodeUpdate(&types.Node{NodeID: localCfg.NodeID, PublicKey: localCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := localSrv.SyncOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if pushed.Load() == 0 {
+		t.Fatal("events were not pushed after pull failed")
+	}
+	got, err := localStore.GetNode(remoteNode.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "online" {
+		t.Fatalf("status = %q, want online", got.Status)
+	}
+}
+
+func TestSyncOnceRetriesOfflinePeer(t *testing.T) {
+	localCfg := newTestConfig(t, "local")
+	remoteCfg := newTestConfig(t, "remote")
+	remoteStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remoteStore.Close()
+	remoteChunks := chunk.New(t.TempDir())
+	if err := remoteChunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := remoteStore.UpdateNodeFull(&types.Node{NodeID: localCfg.NodeID, PublicKey: localCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+	remoteHTTP := httptest.NewServer(New(remoteCfg, remoteStore, remoteChunks).Handler())
+	defer remoteHTTP.Close()
+
+	localStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer localStore.Close()
+	localChunks := chunk.New(t.TempDir())
+	if err := localChunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	oldSeen := time.Now().Add(-nodeOfflineAfter - time.Second)
+	if err := localStore.UpdateNodeFull(&types.Node{
+		NodeID:    remoteCfg.NodeID,
+		Address:   strings.TrimPrefix(remoteHTTP.URL, "http://"),
+		PublicKey: remoteCfg.PublicKey,
+		Status:    "offline",
+		Trusted:   true,
+		LastSeen:  oldSeen,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	localSrv := New(localCfg, localStore, localChunks)
+
+	if err := localSrv.SyncOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := localStore.GetNode(remoteCfg.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "online" {
+		t.Fatalf("status = %q, want online", got.Status)
+	}
+	if !got.LastSeen.After(oldSeen) {
+		t.Fatalf("last_seen = %s, want after %s", got.LastSeen, oldSeen)
+	}
+}
+
 func TestSyncOnceRefreshesResponsivePeerLastSeen(t *testing.T) {
 	remoteStore, err := store.Open(t.TempDir())
 	if err != nil {
