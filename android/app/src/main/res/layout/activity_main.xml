@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:gravity="center_horizontal">
+
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="PocketCluster Agent"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:layout_marginTop="32dp" />
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Stopped"
+        android:textSize="16sp"
+        android:layout_marginTop="16dp"
+        android:textColor="#888888" />
+
+    <TextView
+        android:id="@+id/tvNodeInfo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="14sp"
+        android:layout_marginTop="24dp"
+        android:fontFamily="monospace"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/btnToggle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Start Agent"
+        android:layout_marginTop="32dp" />
+
+    <Button
+        android:id="@+id/btnWebUI"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Open WebUI"
+        android:layout_marginTop="16dp"
+        android:visibility="gone" />
+
+</LinearLayout>
