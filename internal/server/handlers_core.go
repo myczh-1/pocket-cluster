@@ -93,7 +93,13 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(nodes)})
+	trusted := make([]types.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Trusted {
+			trusted = append(trusted, n)
+		}
+	}
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(trusted)})
 }
 
 func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {

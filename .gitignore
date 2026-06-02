@@ -1,5 +1,5 @@
 .DS_Store
-agent
+/agent
 *.log
 
 # Runtime data

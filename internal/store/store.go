@@ -135,6 +135,12 @@ func (s *Store) GetNode(nodeID string) (*types.Node, error) {
 	return scanNode(row)
 }
 
+func (s *Store) HasTrustedNodeAtAddress(address string) bool {
+	var count int
+	s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE address = ? AND trusted = 1`, address).Scan(&count)
+	return count > 0
+}
+
 func (s *Store) ListNodes() ([]types.Node, error) {
 	rows, err := s.db.Query(`SELECT node_id, name, platform, address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes`)
 	if err != nil {
