@@ -36,6 +36,10 @@ func (s *Server) handleStoreChunk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "X-Chunk-Hash header required")
 		return
 	}
+	if bodyHash := r.Header.Get(authBodySHA256Header); bodyHash != expectedHash {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "signed body hash mismatch")
+		return
+	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())

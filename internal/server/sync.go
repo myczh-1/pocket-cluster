@@ -92,6 +92,9 @@ func (s *Server) pullEvents(ctx context.Context, n types.Node) error {
 	if err != nil {
 		return err
 	}
+	if err := s.signPeerRequest(req, emptyBodySHA256); err != nil {
+		return err
+	}
 	resp, err := peerHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("pull events from %s: %w", n.NodeID, err)
@@ -238,6 +241,9 @@ func (s *Server) storeChunkToPeer(ctx context.Context, n types.Node, chunkID str
 	if err != nil {
 		return err
 	}
+	if err := s.signPeerRequest(req, chunkID); err != nil {
+		return err
+	}
 	req.Header.Set("X-Chunk-Hash", chunkID)
 	req.ContentLength = size
 	resp, err := peerHTTPClient.Do(req)
@@ -274,6 +280,9 @@ func (s *Server) storeRemoteChunk(ctx context.Context, address, chunkID string) 
 	if err != nil {
 		return "", 0, err
 	}
+	if err := s.signPeerRequest(req, emptyBodySHA256); err != nil {
+		return "", 0, err
+	}
 	resp, err := peerHTTPClient.Do(req)
 	if err != nil {
 		return "", 0, err
@@ -307,6 +316,9 @@ func (s *Server) writeChunk(ctx context.Context, w io.Writer, chunkID string) er
 		url := "http://" + n.Address + "/api/chunks/" + chunkID
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
+			continue
+		}
+		if err := s.signPeerRequest(req, emptyBodySHA256); err != nil {
 			continue
 		}
 		resp, err := peerHTTPClient.Do(req)

@@ -118,8 +118,9 @@ type JoinResponse struct {
 }
 
 type NodeRef struct {
-	NodeID  string `json:"node_id"`
-	Address string `json:"address"`
+	NodeID    string `json:"node_id"`
+	Address   string `json:"address"`
+	PublicKey string `json:"public_key"`
 }
 
 type APIResponse struct {

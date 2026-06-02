@@ -65,7 +65,7 @@ func newJoinTestServer(t *testing.T, nodeID string) (*config.Config, *store.Stor
 		st.Close()
 		t.Fatal(err)
 	}
-	cfg := &config.Config{NodeID: nodeID, ClusterID: "cluster", Name: nodeID, Platform: "test"}
+	cfg := newTestConfig(t, nodeID)
 	return cfg, st, New(cfg, st, chunks)
 }
 

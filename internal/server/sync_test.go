@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/pocketcluster/agent/internal/chunk"
-	"github.com/pocketcluster/agent/internal/config"
 	"github.com/pocketcluster/agent/internal/store"
 	"github.com/pocketcluster/agent/internal/types"
 )
@@ -30,7 +29,8 @@ func TestFetchMissingChunksCopiesReplicaAndPublishesLocalReplica(t *testing.T) {
 	if err := remoteChunks.Init(); err != nil {
 		t.Fatal(err)
 	}
-	remoteCfg := &config.Config{NodeID: "remote", ClusterID: "cluster"}
+	remoteCfg := newTestConfig(t, "remote")
+	localCfg := newTestConfig(t, "local")
 	remoteSrv := New(remoteCfg, remoteStore, remoteChunks)
 	hash, size, err := remoteChunks.Store(bytes.NewReader(content))
 	if err != nil {
@@ -41,6 +41,9 @@ func TestFetchMissingChunksCopiesReplicaAndPublishesLocalReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := remoteStore.UpsertReplica(&types.Replica{ChunkID: hash, NodeID: remoteCfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := remoteStore.UpsertNode(&types.Node{NodeID: localCfg.NodeID, PublicKey: localCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
 		t.Fatal(err)
 	}
 	remoteHTTP := httptest.NewServer(remoteSrv.Handler())
@@ -55,9 +58,8 @@ func TestFetchMissingChunksCopiesReplicaAndPublishesLocalReplica(t *testing.T) {
 	if err := localChunks.Init(); err != nil {
 		t.Fatal(err)
 	}
-	localCfg := &config.Config{NodeID: "local", ClusterID: "cluster"}
 	localSrv := New(localCfg, localStore, localChunks)
-	if err := localStore.UpsertNode(&types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), Status: "online", Trusted: true}); err != nil {
+	if err := localStore.UpsertNode(&types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), PublicKey: remoteCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := localStore.UpsertFile(&types.File{FileID: "file", Name: "file.txt", Path: "/file.txt", ChunkIDs: []string{hash}, ModifiedBy: remoteCfg.NodeID}); err != nil {
@@ -109,8 +111,12 @@ func TestRepairChunkReplicasPushesLocalChunkToTrustedPeer(t *testing.T) {
 	if err := remoteChunks.Init(); err != nil {
 		t.Fatal(err)
 	}
-	remoteCfg := &config.Config{NodeID: "remote", ClusterID: "cluster"}
+	remoteCfg := newTestConfig(t, "remote")
+	localCfg := newTestConfig(t, "local")
 	remoteSrv := New(remoteCfg, remoteStore, remoteChunks)
+	if err := remoteStore.UpsertNode(&types.Node{NodeID: localCfg.NodeID, PublicKey: localCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
 	remoteHTTP := httptest.NewServer(remoteSrv.Handler())
 	defer remoteHTTP.Close()
 
@@ -123,7 +129,6 @@ func TestRepairChunkReplicasPushesLocalChunkToTrustedPeer(t *testing.T) {
 	if err := localChunks.Init(); err != nil {
 		t.Fatal(err)
 	}
-	localCfg := &config.Config{NodeID: "local", ClusterID: "cluster"}
 	localSrv := New(localCfg, localStore, localChunks)
 	hash, size, err := localChunks.Store(bytes.NewReader(content))
 	if err != nil {
@@ -136,7 +141,7 @@ func TestRepairChunkReplicasPushesLocalChunkToTrustedPeer(t *testing.T) {
 	if err := localStore.UpsertReplica(&types.Replica{ChunkID: hash, NodeID: localCfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := localStore.UpsertNode(&types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), Status: "online", Trusted: true}); err != nil {
+	if err := localStore.UpsertNode(&types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), PublicKey: remoteCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
 		t.Fatal(err)
 	}
 	nodes, err := localStore.ListNodes()
@@ -188,7 +193,11 @@ func TestSyncOnceRefreshesResponsivePeerLastSeen(t *testing.T) {
 	if err := remoteChunks.Init(); err != nil {
 		t.Fatal(err)
 	}
-	remoteCfg := &config.Config{NodeID: "remote", ClusterID: "cluster"}
+	remoteCfg := newTestConfig(t, "remote")
+	localCfg := newTestConfig(t, "local")
+	if err := remoteStore.UpsertNode(&types.Node{NodeID: localCfg.NodeID, PublicKey: localCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
 	remoteHTTP := httptest.NewServer(New(remoteCfg, remoteStore, remoteChunks).Handler())
 	defer remoteHTTP.Close()
 
@@ -202,10 +211,10 @@ func TestSyncOnceRefreshesResponsivePeerLastSeen(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldSeen := time.Now().Add(-nodeOfflineAfter - time.Second)
-	if err := localStore.UpsertNode(&types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), Status: "online", Trusted: true, LastSeen: oldSeen}); err != nil {
+	if err := localStore.UpsertNode(&types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), PublicKey: remoteCfg.PublicKey, Status: "online", Trusted: true, LastSeen: oldSeen}); err != nil {
 		t.Fatal(err)
 	}
-	localSrv := New(&config.Config{NodeID: "local", ClusterID: "cluster"}, localStore, localChunks)
+	localSrv := New(localCfg, localStore, localChunks)
 
 	if err := localSrv.SyncOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -240,7 +249,7 @@ func TestSyncOnceMarksStaleFailedPeerOffline(t *testing.T) {
 	if err := localStore.UpsertNode(&types.Node{NodeID: "stale-peer", Address: address, Status: "online", Trusted: true, LastSeen: oldSeen}); err != nil {
 		t.Fatal(err)
 	}
-	localSrv := New(&config.Config{NodeID: "local", ClusterID: "cluster"}, localStore, localChunks)
+	localSrv := New(newTestConfig(t, "local"), localStore, localChunks)
 
 	if err := localSrv.SyncOnce(context.Background()); err == nil {
 		t.Fatal("SyncOnce succeeded; expected failed peer error")
@@ -264,7 +273,7 @@ func TestReplicaStatusIgnoresOfflineReplicaNodes(t *testing.T) {
 	if err := localChunks.Init(); err != nil {
 		t.Fatal(err)
 	}
-	localSrv := New(&config.Config{NodeID: "local", ClusterID: "cluster"}, localStore, localChunks)
+	localSrv := New(newTestConfig(t, "local"), localStore, localChunks)
 	now := time.Now()
 	const chunkID = "chunk"
 	if err := localStore.UpsertReplica(&types.Replica{ChunkID: chunkID, NodeID: "local", Status: "available", StoredAt: now, VerifiedAt: now}); err != nil {
@@ -308,7 +317,11 @@ func TestPullEventsIgnoresEnvironmentHTTPProxy(t *testing.T) {
 	if err := remoteChunks.Init(); err != nil {
 		t.Fatal(err)
 	}
-	remoteCfg := &config.Config{NodeID: "remote", ClusterID: "cluster"}
+	remoteCfg := newTestConfig(t, "remote")
+	localCfg := newTestConfig(t, "local")
+	if err := remoteStore.UpsertNode(&types.Node{NodeID: localCfg.NodeID, PublicKey: localCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
 	remoteSrv := New(remoteCfg, remoteStore, remoteChunks)
 	if _, err := remoteSrv.appendEvent(types.EventNodeUpdate, &types.Node{NodeID: remoteCfg.NodeID, Address: "remote-address", Status: "online"}); err != nil {
 		t.Fatal(err)
@@ -331,9 +344,9 @@ func TestPullEventsIgnoresEnvironmentHTTPProxy(t *testing.T) {
 	if err := localChunks.Init(); err != nil {
 		t.Fatal(err)
 	}
-	localSrv := New(&config.Config{NodeID: "local", ClusterID: "cluster"}, localStore, localChunks)
+	localSrv := New(localCfg, localStore, localChunks)
 
-	remoteNode := types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), Status: "online", Trusted: true}
+	remoteNode := types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), PublicKey: remoteCfg.PublicKey, Status: "online", Trusted: true}
 	if err := localSrv.pullEvents(context.Background(), remoteNode); err != nil {
 		t.Fatal(err)
 	}

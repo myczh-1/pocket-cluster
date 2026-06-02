@@ -18,12 +18,16 @@ All requests between nodes must include a signature header for authentication.
 
 ```text
 X-Node-ID: <node_id>
-X-Signature: <ed25519-signature-of-body>
+X-Signature: <base64-ed25519-signature>
 X-Timestamp: <unix-millis>
+X-Body-SHA256: <hex-sha256-of-request-body>
 ```
 
-- Signature covers: `method + path + body + timestamp`.
-- Receiving node verifies signature against the sender's public key from `trusted_nodes`.
+- Required for peer-to-peer metadata and chunk APIs: `/api/events`, `/api/events/push`, `/api/chunks`, and `/api/chunks/{hash}`.
+- Signature message is newline-joined as: `method + "\n" + request_uri + "\n" + body_sha256 + "\n" + node_id + "\n" + timestamp`.
+- `request_uri` includes the query string when present.
+- Empty-body requests use SHA256 of the empty byte string.
+- Receiving node verifies the signature against the sender's public key from trusted node metadata.
 - Requests with expired timestamps (>5 min skew) are rejected.
 
 ### Response Envelope
@@ -101,6 +105,24 @@ Returns all known nodes.
 }
 ```
 
+### POST /api/invites
+
+Create a one-time invite token from an existing node UI.
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "join_token": "random-token",
+    "expires_at": "2026-06-02T10:15:00Z"
+  }
+}
+```
+
+Tokens are valid for 15 minutes and are consumed by the first successful join.
+
 ### POST /api/join/request
 
 New node requests to join the cluster.
@@ -130,8 +152,8 @@ New node requests to join the cluster.
     "cluster_id": "xxx",
     "approved": true,
     "existing_nodes": [
-      { "node_id": "nodeA", "address": "192.168.1.10:7788" },
-      { "node_id": "nodeB", "address": "192.168.1.20:7788" }
+      { "node_id": "nodeA", "address": "192.168.1.10:7788", "public_key": "base64-ed25519-pubkey" },
+      { "node_id": "nodeB", "address": "192.168.1.20:7788", "public_key": "base64-ed25519-pubkey" }
     ]
   }
 }
@@ -295,6 +317,10 @@ Store a chunk from another node.
 **Headers:**
 
 ```text
+X-Node-ID: <node_id>
+X-Signature: <base64-ed25519-signature>
+X-Timestamp: <unix-millis>
+X-Body-SHA256: <sha256>
 X-Chunk-Hash: <sha256>
 Content-Length: <size>
 ```
