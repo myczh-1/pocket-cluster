@@ -58,7 +58,7 @@ func createNew(dataDir string) (*Config, error) {
 	cfg := &Config{
 		NodeID:    uuid.New().String(),
 		Name:      hostname,
-		ClusterID: uuid.New().String(),
+		ClusterID: "",
 		PublicKey: base64.StdEncoding.EncodeToString(pub),
 		SecretKey: base64.StdEncoding.EncodeToString(priv),
 		DataDir:   dataDir,
