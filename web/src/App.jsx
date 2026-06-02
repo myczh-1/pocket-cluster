@@ -225,14 +225,9 @@ function JoinPage({ mode }) {
 
   useEffect(() => {
     if (mode === "invite") {
-      api("/nodes/discovered").then((r) => {
-        if (r.ok) setDiscovered(r.data || []);
-      });
-      const id = setInterval(() => {
-        api("/nodes/discovered").then((r) => {
-          if (r.ok) setDiscovered(r.data || []);
-        });
-      }, 3000);
+      const poll = () => api("/nodes/discovered").then((r) => { if (r.ok) setDiscovered(r.data || []); });
+      poll();
+      const id = setInterval(poll, 3000);
       return () => clearInterval(id);
     }
   }, [mode]);
@@ -242,11 +237,8 @@ function JoinPage({ mode }) {
     setLoading(true);
     try {
       const res = await api("/cluster", { method: "POST" });
-      if (res.ok) {
-        window.location.reload();
-      } else {
-        setError(res.error?.message || "Create failed");
-      }
+      if (res.ok) window.location.reload();
+      else setError(res.error?.message || "Create failed");
     } catch (err) {
       setError(err.message || "Network error");
     } finally {
@@ -258,18 +250,15 @@ function JoinPage({ mode }) {
     e.preventDefault();
     setError(null);
     setLoading(true);
-    const addr = mode === "invite" && selectedAddr ? selectedAddr : bootstrap;
+    const addr = selectedAddr || bootstrap;
     try {
       const res = await api("/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bootstrap: addr, join_token: token }),
       });
-      if (res.ok) {
-        window.location.reload();
-      } else {
-        setError(res.error?.message || "Join failed");
-      }
+      if (res.ok) window.location.reload();
+      else setError(res.error?.message || "Join failed");
     } catch (err) {
       setError(err.message || "Network error");
     } finally {
@@ -277,40 +266,20 @@ function JoinPage({ mode }) {
     }
   };
 
-  if (mode === "auto") {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="bg-white rounded-lg shadow p-8 w-full max-w-md text-center">
-          <h1 className="text-xl font-bold mb-2">PocketCluster</h1>
-          <p className="text-sm text-gray-500 mb-6">
-            Searching for peers on the local network…
-          </p>
-          <div className="animate-pulse text-blue-500 text-sm mb-6">Discovering nodes…</div>
-          <p className="text-xs text-gray-400 mb-4">
-            This node will auto-join when a peer is found, or create a new pool if none exists.
-          </p>
-          <button
-            onClick={handleCreate}
-            disabled={loading}
-            className="w-full bg-green-600 text-white rounded px-4 py-2 text-sm hover:bg-green-700 disabled:opacity-50"
-          >
-            {loading ? "Creating…" : "Create pool now"}
-          </button>
-          {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen flex items-center justify-center">
       <div className="bg-white rounded-lg shadow p-8 w-full max-w-md">
         <h1 className="text-xl font-bold mb-2">PocketCluster</h1>
-        <p className="text-sm text-gray-500 mb-6">
-          This node is not part of a pool yet.
-        </p>
+        <p className="text-sm text-gray-500 mb-6">This node is not part of a pool yet.</p>
 
-        <div className="mb-8">
+        {mode === "auto" && (
+          <div className="mb-6 bg-blue-50 rounded p-3 text-sm text-blue-700 flex items-center gap-2">
+            <span className="animate-pulse">●</span>
+            Auto-discovering peers on the local network…
+          </div>
+        )}
+
+        <div className="mb-6">
           <h2 className="text-sm font-semibold text-gray-700 mb-3">First node?</h2>
           <button
             onClick={handleCreate}
@@ -323,8 +292,8 @@ function JoinPage({ mode }) {
 
         <div className="border-t pt-6">
           <h2 className="text-sm font-semibold text-gray-700 mb-3">Join an existing pool</h2>
-          {discovered.length > 0 && (
-            <div className="mb-4">
+          {mode === "invite" && discovered.length > 0 && (
+            <div className="mb-3">
               <label className="block text-xs text-gray-500 mb-1">Discovered nodes</label>
               <select
                 value={selectedAddr}
@@ -333,14 +302,12 @@ function JoinPage({ mode }) {
               >
                 <option value="">Select a node…</option>
                 {discovered.map((n) => (
-                  <option key={n.node_id} value={n.address}>
-                    {n.name} ({n.address})
-                  </option>
+                  <option key={n.node_id} value={"http://" + n.address}>{n.name} ({n.address})</option>
                 ))}
               </select>
             </div>
           )}
-          <form onSubmit={handleJoin} className="space-y-4">
+          <form onSubmit={handleJoin} className="space-y-3">
             {!selectedAddr && (
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Bootstrap node address</label>
@@ -353,19 +320,21 @@ function JoinPage({ mode }) {
                 />
               </div>
             )}
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Invite token</label>
-              <input
-                type="text"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="Paste invite token"
-                className="w-full border rounded px-3 py-2 text-sm"
-              />
-            </div>
+            {mode === "invite" && (
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Invite token</label>
+                <input
+                  type="text"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder="Paste invite token"
+                  className="w-full border rounded px-3 py-2 text-sm"
+                />
+              </div>
+            )}
             <button
               type="submit"
-              disabled={loading || !(selectedAddr || bootstrap) || !token}
+              disabled={loading || !(selectedAddr || bootstrap) || (mode === "invite" && !token)}
               className="w-full bg-blue-600 text-white rounded px-4 py-2 text-sm hover:bg-blue-700 disabled:opacity-50"
             >
               {loading ? "Joining…" : "Join pool"}
