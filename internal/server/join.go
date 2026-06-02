@@ -31,7 +31,7 @@ func (s *Server) JoinViaBootstrap(bootstrap, joinToken string) error {
 		if ref.NodeID == s.cfg.NodeID || ref.Address == "" {
 			continue
 		}
-		if err := s.store.UpsertNode(&types.Node{
+		if err := s.store.UpdateNodeFull(&types.Node{
 			NodeID:    ref.NodeID,
 			Name:      ref.Name,
 			Address:   normalizeNodeAddress(ref.Address),

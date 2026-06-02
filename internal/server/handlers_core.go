@@ -202,7 +202,7 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 		LastSeen:       now,
 		JoinedAt:       now,
 	}
-	if err := s.store.UpsertNode(newNode); err != nil {
+	if err := s.store.UpdateNodeFull(newNode); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}

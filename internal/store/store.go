@@ -136,6 +136,27 @@ func (s *Store) UpdateNodeStatus(nodeID, status string, lastSeen time.Time) erro
 	return err
 }
 
+func (s *Store) UpdateNodeFull(n *types.Node) error {
+	_, err := s.db.Exec(`INSERT INTO nodes
+		(node_id, name, platform, address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(node_id) DO UPDATE SET
+			name = excluded.name,
+			platform = excluded.platform,
+			address = excluded.address,
+			public_key = excluded.public_key,
+			total_bytes = excluded.total_bytes,
+			used_bytes = excluded.used_bytes,
+			available_bytes = excluded.available_bytes,
+			status = excluded.status,
+			trusted = excluded.trusted,
+			last_seen = excluded.last_seen,
+			joined_at = CASE WHEN excluded.joined_at != 0 THEN excluded.joined_at ELSE nodes.joined_at END`,
+		n.NodeID, n.Name, n.Platform, n.Address, n.PublicKey, n.TotalBytes, n.UsedBytes, n.AvailableBytes,
+		n.Status, boolToInt(n.Trusted), timeMillis(n.LastSeen), timeMillis(n.JoinedAt))
+	return err
+}
+
 func (s *Store) GetNode(nodeID string) (*types.Node, error) {
 	row := s.db.QueryRow(`SELECT node_id, name, platform, address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes WHERE node_id = ?`, nodeID)
 	return scanNode(row)
