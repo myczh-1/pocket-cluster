@@ -146,6 +146,29 @@ function NodesPage() {
   const [nodes, setNodes] = useState([]);
   const [invite, setInvite] = useState(null);
   const [creatingInvite, setCreatingInvite] = useState(false);
+  const [showSwitch, setShowSwitch] = useState(false);
+  const [switchAddr, setSwitchAddr] = useState("");
+  const [switchToken, setSwitchToken] = useState("");
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState(null);
+  const handleSwitch = async (e) => {
+    e.preventDefault();
+    setSwitchError(null);
+    setSwitching(true);
+    try {
+      const res = await api("/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bootstrap: switchAddr, join_token: switchToken }),
+      });
+      if (res.ok) window.location.reload();
+      else setSwitchError(res.error?.message || "Join failed");
+    } catch (err) {
+      setSwitchError(err.message || "Network error");
+    } finally {
+      setSwitching(false);
+    }
+  };
   const loadNodes = useCallback(() => {
     api("/nodes").then((r) => { if (r.ok) setNodes(r.data || []); });
   }, []);
@@ -206,6 +229,41 @@ function NodesPage() {
             <code className="block text-xs break-all text-gray-600">{window.location.origin}</code>
             <p className="text-xs text-gray-400 mt-2">Expires {new Date(invite.expires_at).toLocaleString()}</p>
           </div>
+        )}
+      </div>
+      <div className="bg-white rounded-lg shadow p-4 mb-6">
+        <button
+          onClick={() => setShowSwitch(!showSwitch)}
+          className="text-sm text-gray-500 hover:text-gray-700"
+        >
+          {showSwitch ? "▲ Hide" : "▼ Join another pool"}…
+        </button>
+        {showSwitch && (
+          <form onSubmit={handleSwitch} className="mt-3 space-y-3">
+            <input
+              type="text"
+              value={switchAddr}
+              onChange={(e) => setSwitchAddr(e.target.value)}
+              placeholder="http://192.168.1.10:7788"
+              required
+              className="w-full border rounded px-3 py-2 text-sm"
+            />
+            <input
+              type="text"
+              value={switchToken}
+              onChange={(e) => setSwitchToken(e.target.value)}
+              placeholder="Invite token (leave empty for auto mode)"
+              className="w-full border rounded px-3 py-2 text-sm"
+            />
+            {switchError && <p className="text-sm text-red-600">{switchError}</p>}
+            <button
+              type="submit"
+              disabled={switching || !switchAddr}
+              className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+            >
+              {switching ? "Joining…" : "Switch pool"}
+            </button>
+          </form>
         )}
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

@@ -61,10 +61,6 @@ func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleJoinCluster(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.ClusterID != "" {
-		writeError(w, http.StatusConflict, "ALREADY_JOINED", "node already belongs to a cluster")
-		return
-	}
 	var req struct {
 		Bootstrap string `json:"bootstrap"`
 		JoinToken string `json:"join_token"`
