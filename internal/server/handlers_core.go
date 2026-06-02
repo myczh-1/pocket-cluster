@@ -181,10 +181,7 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	address := req.DeviceInfo.Address
-	if address == "" {
-		address = r.RemoteAddr
-	}
+	address := addressFromRemote(r.RemoteAddr, req.DeviceInfo.Address)
 	newNode := &types.Node{
 		NodeID:         req.NodeID,
 		Name:           req.DeviceInfo.Name,
@@ -210,7 +207,19 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 	var refs []types.NodeRef
 	for _, n := range nodes {
 		if n.NodeID != req.NodeID {
-			refs = append(refs, types.NodeRef{NodeID: n.NodeID, Name: n.Name, Address: n.Address, PublicKey: n.PublicKey, TotalBytes: n.TotalBytes, AvailableBytes: n.AvailableBytes})
+			refs = append(refs, types.NodeRef{
+				NodeID:         n.NodeID,
+				Name:           n.Name,
+				Platform:       n.Platform,
+				Address:        n.Address,
+				PublicKey:      n.PublicKey,
+				TotalBytes:     n.TotalBytes,
+				UsedBytes:      n.UsedBytes,
+				AvailableBytes: n.AvailableBytes,
+				Status:         n.Status,
+				LastSeen:       n.LastSeen,
+				JoinedAt:       n.JoinedAt,
+			})
 		}
 	}
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(types.JoinResponse{

@@ -118,12 +118,17 @@ type JoinResponse struct {
 }
 
 type NodeRef struct {
-	NodeID         string `json:"node_id"`
-	Name           string `json:"name,omitempty"`
-	Address        string `json:"address"`
-	PublicKey      string `json:"public_key"`
-	TotalBytes     int64  `json:"total_bytes,omitempty"`
-	AvailableBytes int64  `json:"available_bytes,omitempty"`
+	NodeID         string    `json:"node_id"`
+	Name           string    `json:"name,omitempty"`
+	Platform       string    `json:"platform,omitempty"`
+	Address        string    `json:"address"`
+	PublicKey      string    `json:"public_key"`
+	TotalBytes     int64     `json:"total_bytes,omitempty"`
+	UsedBytes      int64     `json:"used_bytes,omitempty"`
+	AvailableBytes int64     `json:"available_bytes,omitempty"`
+	Status         string    `json:"status,omitempty"`
+	LastSeen       time.Time `json:"last_seen,omitempty"`
+	JoinedAt       time.Time `json:"joined_at,omitempty"`
 }
 type APIResponse struct {
 	OK    bool            `json:"ok"`

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pocketcluster/agent/internal/chunk"
 	"github.com/pocketcluster/agent/internal/config"
@@ -162,6 +163,59 @@ func TestJoinClusterAutoModeAcceptsBareAddressWithoutToken(t *testing.T) {
 	}
 	if reloaded.ClusterID != "auto-cluster" {
 		t.Fatalf("cluster_id = %q, want auto-cluster", reloaded.ClusterID)
+	}
+}
+
+func TestJoinClusterPreservesExistingNodeStatus(t *testing.T) {
+	bootstrapCfg, bootstrapStore, bootstrapSrv := newJoinTestServer(t, "bootstrap")
+	if err := bootstrapStore.UpdateNodeFull(&types.Node{
+		NodeID:    "old-mac",
+		Name:      "old mac",
+		Address:   "10.8.0.10:7788",
+		PublicKey: "old-key",
+		Status:    "offline",
+		Trusted:   true,
+		LastSeen:  time.UnixMilli(1000),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer bootstrapStore.Close()
+	bootstrapCfg.ClusterID = "test-cluster"
+	if err := bootstrapCfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapHTTP := httptest.NewServer(bootstrapSrv.Handler())
+	defer bootstrapHTTP.Close()
+
+	joinerCfg, joinerStore, joinerSrv := newJoinTestServer(t, "new-mac")
+	if err := joinerStore.UpdateNodeFull(&types.Node{NodeID: "new-mac", Name: "new mac", Address: "10.8.0.11:7788", PublicKey: joinerCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer joinerStore.Close()
+
+	body := mustJSON(t, map[string]string{"bootstrap": bootstrapHTTP.URL})
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/join", bytes.NewReader(body))
+	joinerSrv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("join status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	oldMac, err := joinerStore.GetNode("old-mac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldMac.Status != "offline" {
+		t.Fatalf("old mac status = %q, want offline", oldMac.Status)
+	}
+	if !oldMac.LastSeen.Equal(time.UnixMilli(1000)) {
+		t.Fatalf("old mac last_seen = %s, want preserved", oldMac.LastSeen)
+	}
+}
+
+func TestAddressFromRemoteKeepsAdvertisedPort(t *testing.T) {
+	got := addressFromRemote("10.8.0.20:53210", "192.168.1.10:7788")
+	if got != "10.8.0.20:7788" {
+		t.Fatalf("address = %q, want VPN host with advertised port", got)
 	}
 }
 

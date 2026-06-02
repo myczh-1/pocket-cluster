@@ -31,16 +31,27 @@ func (s *Server) JoinViaBootstrap(bootstrap, joinToken string) error {
 		if ref.NodeID == s.cfg.NodeID || ref.Address == "" {
 			continue
 		}
+		status := ref.Status
+		if status == "" {
+			status = "online"
+		}
+		lastSeen := ref.LastSeen
+		if lastSeen.IsZero() {
+			lastSeen = now
+		}
 		if err := s.store.UpdateNodeFull(&types.Node{
 			NodeID:         ref.NodeID,
 			Name:           ref.Name,
+			Platform:       ref.Platform,
 			Address:        normalizeNodeAddress(ref.Address),
 			PublicKey:      ref.PublicKey,
 			TotalBytes:     ref.TotalBytes,
+			UsedBytes:      ref.UsedBytes,
 			AvailableBytes: ref.AvailableBytes,
-			Status:         "online",
+			Status:         status,
 			Trusted:        true,
-			LastSeen:       now,
+			LastSeen:       lastSeen,
+			JoinedAt:       ref.JoinedAt,
 		}); err != nil {
 			return err
 		}

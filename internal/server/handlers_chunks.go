@@ -106,7 +106,9 @@ func (s *Server) handlePushEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accepted := 0
+	senderNodeID := r.Header.Get("X-Node-ID")
 	for _, e := range req.Events {
+		e = rewritePushedNodeAddress(e, senderNodeID, r.RemoteAddr)
 		inserted, err := s.store.InsertEvent(&e)
 		if err != nil {
 			continue
@@ -122,4 +124,22 @@ func (s *Server) handlePushEvents(w http.ResponseWriter, r *http.Request) {
 		"accepted":  accepted,
 		"conflicts": []any{},
 	})})
+}
+
+func rewritePushedNodeAddress(e types.Event, senderNodeID, remoteAddr string) types.Event {
+	if e.Type != types.EventNodeUpdate && e.Type != types.EventNodeJoin {
+		return e
+	}
+	var n types.Node
+	if err := json.Unmarshal(e.Payload, &n); err != nil {
+		return e
+	}
+	if n.NodeID == "" || n.NodeID != senderNodeID {
+		return e
+	}
+	n.Address = addressFromRemote(remoteAddr, n.Address)
+	if payload, err := json.Marshal(n); err == nil {
+		e.Payload = payload
+	}
+	return e
 }
