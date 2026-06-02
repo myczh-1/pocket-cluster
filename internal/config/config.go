@@ -13,14 +13,15 @@ import (
 )
 
 type Config struct {
-	NodeID    string `json:"node_id"`
-	Name      string `json:"name"`
-	Platform  string `json:"platform"`
-	ClusterID string `json:"cluster_id,omitempty"`
-	PublicKey string `json:"public_key"`
-	SecretKey string `json:"secret_key"`
-	DataDir   string `json:"-"`
-	HTTPPort  int    `json:"http_port"`
+	NodeID        string `json:"node_id"`
+	Name          string `json:"name"`
+	Platform      string `json:"platform"`
+	ClusterID     string `json:"cluster_id,omitempty"`
+	PublicKey     string `json:"public_key"`
+	SecretKey     string `json:"secret_key"`
+	DataDir       string `json:"-"`
+	HTTPPort      int    `json:"http_port"`
+	DiscoveryMode string `json:"discovery_mode,omitempty"` // "auto" (default) or "invite"
 }
 
 func Load(dataDir string) (*Config, error) {
@@ -40,6 +41,9 @@ func Load(dataDir string) (*Config, error) {
 	if cfg.HTTPPort == 0 {
 		cfg.HTTPPort = 7788
 	}
+	if cfg.DiscoveryMode == "" {
+		cfg.DiscoveryMode = "auto"
+	}
 	return &cfg, nil
 }
 
@@ -56,13 +60,14 @@ func createNew(dataDir string) (*Config, error) {
 		hostname = "pocketcluster-node"
 	}
 	cfg := &Config{
-		NodeID:    uuid.New().String(),
-		Name:      hostname,
-		ClusterID: "",
-		PublicKey: base64.StdEncoding.EncodeToString(pub),
-		SecretKey: base64.StdEncoding.EncodeToString(priv),
-		DataDir:   dataDir,
-		HTTPPort:  7788,
+		NodeID:        uuid.New().String(),
+		Name:          hostname,
+		ClusterID:     "",
+		DiscoveryMode: "auto",
+		PublicKey:     base64.StdEncoding.EncodeToString(pub),
+		SecretKey:     base64.StdEncoding.EncodeToString(priv),
+		DataDir:       dataDir,
+		HTTPPort:      7788,
 	}
 	cfg.Platform = detectPlatform()
 	if err := cfg.Save(); err != nil {

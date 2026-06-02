@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pocketcluster/agent/internal/chunk"
 	"github.com/pocketcluster/agent/internal/config"
 	"github.com/pocketcluster/agent/internal/discovery"
@@ -89,7 +90,7 @@ func main() {
 	} else {
 		log.Printf("mDNS discovery started")
 	}
-	go syncDiscoveredNodes(ctx, s, disc, cfg.NodeID)
+	go syncDiscoveredNodes(ctx, s, srv, disc, cfg)
 
 	httpSrv := &http.Server{Handler: handler}
 	go func() {
@@ -120,32 +121,61 @@ func defaultDataDir() string {
 	return filepath.Join(home, ".pocketcluster")
 }
 
-func syncDiscoveredNodes(ctx context.Context, s *store.Store, disc *discovery.Discovery, selfNodeID string) {
+func syncDiscoveredNodes(ctx context.Context, s *store.Store, srv *server.Server, disc *discovery.Discovery, cfg *config.Config) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	ticksWithoutCluster := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			now := time.Now()
-			for _, n := range disc.Nodes() {
-				if n.NodeID == selfNodeID {
+			discovered := disc.Nodes()
+			joined := false
+
+			for _, n := range discovered {
+				if n.NodeID == cfg.NodeID {
 					continue
 				}
 				if s.HasTrustedNodeAtAddress(n.Address) {
 					continue
 				}
-				if err := s.UpsertNode(&types.Node{
-					NodeID:   n.NodeID,
-					Name:     n.Name,
-					Platform: n.Platform,
-					Address:  n.Address,
-					Status:   discoveredStatus(s, n.NodeID),
-					LastSeen: now,
-				}); err != nil {
-					log.Printf("update discovered node %s: %v", n.NodeID, err)
+				if cfg.DiscoveryMode == "auto" && cfg.ClusterID == "" {
+					if err := srv.JoinViaBootstrap("http://"+n.Address, ""); err != nil {
+						log.Printf("auto-join %s (%s): %v", n.Name, n.Address, err)
+					} else {
+						log.Printf("auto-joined %s (%s)", n.Name, n.Address)
+						joined = true
+						break
+					}
 				}
+				if cfg.DiscoveryMode == "invite" || cfg.ClusterID != "" {
+					if err := s.UpsertNode(&types.Node{
+						NodeID:   n.NodeID,
+						Name:     n.Name,
+						Platform: n.Platform,
+						Address:  n.Address,
+						Status:   discoveredStatus(s, n.NodeID),
+						LastSeen: now,
+					}); err != nil {
+						log.Printf("update discovered node %s: %v", n.NodeID, err)
+					}
+				}
+			}
+
+			if cfg.DiscoveryMode == "auto" && cfg.ClusterID == "" && !joined {
+				ticksWithoutCluster++
+				if ticksWithoutCluster >= 5 {
+					cfg.ClusterID = uuid.New().String()
+					if err := cfg.Save(); err != nil {
+						log.Printf("auto-create cluster: %v", err)
+					} else {
+						log.Printf("auto-created cluster %s", cfg.ClusterID)
+					}
+				}
+			} else {
+				ticksWithoutCluster = 0
 			}
 		}
 	}

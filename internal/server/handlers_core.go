@@ -28,10 +28,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleNodeInfo(w http.ResponseWriter, r *http.Request) {
 	n, err := s.store.GetNode(s.cfg.NodeID)
 	info := map[string]any{
-		"node_id":    s.cfg.NodeID,
-		"name":       s.cfg.Name,
-		"platform":   s.cfg.Platform,
-		"cluster_id": s.cfg.ClusterID,
+		"node_id":        s.cfg.NodeID,
+		"name":           s.cfg.Name,
+		"platform":       s.cfg.Platform,
+		"cluster_id":     s.cfg.ClusterID,
+		"discovery_mode": s.cfg.DiscoveryMode,
 	}
 	if err == nil {
 		info["status"] = n.Status
@@ -102,6 +103,21 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(trusted)})
 }
 
+func (s *Server) handleListDiscovered(w http.ResponseWriter, r *http.Request) {
+	nodes, err := s.store.ListNodes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	discovered := make([]types.Node, 0)
+	for _, n := range nodes {
+		if !n.Trusted {
+			discovered = append(discovered, n)
+		}
+	}
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(discovered)})
+}
+
 func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	token, err := newInviteToken()
 	if err != nil {
@@ -146,18 +162,21 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
-	if req.JoinToken == "" {
+	if s.cfg.DiscoveryMode == "auto" {
+		// Auto mode: no token required
+	} else if req.JoinToken == "" {
 		writeError(w, http.StatusForbidden, "JOIN_TOKEN_REQUIRED", "join token required")
 		return
-	}
-	accepted, err := s.store.UseInvite(inviteTokenHash(req.JoinToken), now)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	if !accepted {
-		writeError(w, http.StatusForbidden, "JOIN_TOKEN_INVALID", "join token is invalid, expired, or already used")
-		return
+	} else {
+		accepted, err := s.store.UseInvite(inviteTokenHash(req.JoinToken), now)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		if !accepted {
+			writeError(w, http.StatusForbidden, "JOIN_TOKEN_INVALID", "join token is invalid, expired, or already used")
+			return
+		}
 	}
 	if s.cfg.ClusterID == "" {
 		s.cfg.ClusterID = uuid.New().String()

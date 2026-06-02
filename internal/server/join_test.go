@@ -15,6 +15,10 @@ import (
 
 func TestJoinRequiresValidInviteToken(t *testing.T) {
 	cfg, st, srv := newJoinTestServer(t, "bootstrap")
+	cfg.DiscoveryMode = "invite"
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
 	_ = cfg
 	defer st.Close()
 

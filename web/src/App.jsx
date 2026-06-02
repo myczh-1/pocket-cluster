@@ -215,11 +215,27 @@ function NodesPage() {
   );
 }
 
-function JoinPage() {
+function JoinPage({ mode }) {
   const [bootstrap, setBootstrap] = useState("");
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [discovered, setDiscovered] = useState([]);
+  const [selectedAddr, setSelectedAddr] = useState("");
+
+  useEffect(() => {
+    if (mode === "invite") {
+      api("/nodes/discovered").then((r) => {
+        if (r.ok) setDiscovered(r.data || []);
+      });
+      const id = setInterval(() => {
+        api("/nodes/discovered").then((r) => {
+          if (r.ok) setDiscovered(r.data || []);
+        });
+      }, 3000);
+      return () => clearInterval(id);
+    }
+  }, [mode]);
 
   const handleCreate = async () => {
     setError(null);
@@ -242,11 +258,12 @@ function JoinPage() {
     e.preventDefault();
     setError(null);
     setLoading(true);
+    const addr = mode === "invite" && selectedAddr ? selectedAddr : bootstrap;
     try {
       const res = await api("/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bootstrap, join_token: token }),
+        body: JSON.stringify({ bootstrap: addr, join_token: token }),
       });
       if (res.ok) {
         window.location.reload();
@@ -259,6 +276,31 @@ function JoinPage() {
       setLoading(false);
     }
   };
+
+  if (mode === "auto") {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="bg-white rounded-lg shadow p-8 w-full max-w-md text-center">
+          <h1 className="text-xl font-bold mb-2">PocketCluster</h1>
+          <p className="text-sm text-gray-500 mb-6">
+            Searching for peers on the local network…
+          </p>
+          <div className="animate-pulse text-blue-500 text-sm mb-6">Discovering nodes…</div>
+          <p className="text-xs text-gray-400 mb-4">
+            This node will auto-join when a peer is found, or create a new pool if none exists.
+          </p>
+          <button
+            onClick={handleCreate}
+            disabled={loading}
+            className="w-full bg-green-600 text-white rounded px-4 py-2 text-sm hover:bg-green-700 disabled:opacity-50"
+          >
+            {loading ? "Creating…" : "Create pool now"}
+          </button>
+          {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center">
@@ -280,18 +322,37 @@ function JoinPage() {
         </div>
 
         <div className="border-t pt-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">Joining an existing pool?</h2>
-          <form onSubmit={handleJoin} className="space-y-4">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Bootstrap node address</label>
-              <input
-                type="text"
-                value={bootstrap}
-                onChange={(e) => setBootstrap(e.target.value)}
-                placeholder="http://192.168.1.10:7788"
+          <h2 className="text-sm font-semibold text-gray-700 mb-3">Join an existing pool</h2>
+          {discovered.length > 0 && (
+            <div className="mb-4">
+              <label className="block text-xs text-gray-500 mb-1">Discovered nodes</label>
+              <select
+                value={selectedAddr}
+                onChange={(e) => setSelectedAddr(e.target.value)}
                 className="w-full border rounded px-3 py-2 text-sm"
-              />
+              >
+                <option value="">Select a node…</option>
+                {discovered.map((n) => (
+                  <option key={n.node_id} value={n.address}>
+                    {n.name} ({n.address})
+                  </option>
+                ))}
+              </select>
             </div>
+          )}
+          <form onSubmit={handleJoin} className="space-y-4">
+            {!selectedAddr && (
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Bootstrap node address</label>
+                <input
+                  type="text"
+                  value={bootstrap}
+                  onChange={(e) => setBootstrap(e.target.value)}
+                  placeholder="http://192.168.1.10:7788"
+                  className="w-full border rounded px-3 py-2 text-sm"
+                />
+              </div>
+            )}
             <div>
               <label className="block text-xs text-gray-500 mb-1">Invite token</label>
               <input
@@ -304,7 +365,7 @@ function JoinPage() {
             </div>
             <button
               type="submit"
-              disabled={loading || !bootstrap || !token}
+              disabled={loading || !(selectedAddr || bootstrap) || !token}
               className="w-full bg-blue-600 text-white rounded px-4 py-2 text-sm hover:bg-blue-700 disabled:opacity-50"
             >
               {loading ? "Joining…" : "Join pool"}
@@ -321,17 +382,19 @@ function JoinPage() {
 export default function App() {
   const [tab, setTab] = useState("files");
   const [clusterId, setClusterId] = useState(null);
+  const [discoveryMode, setDiscoveryMode] = useState("auto");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api("/node/info").then((r) => {
       setClusterId(r.data?.cluster_id || "");
+      setDiscoveryMode(r.data?.discovery_mode || "auto");
       setLoading(false);
     });
   }, []);
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Loading…</div>;
-  if (!clusterId) return <JoinPage />;
+  if (!clusterId) return <JoinPage mode={discoveryMode} />;
 
   return (
     <div className="min-h-screen">
