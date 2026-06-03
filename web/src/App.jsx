@@ -324,11 +324,17 @@ function NodesPage() {
 
 function LogsPage() {
   const [logs, setLogs] = useState([]);
+  const [agentLogs, setAgentLogs] = useState([]);
+  const [view, setView] = useState("agent");
   const [refreshing, setRefreshing] = useState(false);
 
   const loadLogs = useCallback(async () => {
-    const res = await api("/logs");
-    if (res.ok) setLogs(res.data?.entries || []);
+    const [eventsRes, agentRes] = await Promise.all([
+      api("/logs"),
+      api("/agent/logs"),
+    ]);
+    if (eventsRes.ok) setLogs(eventsRes.data?.entries || []);
+    if (agentRes.ok) setAgentLogs(agentRes.data?.lines || []);
   }, []);
 
   useEffect(() => { loadLogs(); }, [loadLogs]);
@@ -349,34 +355,67 @@ function LogsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="font-semibold text-sm">Recent Activity</h2>
+      {/* View toggle */}
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={() => setView("agent")}
+          className={`flex-1 py-2 rounded-lg text-sm font-medium ${
+            view === "agent" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"
+          }`}
+        >
+          Agent Logs
+        </button>
+        <button
+          onClick={() => setView("events")}
+          className={`flex-1 py-2 rounded-lg text-sm font-medium ${
+            view === "events" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"
+          }`}
+        >
+          Events
+        </button>
         <button
           onClick={handleRefresh}
           disabled={refreshing}
-          className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm hover:bg-gray-200 disabled:opacity-50"
+          className="px-3 py-2 bg-gray-100 rounded-lg text-sm hover:bg-gray-200 disabled:opacity-50"
         >
           ↻
         </button>
       </div>
-      <div className="space-y-2">
-        {logs.map((log, i) => (
-          <div key={i} className="bg-white rounded-lg shadow p-3">
-            <div className="flex items-center justify-between mb-1">
-              <span className={`text-xs font-medium ${typeColor[log.type] || "text-gray-600"}`}>
-                {log.type}
-              </span>
-              <span className="text-xs text-gray-400">{log.timestamp}</span>
+
+      {view === "agent" && (
+        <div className="bg-gray-900 rounded-lg p-3 max-h-[60vh] overflow-y-auto">
+          {agentLogs.length === 0 ? (
+            <p className="text-gray-400 text-xs text-center py-4">No agent logs yet</p>
+          ) : (
+            agentLogs.map((line, i) => (
+              <p key={i} className="text-green-400 text-xs font-mono leading-relaxed whitespace-pre-wrap break-all">
+                {line}
+              </p>
+            ))
+          )}
+        </div>
+      )}
+
+      {view === "events" && (
+        <div className="space-y-2">
+          {logs.map((log, i) => (
+            <div key={i} className="bg-white rounded-lg shadow p-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className={`text-xs font-medium ${typeColor[log.type] || "text-gray-600"}`}>
+                  {log.type}
+                </span>
+                <span className="text-xs text-gray-400">{log.timestamp}</span>
+              </div>
+              <p className="text-xs text-gray-500 font-mono truncate">Node: {log.node_id?.slice(0, 8)}…</p>
             </div>
-            <p className="text-xs text-gray-500 font-mono truncate">Node: {log.node_id?.slice(0, 8)}…</p>
-          </div>
-        ))}
-        {logs.length === 0 && (
-          <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400 text-sm">
-            No activity yet
-          </div>
-        )}
-      </div>
+          ))}
+          {logs.length === 0 && (
+            <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400 text-sm">
+              No events yet
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

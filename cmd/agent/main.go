@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
 
 	"github.com/google/uuid"
 	"github.com/pocketcluster/agent/internal/chunk"
@@ -43,6 +45,11 @@ func main() {
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	// Set up ring buffer logger for agent logs API
+	agentLogRing := server.NewRingBuffer(200)
+	server.LogRing = agentLogRing
+	log.SetOutput(&logWriter{ring: agentLogRing, orig: log.Writer()})
 	log.Printf("PocketCluster Agent starting (platform=%s, data=%s)", runtime.GOOS, *dataDir)
 
 	cfg, err := config.Load(*dataDir)
@@ -289,4 +296,15 @@ func localAddress() string {
 		}
 	}
 	return "localhost"
+}
+
+type logWriter struct {
+	ring *server.RingBuffer
+	orig io.Writer
+}
+
+func (w *logWriter) Write(p []byte) (n int, err error) {
+	line := string(p)
+	w.ring.Add(line)
+	return w.orig.Write(p)
 }
