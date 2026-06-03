@@ -95,6 +95,7 @@ class AgentService : Service() {
                 "-name", deviceName,
                 "-iface", "wlan0",
                 "-advertise-ip", wifiIP ?: "",
+                "-local-ip", wifiIP ?: "",
             )
             pb.redirectErrorStream(true)
             pb.environment()["HOME"] = filesDir.absolutePath

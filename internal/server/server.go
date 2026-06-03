@@ -15,11 +15,12 @@ type Server struct {
 	cfg     *config.Config
 	store   *store.Store
 	chunks  *chunk.Storage
+	localIP string // optional: local IP address override
 	started time.Time
 }
 
-func New(cfg *config.Config, s *store.Store, c *chunk.Storage) *Server {
-	return &Server{cfg: cfg, store: s, chunks: c, started: time.Now()}
+func New(cfg *config.Config, s *store.Store, c *chunk.Storage, localIP string) *Server {
+	return &Server{cfg: cfg, store: s, chunks: c, localIP: localIP, started: time.Now()}
 }
 
 

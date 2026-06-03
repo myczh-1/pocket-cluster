@@ -36,6 +36,7 @@ func main() {
 	name := flag.String("name", "", "node name (default: hostname)")
 	iface := flag.String("iface", "", "network interface for mDNS (e.g., wlan0)")
 	advertiseIP := flag.String("advertise-ip", "", "IP address to advertise for mDNS")
+	localIP := flag.String("local-ip", "", "local IP address for network operations")
 	joinBootstrap := flag.String("join", "", "bootstrap base URL to join")
 	joinToken := flag.String("join-token", "", "invite token for joining an existing cluster")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -80,7 +81,7 @@ func main() {
 	if err := s.UpdateNodeFull(selfNode); err != nil {
 		log.Fatalf("update self node: %v", err)
 	}
-	srv := server.New(cfg, s, cs)
+	srv := server.New(cfg, s, cs, *localIP)
 	handler := srv.Handler()
 
 	addr := fmt.Sprintf(":%d", *port)

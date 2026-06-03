@@ -17,12 +17,14 @@ import (
 func (s *Server) handleScanNetwork(w http.ResponseWriter, r *http.Request) {
 	// Get local IP to determine subnet
 	localIP := s.getLocalIP()
-	log.Printf("network scan: local IP = %q", localIP)
+	if localIP == "" && s.localIP != "" {
+		localIP = s.localIP
+	}
+	log.Printf("network scan: local IP = %q (server=%q)", localIP, s.localIP)
 	if localIP == "" {
 		writeError(w, http.StatusInternalServerError, "NO_NETWORK", "cannot determine local network - try manual join")
 		return
 	}
-
 	// Parse subnet (assume /24)
 	parts := strings.Split(localIP, ".")
 	if len(parts) != 4 {
