@@ -191,6 +191,7 @@ function NodesPage() {
   const [switchToken, setSwitchToken] = useState("");
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState(null);
+  const [scanning, setScanning] = useState(false);
 
   const handleSwitch = async (e) => {
     e.preventDefault();
@@ -275,6 +276,37 @@ function NodesPage() {
             <p className="text-xs text-gray-400 mt-2">Expires {new Date(invite.expires_at).toLocaleString()}</p>
           </div>
         )}
+      </div>
+
+      {/* Network scan */}
+      <div className="bg-white rounded-lg shadow p-4 mb-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-sm">Scan local network</h2>
+            <p className="text-xs text-gray-500">Find PocketCluster nodes on your network</p>
+          </div>
+          <button
+            onClick={async () => {
+              setScanning(true);
+              try {
+                const r = await api("/network/scan");
+                if (r.ok && r.data?.nodes?.length > 0) {
+                  const firstNode = r.data.nodes[0];
+                  setSwitchAddr(`http://${firstNode.address}`);
+                  setShowSwitch(true);
+                }
+              } catch (e) {
+                console.error("Scan failed:", e);
+              } finally {
+                setScanning(false);
+              }
+            }}
+            disabled={scanning}
+            className="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50"
+          >
+            {scanning ? "Scanning…" : "🔍 Scan"}
+          </button>
+        </div>
       </div>
 
       {/* Switch pool */}
