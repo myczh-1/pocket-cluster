@@ -55,34 +55,34 @@ func (d *Discovery) Start(ctx context.Context) error {
 		"platform=" + d.platform,
 	}
 
-	var interfaces []net.Interface
+	var iface *net.Interface
 	if d.ifaceName != "" {
-		iface, err := net.InterfaceByName(d.ifaceName)
+		i, err := net.InterfaceByName(d.ifaceName)
 		if err != nil {
 			log.Printf("mDNS: interface %s not found: %v", d.ifaceName, err)
 		} else {
-			interfaces = []net.Interface{*iface}
+			iface = i
 		}
 	}
 
 	// If we have an advertise IP but no interface, try to find the interface by IP
-	if len(interfaces) == 0 && d.advertiseIP != "" {
+	if iface == nil && d.advertiseIP != "" {
 		ifaces, err := net.Interfaces()
 		if err == nil {
-			for _, iface := range ifaces {
-				addrs, err := iface.Addrs()
+			for _, i := range ifaces {
+				addrs, err := i.Addrs()
 				if err != nil {
 					continue
 				}
 				for _, addr := range addrs {
 					if ipnet, ok := addr.(*net.IPNet); ok {
 						if ipnet.IP.String() == d.advertiseIP {
-							interfaces = []net.Interface{iface}
+							iface = &i
 							break
 						}
 					}
 				}
-				if len(interfaces) > 0 {
+				if iface != nil {
 					break
 				}
 			}
@@ -90,6 +90,10 @@ func (d *Discovery) Start(ctx context.Context) error {
 	}
 
 	// Try to register mDNS service, but don't fail if it doesn't work
+	var interfaces []net.Interface
+	if iface != nil {
+		interfaces = []net.Interface{*iface}
+	}
 	server, err := zeroconf.Register(d.nodeID, "_pocketcluster._tcp", "local.", d.port, meta, interfaces)
 	if err != nil {
 		log.Printf("mDNS registration failed (can still browse): %v", err)
@@ -98,7 +102,7 @@ func (d *Discovery) Start(ctx context.Context) error {
 	}
 
 	// Always start browsing, even if registration failed
-	go d.browse(ctx)
+	go d.browse(ctx, iface)
 	return nil
 }
 
@@ -139,7 +143,7 @@ func (d *Discovery) RemoveNode(nodeID string) {
 	delete(d.nodes, nodeID)
 }
 
-func (d *Discovery) browse(ctx context.Context) {
+func (d *Discovery) browse(ctx context.Context, _ *net.Interface) {
 	resolver, err := zeroconf.NewResolver(nil)
 	if err != nil {
 		log.Printf("mDNS resolver error: %v", err)
