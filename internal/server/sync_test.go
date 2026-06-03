@@ -62,10 +62,14 @@ func TestFetchMissingChunksCopiesReplicaAndPublishesLocalReplica(t *testing.T) {
 	if err := localStore.UpsertNode(&types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), PublicKey: remoteCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := localStore.UpsertFile(&types.File{FileID: "file", Name: "file.txt", Path: "/file.txt", ChunkIDs: []string{hash}, ModifiedBy: remoteCfg.NodeID}); err != nil {
+	// In sharding mode, local node only fetches chunks it has a replica record for
+	if err := localStore.UpsertReplica(&types.Replica{ChunkID: hash, NodeID: localCfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if err := localStore.UpsertReplica(&types.Replica{ChunkID: hash, NodeID: remoteCfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := localStore.UpsertFile(&types.File{FileID: "file", Name: "file.txt", Path: "/file.txt", ChunkIDs: []string{hash}, ModifiedBy: remoteCfg.NodeID}); err != nil {
 		t.Fatal(err)
 	}
 

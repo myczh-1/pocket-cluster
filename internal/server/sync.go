@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -202,8 +203,8 @@ func (s *Server) pushEventsTo(ctx context.Context, n types.Node, address string,
 	}
 	return nil
 }
-
 func (s *Server) fetchMissingChunks(ctx context.Context) error {
+	// Get chunks referenced by files
 	files, err := s.store.ListAllFiles()
 	if err != nil {
 		return err
@@ -212,6 +213,15 @@ func (s *Server) fetchMissingChunks(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Get chunks this node is responsible for
+	myChunks, err := s.store.GetNodeChunkIDs(s.cfg.NodeID)
+	if err != nil {
+		return err
+	}
+	myChunkSet := make(map[string]struct{}, len(myChunks))
+	for _, id := range myChunks {
+		myChunkSet[id] = struct{}{}
+	}
 	seen := make(map[string]struct{})
 	for _, f := range files {
 		for _, chunkID := range f.ChunkIDs {
@@ -219,8 +229,38 @@ func (s *Server) fetchMissingChunks(ctx context.Context) error {
 				continue
 			}
 			seen[chunkID] = struct{}{}
-			if err := s.repairChunkReplicas(ctx, chunkID, nodes); err != nil {
-				return err
+			// Only fetch if we have the chunk locally, have a replica record, or it's referenced by a file
+			if s.chunks.Exists(chunkID) {
+				// We have it, just repair replicas
+				if err := s.repairChunkReplicas(ctx, chunkID, nodes); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, assigned := myChunkSet[chunkID]; assigned {
+				// We're assigned this chunk but don't have it locally
+				if err := s.repairChunkReplicas(ctx, chunkID, nodes); err != nil {
+					return err
+				}
+			}
+			// If we're not assigned and don't have it, skip (sharding mode)
+			// But if there are no other replicas available, we should still try to get it
+			replicas, _ := s.store.GetReplicas(chunkID)
+			hasOnlineReplica := false
+			for _, r := range replicas {
+				if r.NodeID != s.cfg.NodeID && r.Status == "available" {
+					n, _ := s.store.GetNode(r.NodeID)
+					if n != nil && n.Status == "online" && n.Trusted {
+						hasOnlineReplica = true
+						break
+					}
+				}
+			}
+			if !hasOnlineReplica {
+				// No other node has this chunk, we should try to get it
+				if err := s.repairChunkReplicas(ctx, chunkID, nodes); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -233,8 +273,24 @@ func (s *Server) repairChunkReplicas(ctx context.Context, chunkID string, nodes 
 		return err
 	}
 	online := onlineNodeSet(nodes, s.cfg.NodeID)
-	available := availableOnlineReplicaNodes(replicas, online)
-	if len(available) >= targetReplicaCount {
+	// Count available replicas, but only count local if we actually have the chunk
+	availableCount := 0
+	for _, r := range replicas {
+		if r.Status != "available" {
+			continue
+		}
+		if _, isOnline := online[r.NodeID]; !isOnline {
+			continue
+		}
+		if r.NodeID == s.cfg.NodeID {
+			if s.chunks.Exists(chunkID) {
+				availableCount++
+			}
+		} else {
+			availableCount++
+		}
+	}
+	if availableCount >= targetReplicaCount {
 		return nil
 	}
 	existing := availableReplicaNodes(replicas)
@@ -242,6 +298,7 @@ func (s *Server) repairChunkReplicas(ctx context.Context, chunkID string, nodes 
 		_, err := s.pushChunkToPeer(ctx, chunkID, existing, nodes)
 		return err
 	}
+	// We don't have the chunk locally, fetch it
 	if err := s.fetchChunkFromReplica(ctx, chunkID); err != nil {
 		return nil
 	}
@@ -249,6 +306,13 @@ func (s *Server) repairChunkReplicas(ctx context.Context, chunkID string, nodes 
 }
 
 func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing map[string]struct{}, nodes []types.Node) (bool, error) {
+	// Filter and sort candidates
+	type candidate struct {
+		node          types.Node
+		availableBytes int64
+		isDesktop     bool
+	}
+	var candidates []candidate
 	for _, n := range nodes {
 		if n.NodeID == s.cfg.NodeID || n.Address == "" || n.Status == "offline" || !n.Trusted {
 			continue
@@ -256,7 +320,18 @@ func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing m
 		if _, ok := existing[n.NodeID]; ok {
 			continue
 		}
-		if err := s.storeChunkToPeer(ctx, n, chunkID); err != nil {
+		isDesktop := n.Platform == "darwin" || n.Platform == "linux" || n.Platform == "windows"
+		candidates = append(candidates, candidate{node: n, availableBytes: n.AvailableBytes, isDesktop: isDesktop})
+	}
+	// Sort: desktop first, then by available space descending
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].isDesktop != candidates[j].isDesktop {
+			return candidates[i].isDesktop
+		}
+		return candidates[i].availableBytes > candidates[j].availableBytes
+	})
+	for _, c := range candidates {
+		if err := s.storeChunkToPeer(ctx, c.node, chunkID); err != nil {
 			continue
 		}
 		return true, nil

@@ -369,6 +369,22 @@ func (s *Store) GetReplicas(chunkID string) ([]types.Replica, error) {
 	}
 	return reps, rows.Err()
 }
+func (s *Store) GetNodeChunkIDs(nodeID string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT chunk_id FROM replicas WHERE node_id = ? AND status = 'available'`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
 
 // Invite operations
 
