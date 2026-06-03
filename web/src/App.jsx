@@ -56,23 +56,34 @@ function NodeCard({ node }) {
   );
 }
 
-function FileRow({ file, onDownload, onDelete }) {
+function FileCard({ file, onDownload, onDelete }) {
   return (
-    <tr className="border-b border-gray-100 hover:bg-gray-50">
-      <td className="py-2 px-3 text-sm">
-        {file.is_dir ? "📁" : "📄"} {file.name}
-      </td>
-      <td className="py-2 px-3 text-sm text-gray-500">{file.is_dir ? "—" : formatBytes(file.size_bytes)}</td>
-      <td className="py-2 px-3 text-sm text-gray-500">{file.modified_at ? new Date(file.modified_at).toLocaleDateString() : "—"}</td>
-      <td className="py-2 px-3 text-right space-x-2">
-        {!file.is_dir && (
-          <button onClick={() => onDownload(file)} className="text-blue-600 hover:underline text-xs">Download</button>
-        )}
-        {!file.is_dir && (
-          <button onClick={() => onDelete(file)} className="text-red-600 hover:underline text-xs">Delete</button>
-        )}
-      </td>
-    </tr>
+    <div className="bg-white rounded-lg shadow p-4 flex items-center gap-3">
+      <div className="text-2xl">{file.is_dir ? "📁" : "📄"}</div>
+      <div className="flex-1 min-w-0">
+        <p className="font-medium text-sm truncate">{file.name}</p>
+        <p className="text-xs text-gray-500">
+          {file.is_dir ? "Directory" : formatBytes(file.size_bytes)}
+          {file.modified_at && ` · ${new Date(file.modified_at).toLocaleDateString()}`}
+        </p>
+      </div>
+      {!file.is_dir && (
+        <div className="flex gap-2">
+          <button
+            onClick={() => onDownload(file)}
+            className="px-3 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100 active:bg-blue-200"
+          >
+            ↓
+          </button>
+          <button
+            onClick={() => onDelete(file)}
+            className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-medium hover:bg-red-100 active:bg-red-200"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -81,6 +92,7 @@ function FilesPage() {
   const [files, setFiles] = useState([]);
   const [search, setSearch] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadFiles = useCallback(async () => {
     const q = search ? `?q=${encodeURIComponent(search)}` : `?path=${encodeURIComponent(path)}`;
@@ -89,6 +101,12 @@ function FilesPage() {
   }, [path, search]);
 
   useEffect(() => { loadFiles(); }, [loadFiles]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadFiles();
+    setRefreshing(false);
+  };
 
   const handleUpload = async (e) => {
     const file = e.target.files[0];
@@ -114,44 +132,42 @@ function FilesPage() {
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-4">
+      {/* Search and actions */}
+      <div className="flex gap-2 mb-4">
         <input
           type="text"
           placeholder="Search files…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="border rounded px-3 py-1.5 text-sm flex-1 max-w-xs"
+          className="border rounded-lg px-4 py-3 text-sm flex-1"
         />
         <button
-          onClick={loadFiles}
-          className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-300"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="px-4 py-3 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200 active:bg-gray-300 disabled:opacity-50"
         >
-          ↻ Refresh
+          {refreshing ? "↻" : "↻"}
         </button>
-        <label className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm cursor-pointer hover:bg-blue-700">
-          {uploading ? "Uploading…" : "Upload"}
-          <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
-        </label>
       </div>
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
-            <tr>
-              <th className="text-left py-2 px-3">Name</th>
-              <th className="text-left py-2 px-3">Size</th>
-              <th className="text-left py-2 px-3">Modified</th>
-              <th className="text-right py-2 px-3">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {files.map((f) => (
-              <FileRow key={f.file_id || f.path} file={f} onDownload={handleDownload} onDelete={handleDelete} />
-            ))}
-            {files.length === 0 && (
-              <tr><td colSpan={4} className="py-8 text-center text-gray-400 text-sm">No files</td></tr>
-            )}
-          </tbody>
-        </table>
+
+      {/* Upload button */}
+      <label className="block w-full mb-4">
+        <div className="bg-blue-600 text-white text-center py-3 rounded-lg font-medium cursor-pointer hover:bg-blue-700 active:bg-blue-800">
+          {uploading ? "Uploading…" : "⬆ Upload File"}
+        </div>
+        <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
+      </label>
+
+      {/* File list */}
+      <div className="space-y-2">
+        {files.map((f) => (
+          <FileCard key={f.file_id || f.path} file={f} onDownload={handleDownload} onDelete={handleDelete} />
+        ))}
+        {files.length === 0 && (
+          <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400 text-sm">
+            No files
+          </div>
+        )}
       </div>
     </div>
   );
@@ -166,6 +182,7 @@ function NodesPage() {
   const [switchToken, setSwitchToken] = useState("");
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState(null);
+
   const handleSwitch = async (e) => {
     e.preventDefault();
     setSwitchError(null);
@@ -184,17 +201,21 @@ function NodesPage() {
       setSwitching(false);
     }
   };
+
   const loadNodes = useCallback(() => {
     api("/nodes").then((r) => { if (r.ok) setNodes(r.data || []); });
   }, []);
+
   useEffect(() => {
     loadNodes();
     const id = setInterval(loadNodes, 3000);
     return () => clearInterval(id);
   }, [loadNodes]);
+
   const totalBytes = nodes.reduce((s, n) => s + (n.total_bytes || 0), 0);
   const usedBytes = nodes.reduce((s, n) => s + (n.used_bytes || 0), 0);
   const onlineCount = nodes.filter((n) => n.status === "online").length;
+
   const createInvite = async () => {
     setCreatingInvite(true);
     try {
@@ -205,51 +226,53 @@ function NodesPage() {
     }
   };
 
-
   return (
     <div>
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="bg-white rounded-lg shadow p-4 text-center">
-          <p className="text-2xl font-bold text-blue-600">{nodes.length}</p>
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        <div className="bg-white rounded-lg shadow p-3 text-center">
+          <p className="text-xl font-bold text-blue-600">{nodes.length}</p>
           <p className="text-xs text-gray-500">Nodes</p>
         </div>
-        <div className="bg-white rounded-lg shadow p-4 text-center">
-          <p className="text-2xl font-bold text-green-600">{onlineCount}</p>
+        <div className="bg-white rounded-lg shadow p-3 text-center">
+          <p className="text-xl font-bold text-green-600">{onlineCount}</p>
           <p className="text-xs text-gray-500">Online</p>
         </div>
-        <div className="bg-white rounded-lg shadow p-4 text-center">
-          <p className="text-2xl font-bold">{formatBytes(totalBytes)}</p>
-          <p className="text-xs text-gray-500">Total · {formatBytes(usedBytes)} used</p>
+        <div className="bg-white rounded-lg shadow p-3 text-center">
+          <p className="text-xl font-bold">{formatBytes(totalBytes)}</p>
+          <p className="text-xs text-gray-500">Total</p>
         </div>
       </div>
-      <div className="bg-white rounded-lg shadow p-4 mb-6">
-        <div className="flex items-center justify-between gap-4">
+
+      {/* Invite */}
+      <div className="bg-white rounded-lg shadow p-4 mb-4">
+        <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="font-semibold text-sm">Invite a node</h2>
-            <p className="text-xs text-gray-500">Creates a one-time token that expires in 15 minutes.</p>
+            <p className="text-xs text-gray-500">One-time token, expires in 15 min</p>
           </div>
           <button
             onClick={createInvite}
             disabled={creatingInvite}
-            className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
           >
-            {creatingInvite ? "Creating…" : "Create invite"}
+            {creatingInvite ? "…" : "Create"}
           </button>
         </div>
         {invite && (
-          <div className="mt-4 bg-gray-50 rounded p-3">
+          <div className="mt-3 bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-gray-500 mb-1">Join token</p>
-            <code className="block text-sm break-all">{invite.join_token}</code>
-            <p className="text-xs text-gray-500 mt-3 mb-1">New node: open its UI and paste the bootstrap address + token</p>
-            <code className="block text-xs break-all text-gray-600">{window.location.origin}</code>
+            <code className="block text-sm break-all font-mono">{invite.join_token}</code>
             <p className="text-xs text-gray-400 mt-2">Expires {new Date(invite.expires_at).toLocaleString()}</p>
           </div>
         )}
       </div>
-      <div className="bg-white rounded-lg shadow p-4 mb-6">
+
+      {/* Switch pool */}
+      <div className="bg-white rounded-lg shadow p-4 mb-4">
         <button
           onClick={() => setShowSwitch(!showSwitch)}
-          className="text-sm text-gray-500 hover:text-gray-700"
+          className="text-sm text-gray-500 hover:text-gray-700 w-full text-left"
         >
           {showSwitch ? "▲ Hide" : "▼ Join another pool"}…
         </button>
@@ -261,27 +284,29 @@ function NodesPage() {
               onChange={(e) => setSwitchAddr(e.target.value)}
               placeholder="http://192.168.1.10:7788"
               required
-              className="w-full border rounded px-3 py-2 text-sm"
+              className="w-full border rounded-lg px-4 py-3 text-sm"
             />
             <input
               type="text"
               value={switchToken}
               onChange={(e) => setSwitchToken(e.target.value)}
-              placeholder="Invite token (leave empty for auto mode)"
-              className="w-full border rounded px-3 py-2 text-sm"
+              placeholder="Invite token (optional for auto mode)"
+              className="w-full border rounded-lg px-4 py-3 text-sm"
             />
             {switchError && <p className="text-sm text-red-600">{switchError}</p>}
             <button
               type="submit"
               disabled={switching || !switchAddr}
-              className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
             >
               {switching ? "Joining…" : "Switch pool"}
             </button>
           </form>
         )}
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+
+      {/* Node list */}
+      <div className="space-y-3">
         {nodes.map((n) => <NodeCard key={n.node_id} node={n} />)}
       </div>
     </div>
@@ -298,22 +323,25 @@ function JoinPage({ mode }) {
 
   useEffect(() => {
     if (mode === "invite") {
-      const poll = () => api("/nodes/discovered").then((r) => { if (r.ok) setDiscovered(r.data || []); });
-      poll();
-      const id = setInterval(poll, 3000);
-      return () => clearInterval(id);
+      const poll = setInterval(async () => {
+        try {
+          const r = await api("/nodes/discovered");
+          if (r.ok) setDiscovered(r.data || []);
+        } catch {}
+      }, 3000);
+      return () => clearInterval(poll);
     }
   }, [mode]);
 
-  const handleCreate = async () => {
-    setError(null);
+  const handleCreateCluster = async () => {
     setLoading(true);
+    setError(null);
     try {
-      const res = await api("/cluster", { method: "POST" });
-      if (res.ok) window.location.reload();
-      else setError(res.error?.message || "Create failed");
-    } catch (err) {
-      setError(err.message || "Network error");
+      const r = await api("/cluster", { method: "POST" });
+      if (r.ok) window.location.reload();
+      else setError(r.error?.message || "Failed to create cluster");
+    } catch (e) {
+      setError(e.message);
     } finally {
       setLoading(false);
     }
@@ -321,101 +349,87 @@ function JoinPage({ mode }) {
 
   const handleJoin = async (e) => {
     e.preventDefault();
-    setError(null);
     setLoading(true);
-    const addr = selectedAddr || bootstrap;
+    setError(null);
     try {
-      const res = await api("/join", {
+      const addr = selectedAddr || bootstrap;
+      const r = await api("/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bootstrap: addr, join_token: token }),
       });
-      if (res.ok) window.location.reload();
-      else setError(res.error?.message || "Join failed");
-    } catch (err) {
-      setError(err.message || "Network error");
+      if (r.ok) window.location.reload();
+      else setError(r.error?.message || "Join failed");
+    } catch (e) {
+      setError(e.message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="bg-white rounded-lg shadow p-8 w-full max-w-md">
-        <h1 className="text-xl font-bold mb-2">PocketCluster</h1>
-        <p className="text-sm text-gray-500 mb-6">This node is not part of a pool yet.</p>
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-bold mb-2">PocketCluster</h1>
+          <p className="text-gray-500 text-sm">Distributed storage pool</p>
+        </div>
 
-        {mode === "auto" && (
-          <div className="mb-6 bg-blue-50 rounded p-3 text-sm text-blue-700 flex items-center gap-2">
-            <span className="animate-pulse">●</span>
-            Auto-discovering peers on the local network…
+        {mode === "invite" && discovered.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-4 mb-4">
+            <h2 className="font-semibold text-sm mb-3">Discovered nodes</h2>
+            <div className="space-y-2">
+              {discovered.map((n) => (
+                <button
+                  key={n.node_id}
+                  onClick={() => setSelectedAddr(`http://${n.address}`)}
+                  className={`w-full text-left p-3 rounded-lg border ${
+                    selectedAddr === `http://${n.address}` ? "border-blue-500 bg-blue-50" : "border-gray-200"
+                  }`}
+                >
+                  <p className="font-medium text-sm">{n.name || n.node_id.slice(0, 8)}</p>
+                  <p className="text-xs text-gray-500">{n.platform} · {n.address}</p>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        <div className="mb-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">First node?</h2>
+        <form onSubmit={handleJoin} className="bg-white rounded-lg shadow p-4 mb-4 space-y-3">
+          <h2 className="font-semibold text-sm">Join existing pool</h2>
+          <input
+            type="text"
+            value={bootstrap}
+            onChange={(e) => setBootstrap(e.target.value)}
+            placeholder="http://192.168.1.10:7788"
+            className="w-full border rounded-lg px-4 py-3 text-sm"
+          />
+          <input
+            type="text"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="Invite token (optional for auto mode)"
+            className="w-full border rounded-lg px-4 py-3 text-sm"
+          />
+          {error && <p className="text-sm text-red-600">{error}</p>}
           <button
-            onClick={handleCreate}
-            disabled={loading}
-            className="w-full bg-green-600 text-white rounded px-4 py-2 text-sm hover:bg-green-700 disabled:opacity-50"
+            type="submit"
+            disabled={loading || (!bootstrap && !selectedAddr)}
+            className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
           >
-            {loading ? "Creating…" : "Create new pool"}
+            {loading ? "Joining…" : "Join"}
+          </button>
+        </form>
+
+        <div className="text-center">
+          <button
+            onClick={handleCreateCluster}
+            disabled={loading}
+            className="text-sm text-gray-500 hover:text-gray-700"
+          >
+            Or create a new pool
           </button>
         </div>
-
-        <div className="border-t pt-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">Join an existing pool</h2>
-          {mode === "invite" && discovered.length > 0 && (
-            <div className="mb-3">
-              <label className="block text-xs text-gray-500 mb-1">Discovered nodes</label>
-              <select
-                value={selectedAddr}
-                onChange={(e) => setSelectedAddr(e.target.value)}
-                className="w-full border rounded px-3 py-2 text-sm"
-              >
-                <option value="">Select a node…</option>
-                {discovered.map((n) => (
-                  <option key={n.node_id} value={"http://" + n.address}>{n.name} ({n.address})</option>
-                ))}
-              </select>
-            </div>
-          )}
-          <form onSubmit={handleJoin} className="space-y-3">
-            {!selectedAddr && (
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Bootstrap node address</label>
-                <input
-                  type="text"
-                  value={bootstrap}
-                  onChange={(e) => setBootstrap(e.target.value)}
-                  placeholder="http://192.168.1.10:7788"
-                  className="w-full border rounded px-3 py-2 text-sm"
-                />
-              </div>
-            )}
-            {mode === "invite" && (
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Invite token</label>
-                <input
-                  type="text"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  placeholder="Paste invite token"
-                  className="w-full border rounded px-3 py-2 text-sm"
-                />
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={loading || !(selectedAddr || bootstrap) || (mode === "invite" && !token)}
-              className="w-full bg-blue-600 text-white rounded px-4 py-2 text-sm hover:bg-blue-700 disabled:opacity-50"
-            >
-              {loading ? "Joining…" : "Join pool"}
-            </button>
-          </form>
-        </div>
-
-        {error && <p className="text-sm text-red-600 mt-4">{error}</p>}
       </div>
     </div>
   );
@@ -439,25 +453,44 @@ export default function App() {
   if (!clusterId) return <JoinPage mode={discoveryMode} />;
 
   return (
-    <div className="min-h-screen">
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
-        <h1 className="text-lg font-bold">PocketCluster</h1>
-        <nav className="flex gap-4">
-          {["files", "nodes"].map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`text-sm capitalize ${tab === t ? "text-blue-600 font-semibold" : "text-gray-500 hover:text-gray-800"}`}
-            >
-              {t}
-            </button>
-          ))}
-        </nav>
+    <div className="min-h-screen pb-20">
+      {/* Header with safe area */}
+      <header
+        className="bg-white border-b border-gray-200 px-4 py-3"
+        style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
+      >
+        <h1 className="text-lg font-bold text-center">PocketCluster</h1>
       </header>
-      <main className="max-w-5xl mx-auto p-6">
+
+      {/* Content */}
+      <main className="p-4">
         {tab === "files" && <FilesPage />}
         {tab === "nodes" && <NodesPage />}
       </main>
+
+      {/* Bottom navigation */}
+      <nav
+        className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        <div className="flex">
+          {[
+            { id: "files", label: "Files", icon: "📁" },
+            { id: "nodes", label: "Nodes", icon: "🔗" },
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setTab(item.id)}
+              className={`flex-1 py-3 text-center ${
+                tab === item.id ? "text-blue-600" : "text-gray-500"
+              }`}
+            >
+              <div className="text-lg">{item.icon}</div>
+              <div className="text-xs font-medium">{item.label}</div>
+            </button>
+          ))}
+        </div>
+      </nav>
     </div>
   );
 }
