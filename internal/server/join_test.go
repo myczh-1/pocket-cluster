@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -258,6 +259,50 @@ func createInviteToken(t *testing.T, srv *Server) string {
 	return payload.JoinToken
 }
 
+func TestJoinRequestReplacesLoopbackAddressWithObserved(t *testing.T) {
+	bootstrapCfg, bootstrapStore, bootstrapSrv := newJoinTestServer(t, "bootstrap")
+	defer bootstrapStore.Close()
+	bootstrapCfg.ClusterID = "test-cluster"
+	bootstrapCfg.DiscoveryMode = "auto"
+	if err := bootstrapCfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapHTTP := httptest.NewServer(bootstrapSrv.Handler())
+	defer bootstrapHTTP.Close()
+
+	joinerCfg := newTestConfig(t, "joiner")
+	body := mustJSON(t, map[string]any{
+		"node_id":    joinerCfg.NodeID,
+		"public_key": joinerCfg.PublicKey,
+		"device_info": map[string]any{
+			"name":     "phone",
+			"platform": "android",
+			"address":  "localhost:7788",
+		},
+	})
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/join/request", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	bootstrapSrv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("join request status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	node, err := bootstrapStore.GetNode(joinerCfg.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Address == "localhost:7788" {
+		t.Fatalf("address = %q, want non-loopback address", node.Address)
+	}
+	if node.Address == "" {
+		t.Fatal("address is empty")
+	}
+	host, _, _ := net.SplitHostPort(node.Address)
+	ip := net.ParseIP(host)
+	if ip != nil && ip.IsLoopback() {
+		t.Fatalf("address %q is still loopback", node.Address)
+	}
+}
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	data, err := json.Marshal(v)

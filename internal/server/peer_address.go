@@ -49,3 +49,25 @@ func nodeDialAddresses(n types.Node) []string {
 	values = append(values, n.Address)
 	return mergeAddresses(values...)
 }
+
+func isLoopbackAddress(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	ip := net.ParseIP(host)
+	if ip != nil {
+		return ip.IsLoopback()
+	}
+	return host == "localhost"
+}
+
+func filterLoopbackAddresses(addrs []string) []string {
+	out := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		if !isLoopbackAddress(addr) {
+			out = append(out, addr)
+		}
+	}
+	return out
+}

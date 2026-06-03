@@ -101,10 +101,26 @@ func (s *Server) applyEvent(e types.Event) error {
 		if err := json.Unmarshal(e.Payload, &n); err != nil {
 			return err
 		}
+		s.sanitizeNodeAddress(&n)
 		return s.store.UpdateNodeFull(&n)
 	case types.EventSnapshotCreated:
 		return nil
 	default:
 		return fmt.Errorf("unsupported event type %s", e.Type)
+	}
+}
+
+func (s *Server) sanitizeNodeAddress(n *types.Node) {
+	n.AddressCandidates = filterLoopbackAddresses(n.AddressCandidates)
+	if isLoopbackAddress(n.Address) {
+		existing, err := s.store.GetNode(n.NodeID)
+		if err == nil && existing.Address != "" && !isLoopbackAddress(existing.Address) {
+			n.Address = existing.Address
+		} else if len(n.AddressCandidates) > 0 {
+			n.Address = n.AddressCandidates[0]
+		}
+	}
+	if isLoopbackAddress(n.LastWorkingAddress) {
+		n.LastWorkingAddress = ""
 	}
 }

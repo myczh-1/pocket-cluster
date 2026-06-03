@@ -183,15 +183,19 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	advertisedAddress := normalizeNodeAddress(req.DeviceInfo.Address)
 	observedAddress := addressFromRemote(r.RemoteAddr, advertisedAddress)
-	if advertisedAddress == "" {
+	if advertisedAddress == "" || isLoopbackAddress(advertisedAddress) {
 		advertisedAddress = observedAddress
+	}
+	candidates := filterLoopbackAddresses(mergeAddresses(advertisedAddress, observedAddress))
+	if len(candidates) == 0 {
+		candidates = mergeAddresses(advertisedAddress, observedAddress)
 	}
 	newNode := &types.Node{
 		NodeID:             req.NodeID,
 		Name:               req.DeviceInfo.Name,
 		Platform:           req.DeviceInfo.Platform,
 		Address:            advertisedAddress,
-		AddressCandidates:  mergeAddresses(advertisedAddress, observedAddress),
+		AddressCandidates:  candidates,
 		LastWorkingAddress: observedAddress,
 		PublicKey:          req.PublicKey,
 		TotalBytes:         req.DeviceInfo.TotalBytes,
