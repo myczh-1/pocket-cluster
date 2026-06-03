@@ -25,6 +25,8 @@ class AgentService : Service() {
         private const val DEFAULT_PORT = 7788
         var isRunning: Boolean = false
             private set
+        var nodeId: String? = null
+            private set
     }
 
     private var process: Process? = null
@@ -93,13 +95,21 @@ class AgentService : Service() {
 
             process = pb.start()
 
-            // Read stdout in background thread for logging
+            // Read stdout in background thread for logging and nodeId extraction
             logThread = Thread {
                 try {
                     val reader = BufferedReader(InputStreamReader(process!!.inputStream))
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
                         Log.i(TAG, "[agent] $line")
+                        // Parse nodeId from log: "listening on :7788 (node_id=xxx)"
+                        if (line?.contains("node_id=") == true) {
+                            val match = Regex("node_id=([a-f0-9-]+)").find(line!!)
+                            if (match != null) {
+                                nodeId = match.groupValues[1]
+                                Log.i(TAG, "Parsed nodeId: $nodeId")
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     Log.d(TAG, "Log reader stopped: ${e.message}")
@@ -130,6 +140,7 @@ class AgentService : Service() {
 
     private fun stopAgent() {
         isRunning = false
+        nodeId = null
 
         process?.let {
             if (it.isAlive) {

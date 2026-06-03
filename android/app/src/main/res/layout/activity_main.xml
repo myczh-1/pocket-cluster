@@ -10,19 +10,66 @@
         android:id="@+id/tvTitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="PocketCluster Agent"
-        android:textSize="24sp"
+        android:text="PocketCluster"
+        android:textSize="28sp"
         android:textStyle="bold"
-        android:layout_marginTop="32dp" />
+        android:layout_marginTop="48dp" />
 
     <TextView
         android:id="@+id/tvStatus"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Stopped"
-        android:textSize="16sp"
-        android:layout_marginTop="16dp"
+        android:text="○ Stopped"
+        android:textSize="18sp"
+        android:layout_marginTop="24dp"
         android:textColor="#888888" />
+
+    <!-- Address card (shown when running) -->
+    <LinearLayout
+        android:id="@+id/addressCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/card_bg"
+        android:padding="16dp"
+        android:layout_marginTop="24dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Address"
+            android:textSize="12sp"
+            android:textColor="#666666" />
+
+        <TextView
+            android:id="@+id/tvAddress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textSize="16sp"
+            android:fontFamily="monospace"
+            android:textColor="#1a1a1a"
+            android:layout_marginTop="4dp" />
+
+        <TextView
+            android:id="@+id/tvNodeId"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:textColor="#888888"
+            android:layout_marginTop="8dp" />
+
+        <Button
+            android:id="@+id/btnCopy"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Copy Address"
+            android:layout_marginTop="12dp"
+            android:visibility="gone" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/tvNodeInfo"
@@ -30,23 +77,26 @@
         android:layout_height="wrap_content"
         android:text=""
         android:textSize="14sp"
-        android:layout_marginTop="24dp"
-        android:fontFamily="monospace"
+        android:layout_marginTop="16dp"
+        android:textColor="#666666"
+        android:gravity="center"
         android:visibility="gone" />
 
     <Button
         android:id="@+id/btnToggle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
         android:text="Start Agent"
+        android:textSize="16sp"
         android:layout_marginTop="32dp" />
 
     <Button
         android:id="@+id/btnWebUI"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
         android:text="Open WebUI"
-        android:layout_marginTop="16dp"
+        android:textSize="14sp"
+        android:layout_marginTop="12dp"
         android:visibility="gone" />
 
 </LinearLayout>
