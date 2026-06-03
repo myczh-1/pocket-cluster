@@ -322,6 +322,65 @@ function NodesPage() {
   );
 }
 
+function LogsPage() {
+  const [logs, setLogs] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadLogs = useCallback(async () => {
+    const res = await api("/logs");
+    if (res.ok) setLogs(res.data?.entries || []);
+  }, []);
+
+  useEffect(() => { loadLogs(); }, [loadLogs]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadLogs();
+    setRefreshing(false);
+  };
+
+  const typeColor = {
+    FILE_PUT: "text-green-600",
+    FILE_DELETE: "text-red-600",
+    NODE_JOIN: "text-blue-600",
+    NODE_UPDATE: "text-blue-600",
+    CHUNK_REPLICA_ADD: "text-purple-600",
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-semibold text-sm">Recent Activity</h2>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm hover:bg-gray-200 disabled:opacity-50"
+        >
+          ↻
+        </button>
+      </div>
+      <div className="space-y-2">
+        {logs.map((log, i) => (
+          <div key={i} className="bg-white rounded-lg shadow p-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className={`text-xs font-medium ${typeColor[log.type] || "text-gray-600"}`}>
+                {log.type}
+              </span>
+              <span className="text-xs text-gray-400">{log.timestamp}</span>
+            </div>
+            <p className="text-xs text-gray-500 font-mono truncate">Node: {log.node_id?.slice(0, 8)}…</p>
+          </div>
+        ))}
+        {logs.length === 0 && (
+          <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400 text-sm">
+            No activity yet
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function JoinPage({ mode }) {
   const [bootstrap, setBootstrap] = useState("");
   const [token, setToken] = useState("");
@@ -526,6 +585,7 @@ export default function App() {
       <main className="p-4">
         {tab === "files" && <FilesPage />}
         {tab === "nodes" && <NodesPage />}
+        {tab === "logs" && <LogsPage />}
       </main>
 
       {/* Bottom navigation */}
@@ -537,6 +597,7 @@ export default function App() {
           {[
             { id: "files", label: "Files", icon: "📁" },
             { id: "nodes", label: "Nodes", icon: "🔗" },
+            { id: "logs", label: "Logs", icon: "📋" },
           ].map((item) => (
             <button
               key={item.id}
