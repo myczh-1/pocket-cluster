@@ -21,11 +21,12 @@ type Node struct {
 }
 
 type Discovery struct {
-	nodeID    string
-	name      string
-	platform  string
-	port      int
-	ifaceName string // optional: network interface name to use for mDNS
+	nodeID      string
+	name        string
+	platform    string
+	port        int
+	ifaceName   string // optional: network interface name to use for mDNS
+	advertiseIP string // optional: IP address to advertise
 
 	mu    sync.RWMutex
 	nodes map[string]Node
@@ -34,14 +35,15 @@ type Discovery struct {
 	cancel context.CancelFunc
 }
 
-func New(nodeID, name, platform string, port int, ifaceName string) *Discovery {
+func New(nodeID, name, platform string, port int, ifaceName, advertiseIP string) *Discovery {
 	return &Discovery{
-		nodeID:    nodeID,
-		name:      name,
-		platform:  platform,
-		port:      port,
-		ifaceName: ifaceName,
-		nodes:     make(map[string]Node),
+		nodeID:      nodeID,
+		name:        name,
+		platform:    platform,
+		port:        port,
+		ifaceName:   ifaceName,
+		advertiseIP: advertiseIP,
+		nodes:       make(map[string]Node),
 	}
 }
 
@@ -58,9 +60,33 @@ func (d *Discovery) Start(ctx context.Context) error {
 	if d.ifaceName != "" {
 		iface, err := net.InterfaceByName(d.ifaceName)
 		if err != nil {
-			log.Printf("mDNS: interface %s not found: %v, falling back to all", d.ifaceName, err)
+			log.Printf("mDNS: interface %s not found: %v", d.ifaceName, err)
 		} else {
 			interfaces = []net.Interface{*iface}
+		}
+	}
+
+	// If we have an advertise IP but no interface, try to find the interface by IP
+	if len(interfaces) == 0 && d.advertiseIP != "" {
+		ifaces, err := net.Interfaces()
+		if err == nil {
+			for _, iface := range ifaces {
+				addrs, err := iface.Addrs()
+				if err != nil {
+					continue
+				}
+				for _, addr := range addrs {
+					if ipnet, ok := addr.(*net.IPNet); ok {
+						if ipnet.IP.String() == d.advertiseIP {
+							interfaces = []net.Interface{iface}
+							break
+						}
+					}
+				}
+				if len(interfaces) > 0 {
+					break
+				}
+			}
 		}
 	}
 

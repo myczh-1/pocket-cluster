@@ -87,12 +87,14 @@ class AgentService : Service() {
             }
 
             val deviceName = Build.MODEL ?: "Android Device"
+            val wifiIP = getWifiIP()
             val pb = ProcessBuilder(
                 binary.absolutePath,
                 "-data", dataDir.absolutePath,
                 "-port", DEFAULT_PORT.toString(),
                 "-name", deviceName,
                 "-iface", "wlan0",
+                "-advertise-ip", wifiIP ?: "",
             )
             pb.redirectErrorStream(true)
             pb.environment()["HOME"] = filesDir.absolutePath
@@ -188,5 +190,22 @@ class AgentService : Service() {
     private fun updateNotification(text: String) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(text))
+    }
+
+    private fun getWifiIP(): String? {
+        try {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val ip = wm.connectionInfo.ipAddress
+            if (ip != 0) {
+                return String.format("%d.%d.%d.%d",
+                    ip and 0xff,
+                    ip shr 8 and 0xff,
+                    ip shr 16 and 0xff,
+                    ip shr 24 and 0xff)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get WiFi IP: ${e.message}")
+        }
+        return null
     }
 }
