@@ -172,3 +172,29 @@ func TestJoinApproveIsNotOpenApprovalStub(t *testing.T) {
 		t.Fatalf("join approve status = %d, want %d", res.Code, http.StatusNotFound)
 	}
 }
+
+func TestAgentLogsUseInjectedRingBuffer(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	chunks := chunk.New(t.TempDir())
+	if err := chunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	ring := NewRingBuffer(2)
+	ring.Add("first")
+	ring.Add("second")
+	srv := New(newTestConfig(t, "local"), st, chunks, WithLogRing(ring))
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/agent/logs", nil)
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("logs status = %d, want %d", res.Code, http.StatusOK)
+	}
+	if !strings.Contains(res.Body.String(), "first") || !strings.Contains(res.Body.String(), "second") {
+		t.Fatalf("logs response = %s, want injected ring lines", res.Body.String())
+	}
+}

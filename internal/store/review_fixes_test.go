@@ -82,3 +82,64 @@ func TestGetUnpushedEventsExcludesMarkedPeerEvents(t *testing.T) {
 		t.Fatalf("other peer unpushed count = %d, want 2", len(otherPeer))
 	}
 }
+
+func TestSearchFilesUsesIndexedTokenSearch(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.UpsertFile(&types.File{FileID: "report", Name: "Quarterly Report.pdf", Path: "/docs/Quarterly Report.pdf"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertFile(&types.File{FileID: "notes", Name: "notes.txt", Path: "/docs/notes.txt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.SearchFiles("repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].FileID != "report" {
+		t.Fatalf("search repo = %#v, want report", got)
+	}
+
+	got, err = s.SearchFiles(`"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("quote-only search = %#v, want no results", got)
+	}
+}
+
+func TestSearchIndexTracksRenameAndDelete(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.UpsertFile(&types.File{FileID: "file", Name: "draft.txt", Path: "/draft.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RenameFile("file", "/draft.txt", "/final.txt", "node", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.SearchFiles("final")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Path != "/final.txt" {
+		t.Fatalf("search final = %#v, want renamed file", got)
+	}
+	if err := s.MarkFileDeleted("/final.txt", "node"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.SearchFiles("final")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("deleted file search = %#v, want no results", got)
+	}
+}

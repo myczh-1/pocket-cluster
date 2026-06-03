@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	_ "modernc.org/sqlite"
 
@@ -104,6 +105,7 @@ func (s *Store) migrate() error {
 			pushed_at INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (peer_node_id, event_id)
 		)`,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(file_id UNINDEXED, name, path, tokenize = 'unicode61')`,
 		`CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_node_seq ON events(node_id, seq)`,
 		`CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)`,
@@ -118,6 +120,9 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if err := s.addColumnIfMissing("nodes", "last_working_address", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.seedFileSearchIndex(); err != nil {
 		return err
 	}
 	return nil
@@ -157,6 +162,55 @@ func (s *Store) columnExists(table, column string) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+func (s *Store) seedFileSearchIndex() error {
+	var indexed int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM files_fts`).Scan(&indexed); err != nil {
+		return err
+	}
+	if indexed != 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`INSERT INTO files_fts (file_id, name, path) SELECT file_id, name, path FROM files WHERE deleted = 0`)
+	return err
+}
+
+func (s *Store) indexFile(f *types.File) error {
+	if _, err := s.db.Exec(`DELETE FROM files_fts WHERE file_id = ?`, f.FileID); err != nil {
+		return err
+	}
+	if f.Deleted {
+		return nil
+	}
+	_, err := s.db.Exec(`INSERT INTO files_fts (file_id, name, path) VALUES (?, ?, ?)`, f.FileID, f.Name, f.Path)
+	return err
+}
+
+func (s *Store) deleteFileIndex(fileID string) error {
+	_, err := s.db.Exec(`DELETE FROM files_fts WHERE file_id = ?`, fileID)
+	return err
+}
+
+func fileSearchQuery(keyword string) string {
+	var parts []string
+	var token []rune
+	flush := func() {
+		if len(token) == 0 {
+			return
+		}
+		parts = append(parts, `"`+string(token)+`"*`)
+		token = token[:0]
+	}
+	for _, r := range keyword {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			token = append(token, unicode.ToLower(r))
+			continue
+		}
+		flush()
+	}
+	flush()
+	return strings.Join(parts, " ")
 }
 func isDirectChild(parent, child string) bool {
 	if parent == "" {
@@ -285,7 +339,10 @@ func (s *Store) UpsertFile(f *types.File) error {
 		f.VersionID, f.ParentVersionID, string(chunkJSON),
 		f.CreatedAt.UnixMilli(), f.ModifiedAt.UnixMilli(), f.ModifiedBy,
 		boolToInt(f.Deleted), f.ConflictOf)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.indexFile(f)
 }
 
 func (s *Store) GetFile(path string) (*types.File, error) {
@@ -320,12 +377,24 @@ func (s *Store) ListFiles(dirPath string) ([]types.File, error) {
 func (s *Store) MarkFileDeleted(path string, deletedBy string) error {
 	_, err := s.db.Exec(`UPDATE files SET deleted = 1, modified_by = ?, modified_at = ? WHERE path = ? AND deleted = 0`,
 		deletedBy, time.Now().UnixMilli(), path)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`DELETE FROM files_fts WHERE file_id IN (SELECT file_id FROM files WHERE path = ?)`, path)
 	return err
 }
 
 func (s *Store) RenameFile(fileID, oldPath, newPath string, modifiedBy string, modifiedAt time.Time) error {
+	name := filepath.Base(newPath)
 	_, err := s.db.Exec(`UPDATE files SET path = ?, name = ?, modified_by = ?, modified_at = ? WHERE file_id = ? AND path = ? AND deleted = 0`,
-		newPath, filepath.Base(newPath), modifiedBy, timeMillis(modifiedAt), fileID, oldPath)
+		newPath, name, modifiedBy, timeMillis(modifiedAt), fileID, oldPath)
+	if err != nil {
+		return err
+	}
+	if err := s.deleteFileIndex(fileID); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO files_fts (file_id, name, path) VALUES (?, ?, ?)`, fileID, name, newPath)
 	return err
 }
 
@@ -338,12 +407,18 @@ func (s *Store) MarkFileConflict(originalFileID, conflictFileID, conflictPath, c
 		return err
 	}
 	rows, err := res.RowsAffected()
-	if err != nil || rows != 0 {
+	if err != nil {
 		return err
+	}
+	if rows != 0 {
+		return s.indexFile(&types.File{FileID: conflictFileID, Name: name, Path: conflictPath})
 	}
 	_, err = s.db.Exec(`INSERT INTO files (file_id, name, path, version_id, parent_version_id, created_at, modified_at, modified_by, conflict_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		conflictFileID, name, conflictPath, conflictVersionID, parentVersionID, ts, ts, modifiedBy, originalFileID)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.indexFile(&types.File{FileID: conflictFileID, Name: name, Path: conflictPath})
 }
 
 func (s *Store) ListAllFilesIncludingDeleted() ([]types.File, error) {
@@ -381,7 +456,15 @@ func (s *Store) ListAllFiles() ([]types.File, error) {
 }
 
 func (s *Store) SearchFiles(keyword string) ([]types.File, error) {
-	rows, err := s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE deleted = 0 AND name LIKE ?`, "%"+keyword+"%")
+	query := fileSearchQuery(keyword)
+	if query == "" {
+		return []types.File{}, nil
+	}
+	rows, err := s.db.Query(`SELECT f.file_id, f.name, f.path, f.is_dir, f.size_bytes, f.mime_type, f.version_id, f.parent_version_id, f.chunk_ids, f.created_at, f.modified_at, f.modified_by, f.deleted, f.conflict_of
+		FROM files f
+		JOIN files_fts ON files_fts.file_id = f.file_id
+		WHERE f.deleted = 0 AND files_fts MATCH ?
+		ORDER BY f.path ASC`, query)
 	if err != nil {
 		return nil, err
 	}

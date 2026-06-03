@@ -2,14 +2,13 @@ package server
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/pocketcluster/agent/internal/types"
 )
 
-// LogRing is a ring buffer for agent log lines, set by main.
-var LogRing *RingBuffer
-
 type RingBuffer struct {
+	mu   sync.Mutex
 	buf  []string
 	pos  int
 	size int
@@ -24,6 +23,8 @@ func NewRingBuffer(size int) *RingBuffer {
 }
 
 func (r *RingBuffer) Add(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.buf[r.pos] = line
 	r.pos = (r.pos + 1) % r.size
 	if r.pos == 0 {
@@ -32,6 +33,8 @@ func (r *RingBuffer) Add(line string) {
 }
 
 func (r *RingBuffer) Lines() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if !r.full {
 		result := make([]string, r.pos)
 		copy(result, r.buf[:r.pos])
@@ -44,7 +47,7 @@ func (r *RingBuffer) Lines() []string {
 }
 
 func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
-	if LogRing == nil {
+	if s.logRing == nil {
 		writeJSON(w, http.StatusOK, types.APIResponse{
 			OK:   true,
 			Data: mustMarshal(map[string]any{"lines": []string{}}),
@@ -53,6 +56,6 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, types.APIResponse{
 		OK:   true,
-		Data: mustMarshal(map[string]any{"lines": LogRing.Lines()}),
+		Data: mustMarshal(map[string]any{"lines": s.logRing.Lines()}),
 	})
 }

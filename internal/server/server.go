@@ -16,15 +16,30 @@ type Server struct {
 	store   *store.Store
 	chunks  *chunk.Storage
 	localIP string // optional: local IP address override
+	logRing *RingBuffer
 	started time.Time
 }
 
-func New(cfg *config.Config, s *store.Store, c *chunk.Storage, localIP ...string) *Server {
-	ip := ""
-	if len(localIP) > 0 {
-		ip = localIP[0]
+type Option func(*Server)
+
+func WithLocalIP(localIP string) Option {
+	return func(s *Server) {
+		s.localIP = localIP
 	}
-	return &Server{cfg: cfg, store: s, chunks: c, localIP: ip, started: time.Now()}
+}
+
+func WithLogRing(ring *RingBuffer) Option {
+	return func(s *Server) {
+		s.logRing = ring
+	}
+}
+
+func New(cfg *config.Config, s *store.Store, c *chunk.Storage, opts ...Option) *Server {
+	srv := &Server{cfg: cfg, store: s, chunks: c, started: time.Now()}
+	for _, opt := range opts {
+		opt(srv)
+	}
+	return srv
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

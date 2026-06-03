@@ -16,7 +16,6 @@ import (
 	"syscall"
 	"time"
 
-
 	"github.com/google/uuid"
 	"github.com/pocketcluster/agent/internal/chunk"
 	"github.com/pocketcluster/agent/internal/config"
@@ -51,7 +50,6 @@ func main() {
 
 	// Set up ring buffer logger for agent logs API
 	agentLogRing := server.NewRingBuffer(200)
-	server.LogRing = agentLogRing
 	log.SetOutput(&logWriter{ring: agentLogRing, orig: log.Writer()})
 	log.Printf("PocketCluster Agent starting (platform=%s, data=%s)", runtime.GOOS, *dataDir)
 
@@ -81,7 +79,7 @@ func main() {
 	if err := s.UpdateNodeFull(selfNode); err != nil {
 		log.Fatalf("update self node: %v", err)
 	}
-	srv := server.New(cfg, s, cs, *localIP)
+	srv := server.New(cfg, s, cs, server.WithLocalIP(*localIP), server.WithLogRing(agentLogRing))
 	handler := srv.Handler()
 
 	addr := fmt.Sprintf(":%d", *port)
