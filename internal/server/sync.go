@@ -146,6 +146,7 @@ func (s *Server) pullEventsFrom(ctx context.Context, n types.Node, address strin
 		return err
 	}
 	for _, e := range payload.Events {
+		e = rewritePushedNodeAddress(e, n.NodeID, address)
 		inserted, err := s.store.InsertEvent(&e)
 		if err != nil {
 			return err
