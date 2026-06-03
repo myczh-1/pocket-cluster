@@ -125,6 +125,9 @@ func (s *Store) migrate() error {
 	if err := s.seedFileSearchIndex(); err != nil {
 		return err
 	}
+	if err := s.clearLoopbackAddresses(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -173,6 +176,11 @@ func (s *Store) seedFileSearchIndex() error {
 		return nil
 	}
 	_, err := s.db.Exec(`INSERT INTO files_fts (file_id, name, path) SELECT file_id, name, path FROM files WHERE deleted = 0`)
+	return err
+}
+
+func (s *Store) clearLoopbackAddresses() error {
+	_, err := s.db.Exec(`UPDATE nodes SET address = '', address_candidates = '[]', last_working_address = '' WHERE address LIKE 'localhost:%' OR address LIKE '127.0.0.1:%' OR address LIKE '[::1]:%'`)
 	return err
 }
 

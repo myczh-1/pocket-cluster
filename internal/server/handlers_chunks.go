@@ -123,7 +123,10 @@ func rewritePushedNodeAddress(e types.Event, senderNodeID, remoteAddr string) ty
 	}
 	observedAddress := addressFromRemote(remoteAddr, n.Address)
 	n.Address = normalizeNodeAddress(n.Address)
-	n.AddressCandidates = mergeAddressCandidates(n.AddressCandidates, n.Address, observedAddress)
+	if isLoopbackAddress(n.Address) && !isLoopbackAddress(observedAddress) {
+		n.Address = observedAddress
+	}
+	n.AddressCandidates = filterLoopbackAddresses(mergeAddressCandidates(n.AddressCandidates, n.Address, observedAddress))
 	n.LastWorkingAddress = observedAddress
 	if payload, err := json.Marshal(n); err == nil {
 		e.Payload = payload
