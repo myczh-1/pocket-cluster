@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net"
 	"strconv"
@@ -90,12 +89,15 @@ func (d *Discovery) Start(ctx context.Context) error {
 		}
 	}
 
+	// Try to register mDNS service, but don't fail if it doesn't work
 	server, err := zeroconf.Register(d.nodeID, "_pocketcluster._tcp", "local.", d.port, meta, interfaces)
 	if err != nil {
-		return fmt.Errorf("register mDNS: %w", err)
+		log.Printf("mDNS registration failed (can still browse): %v", err)
+	} else {
+		d.server = server
 	}
-	d.server = server
 
+	// Always start browsing, even if registration failed
 	go d.browse(ctx)
 	return nil
 }
