@@ -6,7 +6,6 @@ import (
 	"net"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/grandcat/zeroconf"
 )
@@ -151,37 +150,15 @@ func (d *Discovery) browse(ctx context.Context, _ *net.Interface) {
 	}
 	entries := make(chan *zeroconf.ServiceEntry)
 	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case entry, ok := <-entries:
-				if !ok {
-					return
-				}
-				d.handleEntry(entry)
-			}
+		for entry := range entries {
+			d.handleEntry(entry)
 		}
 	}()
-	for {
-		// Recover from zeroconf panic on close
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("mDNS browse recovered from panic: %v", r)
-				}
-			}()
-			if err := resolver.Browse(ctx, "_pocketcluster._tcp", "local.", entries); err != nil {
-				log.Printf("mDNS browse error: %v", err)
-			}
-		}()
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			time.Sleep(10 * time.Second)
-		}
+	if err := resolver.Browse(ctx, "_pocketcluster._tcp", "local.", entries); err != nil {
+		log.Printf("mDNS browse error: %v", err)
+		return
 	}
+	<-ctx.Done()
 }
 
 func (d *Discovery) handleEntry(entry *zeroconf.ServiceEntry) {
