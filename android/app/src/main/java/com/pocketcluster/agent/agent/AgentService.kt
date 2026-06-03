@@ -85,10 +85,12 @@ class AgentService : Service() {
                 acquire()
             }
 
+            val deviceName = Build.MODEL ?: "Android Device"
             val pb = ProcessBuilder(
                 binary.absolutePath,
                 "-data", dataDir.absolutePath,
                 "-port", DEFAULT_PORT.toString(),
+                "-name", deviceName,
             )
             pb.redirectErrorStream(true)
             pb.environment()["HOME"] = filesDir.absolutePath

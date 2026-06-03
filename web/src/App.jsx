@@ -112,12 +112,21 @@ function FilesPage() {
     const file = e.target.files[0];
     if (!file) return;
     setUploading(true);
-    const formData = new FormData();
-    formData.append("path", path === "/" ? `/${file.name}` : `${path}/${file.name}`);
-    formData.append("file", file);
-    await fetch(`${API}/files/upload`, { method: "POST", body: formData });
-    setUploading(false);
-    loadFiles();
+    try {
+      const formData = new FormData();
+      formData.append("path", path === "/" ? `/${file.name}` : `${path}/${file.name}`);
+      formData.append("file", file);
+      const res = await fetch(`${API}/files/upload`, { method: "POST", body: formData });
+      const data = await res.json();
+      if (!data.ok) {
+        alert(`Upload failed: ${data.error?.message || "Unknown error"}`);
+      }
+    } catch (err) {
+      alert(`Upload error: ${err.message}`);
+    } finally {
+      setUploading(false);
+      loadFiles();
+    }
   };
 
   const handleDownload = (file) => {

@@ -31,6 +31,7 @@ const nodeCapacityUpdateInterval = 30 * time.Second
 func main() {
 	dataDir := flag.String("data", defaultDataDir(), "data directory path")
 	port := flag.Int("port", 7788, "HTTP listen port")
+	name := flag.String("name", "", "node name (default: hostname)")
 	joinBootstrap := flag.String("join", "", "bootstrap base URL to join")
 	joinToken := flag.String("join-token", "", "invite token for joining an existing cluster")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -49,7 +50,9 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 	cfg.HTTPPort = *port
-
+	if *name != "" {
+		cfg.Name = *name
+	}
 	s, err := store.Open(*dataDir)
 	if err != nil {
 		log.Fatalf("open store: %v", err)

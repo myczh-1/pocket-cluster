@@ -119,11 +119,17 @@ func (d *Discovery) browse(ctx context.Context) {
 		}
 	}()
 	for {
-		if err := resolver.Browse(ctx, "_pocketcluster._tcp", "local.", entries); err != nil {
-			log.Printf("mDNS browse error: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
+		// Recover from zeroconf panic on close
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("mDNS browse recovered from panic: %v", r)
+				}
+			}()
+			if err := resolver.Browse(ctx, "_pocketcluster._tcp", "local.", entries); err != nil {
+				log.Printf("mDNS browse error: %v", err)
+			}
+		}()
 		select {
 		case <-ctx.Done():
 			return
