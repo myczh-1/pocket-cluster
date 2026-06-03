@@ -632,3 +632,35 @@ func nonLoopbackIPv4() (net.IP, bool) {
 	}
 	return nil, false
 }
+
+func TestSyncOnceMarksStaleNodesOffline(t *testing.T) {
+	localStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer localStore.Close()
+	localChunks := chunk.New(t.TempDir())
+	if err := localChunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	localSrv := New(newTestConfig(t, "local"), localStore, localChunks)
+	now := time.Now()
+	if err := localStore.UpsertNode(&types.Node{
+		NodeID:    "stale-peer",
+		Address:   "127.0.0.1:1",
+		Status:    "online",
+		Trusted:   true,
+		LastSeen:  now.Add(-60 * time.Second),
+		PublicKey: "stale-key",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = localSrv.SyncOnce(context.Background())
+	n, err := localStore.GetNode("stale-peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Status != "offline" {
+		t.Fatalf("stale-peer status = %q, want offline", n.Status)
+	}
+}

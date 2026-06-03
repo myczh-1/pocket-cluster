@@ -270,6 +270,15 @@ func (s *Store) UpdateNodeLastWorkingAddress(nodeID, address string, lastSeen ti
 	return err
 }
 
+func (s *Store) MarkStaleNodesOffline(cutoff time.Time) (int64, error) {
+	res, err := s.db.Exec(`UPDATE nodes SET status = 'offline' WHERE status = 'online' AND trusted = 1 AND last_seen > 0 AND last_seen < ?`,
+		timeMillis(cutoff))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (s *Store) UpdateNodeFull(n *types.Node) error {
 	candidates, err := json.Marshal(n.AddressCandidates)
 	if err != nil {

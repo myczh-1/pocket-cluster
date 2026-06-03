@@ -43,6 +43,9 @@ func (s *Server) StartSync(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Server) SyncOnce(ctx context.Context) error {
+	if _, err := s.store.MarkStaleNodesOffline(time.Now().Add(-nodeOfflineAfter)); err != nil {
+		log.Printf("mark stale nodes: %v", err)
+	}
 	nodes, err := s.store.ListNodes()
 	if err != nil {
 		return err

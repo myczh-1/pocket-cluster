@@ -143,3 +143,53 @@ func TestSearchIndexTracksRenameAndDelete(t *testing.T) {
 		t.Fatalf("deleted file search = %#v, want no results", got)
 	}
 }
+
+func TestMarkStaleNodesOffline(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now()
+	if err := s.UpsertNode(&types.Node{NodeID: "self", Status: "online", Trusted: true, LastSeen: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertNode(&types.Node{NodeID: "fresh-peer", Status: "online", Trusted: true, LastSeen: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertNode(&types.Node{NodeID: "stale-peer", Status: "online", Trusted: true, LastSeen: now.Add(-60 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertNode(&types.Node{NodeID: "untrusted-stale", Status: "online", Trusted: false, LastSeen: now.Add(-60 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertNode(&types.Node{NodeID: "already-offline", Status: "offline", Trusted: true, LastSeen: now.Add(-60 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+
+	affected, err := s.MarkStaleNodesOffline(now.Add(-30 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if affected != 1 {
+		t.Fatalf("affected = %d, want 1", affected)
+	}
+	n, err := s.GetNode("stale-peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Status != "offline" {
+		t.Fatalf("stale-peer status = %q, want offline", n.Status)
+	}
+	for _, id := range []string{"self", "fresh-peer", "untrusted-stale", "already-offline"} {
+		n, err := s.GetNode(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id == "self" || id == "fresh-peer" {
+			if n.Status != "online" {
+				t.Fatalf("%s status = %q, want online", id, n.Status)
+			}
+		}
+	}
+}
