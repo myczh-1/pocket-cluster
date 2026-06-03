@@ -34,6 +34,7 @@ func main() {
 	dataDir := flag.String("data", defaultDataDir(), "data directory path")
 	port := flag.Int("port", 7788, "HTTP listen port")
 	name := flag.String("name", "", "node name (default: hostname)")
+	iface := flag.String("iface", "", "network interface for mDNS (e.g., wlan0)")
 	joinBootstrap := flag.String("join", "", "bootstrap base URL to join")
 	joinToken := flag.String("join-token", "", "invite token for joining an existing cluster")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -91,7 +92,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	disc := discovery.New(cfg.NodeID, cfg.Name, cfg.Platform, *port)
+	disc := discovery.New(cfg.NodeID, cfg.Name, cfg.Platform, *port, *iface)
 	if err := disc.Start(ctx); err != nil {
 		log.Printf("mDNS discovery failed to start: %v", err)
 	} else {

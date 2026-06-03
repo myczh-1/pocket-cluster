@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"strconv"
 	"sync"
 	"time"
@@ -20,10 +21,11 @@ type Node struct {
 }
 
 type Discovery struct {
-	nodeID   string
-	name     string
-	platform string
-	port     int
+	nodeID    string
+	name      string
+	platform  string
+	port      int
+	ifaceName string // optional: network interface name to use for mDNS
 
 	mu    sync.RWMutex
 	nodes map[string]Node
@@ -32,13 +34,14 @@ type Discovery struct {
 	cancel context.CancelFunc
 }
 
-func New(nodeID, name, platform string, port int) *Discovery {
+func New(nodeID, name, platform string, port int, ifaceName string) *Discovery {
 	return &Discovery{
-		nodeID:   nodeID,
-		name:     name,
-		platform: platform,
-		port:     port,
-		nodes:    make(map[string]Node),
+		nodeID:    nodeID,
+		name:      name,
+		platform:  platform,
+		port:      port,
+		ifaceName: ifaceName,
+		nodes:     make(map[string]Node),
 	}
 }
 
@@ -51,7 +54,17 @@ func (d *Discovery) Start(ctx context.Context) error {
 		"platform=" + d.platform,
 	}
 
-	server, err := zeroconf.Register(d.nodeID, "_pocketcluster._tcp", "local.", d.port, meta, nil)
+	var interfaces []net.Interface
+	if d.ifaceName != "" {
+		iface, err := net.InterfaceByName(d.ifaceName)
+		if err != nil {
+			log.Printf("mDNS: interface %s not found: %v, falling back to all", d.ifaceName, err)
+		} else {
+			interfaces = []net.Interface{*iface}
+		}
+	}
+
+	server, err := zeroconf.Register(d.nodeID, "_pocketcluster._tcp", "local.", d.port, meta, interfaces)
 	if err != nil {
 		return fmt.Errorf("register mDNS: %w", err)
 	}

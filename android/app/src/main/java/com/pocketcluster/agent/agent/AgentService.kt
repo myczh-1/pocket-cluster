@@ -92,6 +92,7 @@ class AgentService : Service() {
                 "-data", dataDir.absolutePath,
                 "-port", DEFAULT_PORT.toString(),
                 "-name", deviceName,
+                "-iface", "wlan0",
             )
             pb.redirectErrorStream(true)
             pb.environment()["HOME"] = filesDir.absolutePath
