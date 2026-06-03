@@ -1,13 +1,10 @@
 package server
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/pocketcluster/agent/internal/types"
@@ -40,32 +37,19 @@ func (s *Server) handleStoreChunk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "signed body hash mismatch")
 		return
 	}
-	body, err := io.ReadAll(r.Body)
+	actualHash, size, err := s.chunks.Store(r.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	h := sha256.Sum256(body)
-	actualHash := fmt.Sprintf("%x", h)
 	if actualHash != expectedHash {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "hash mismatch")
 		return
 	}
 	now := time.Now()
-	if !s.chunks.Exists(actualHash) {
-		chunkPath := s.chunks.Path(actualHash)
-		if err := os.MkdirAll(filepath.Dir(chunkPath), 0o755); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
-		}
-		if err := os.WriteFile(chunkPath, body, 0o644); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
-		}
-		if err := s.store.UpsertChunk(&types.Chunk{ChunkID: actualHash, SizeBytes: int64(len(body)), StoredAt: now}); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
-		}
+	if err := s.store.UpsertChunk(&types.Chunk{ChunkID: actualHash, SizeBytes: size, StoredAt: now}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
 	}
 	replica := &types.Replica{ChunkID: actualHash, NodeID: s.cfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}
 	if err := s.store.UpsertReplica(replica); err != nil {
@@ -78,7 +62,7 @@ func (s *Server) handleStoreChunk(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
 		"hash":       actualHash,
-		"size_bytes": len(body),
+		"size_bytes": size,
 		"stored":     true,
 		"replica":    replica,
 	})})

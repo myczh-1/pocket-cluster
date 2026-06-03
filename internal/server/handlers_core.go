@@ -238,7 +238,7 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleJoinApprove(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]bool{"approved": true})})
+	writeError(w, http.StatusNotFound, "NOT_FOUND", "manual join approval is not implemented")
 }
 
 func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {

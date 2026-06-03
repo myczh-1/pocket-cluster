@@ -1,13 +1,13 @@
 package server
 
 import (
-	"crypto/sha256"
+	"bytes"
 	"fmt"
 	"io"
+	"log"
+	"mime"
 	"net/http"
-	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,8 +16,14 @@ import (
 	"github.com/pocketcluster/agent/internal/types"
 )
 
+const (
+	maxUploadBytes       = 16 * 1024 * 1024 * 1024
+	maxUploadMemoryBytes = 8 * 1024 * 1024
+)
+
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(1 << 30); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	if err := r.ParseMultipartForm(maxUploadMemoryBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
@@ -35,68 +41,65 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	var chunkIDs []string
 	totalSize := int64(0)
+	var first [1]byte
 	for {
-		chunkBuf := make([]byte, chunk.ChunkSize)
-		n, readErr := io.ReadFull(file, chunkBuf)
-		if n > 0 {
-			h := sha256.Sum256(chunkBuf[:n])
-			hash := fmt.Sprintf("%x", h)
-			if !s.chunks.Exists(hash) {
-				chunkPath := s.chunks.Path(hash)
-				if err := os.MkdirAll(filepath.Dir(chunkPath), 0o755); err != nil {
-					writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-					return
-				}
-				if err := os.WriteFile(chunkPath, chunkBuf[:n], 0o644); err != nil {
-					writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-					return
-				}
-				if err := s.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: int64(n), StoredAt: time.Now()}); err != nil {
-					writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-					return
-				}
-			}
-			now := time.Now()
-			replica := &types.Replica{
-				ChunkID:    hash,
-				NodeID:     s.cfg.NodeID,
-				Status:     "available",
-				StoredAt:   now,
-				VerifiedAt: now,
-			}
-			if err := s.store.UpsertReplica(replica); err != nil {
-				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-				return
-			}
-			if _, err := s.appendEvent(types.EventChunkReplicaAdd, replica); err != nil {
-				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-				return
-			}
-			chunkIDs = append(chunkIDs, hash)
-			totalSize += int64(n)
-		}
-		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+		n, readErr := file.Read(first[:])
+		if readErr == io.EOF {
 			break
 		}
 		if readErr != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", readErr.Error())
 			return
 		}
+		if n != 1 {
+			continue
+		}
+		hash, size, err := s.chunks.Store(io.MultiReader(bytes.NewReader(first[:]), io.LimitReader(file, chunk.ChunkSize-1)))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		now := time.Now()
+		if err := s.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: size, StoredAt: now}); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		replica := &types.Replica{
+			ChunkID:    hash,
+			NodeID:     s.cfg.NodeID,
+			Status:     "available",
+			StoredAt:   now,
+			VerifiedAt: now,
+		}
+		if err := s.store.UpsertReplica(replica); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		if _, err := s.appendEvent(types.EventChunkReplicaAdd, replica); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		chunkIDs = append(chunkIDs, hash)
+		totalSize += size
 	}
 
-	mime := header.Header.Get("Content-Type")
-	if mime == "" {
-		mime = detectMime(targetPath)
+	mimeType := header.Header.Get("Content-Type")
+	if mimeType == "" {
+		if detected := mime.TypeByExtension(filepath.Ext(targetPath)); detected != "" {
+			mimeType = detected
+		} else {
+			mimeType = "application/octet-stream"
+		}
 	}
 	now := time.Now()
 	fileID := uuid.New().String()
-	versionID := fmt.Sprintf("%x", sha256.Sum256([]byte(fileID+strings.Join(chunkIDs, ",")+s.cfg.NodeID+fmt.Sprint(now.UnixNano()))))
+	versionID := uuid.NewString()
 	f := &types.File{
 		FileID:     fileID,
 		Name:       filepath.Base(targetPath),
 		Path:       targetPath,
 		SizeBytes:  totalSize,
-		MimeType:   mime,
+		MimeType:   mimeType,
 		VersionID:  versionID,
 		ChunkIDs:   chunkIDs,
 		CreatedAt:  now,
@@ -159,11 +162,17 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "cannot download directory")
 		return
 	}
+	for _, chunkID := range f.ChunkIDs {
+		if !s.isChunkReadable(r.Context(), chunkID) {
+			writeError(w, http.StatusNotFound, "CHUNK_NOT_FOUND", chunkID)
+			return
+		}
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", f.Name))
 	for _, chunkID := range f.ChunkIDs {
 		if err := s.writeChunk(r.Context(), w, chunkID); err != nil {
-			writeError(w, http.StatusNotFound, "CHUNK_NOT_FOUND", chunkID)
+			log.Printf("download %s: chunk %s unavailable after precheck: %v", f.Path, chunkID, err)
 			return
 		}
 	}

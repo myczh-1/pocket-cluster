@@ -19,10 +19,13 @@ type Server struct {
 	started time.Time
 }
 
-func New(cfg *config.Config, s *store.Store, c *chunk.Storage, localIP string) *Server {
-	return &Server{cfg: cfg, store: s, chunks: c, localIP: localIP, started: time.Now()}
+func New(cfg *config.Config, s *store.Store, c *chunk.Storage, localIP ...string) *Server {
+	ip := ""
+	if len(localIP) > 0 {
+		ip = localIP[0]
+	}
+	return &Server{cfg: cfg, store: s, chunks: c, localIP: ip, started: time.Now()}
 }
-
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -37,23 +40,4 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 func mustMarshal(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
-}
-
-func detectMime(path string) string {
-	ext := path[len(path)-4:]
-	switch ext {
-	case ".jpg", "jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".gif":
-		return "image/gif"
-	case ".pdf":
-		return "application/pdf"
-	case ".txt":
-		return "text/plain"
-	case ".zip":
-		return "application/zip"
-	}
-	return "application/octet-stream"
 }

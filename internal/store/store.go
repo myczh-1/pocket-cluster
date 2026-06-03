@@ -98,25 +98,81 @@ func (s *Store) migrate() error {
 			used_at INTEGER NOT NULL DEFAULT 0,
 			created_by TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS peer_pushed_events (
+			peer_node_id TEXT NOT NULL,
+			event_id TEXT NOT NULL,
+			pushed_at INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (peer_node_id, event_id)
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_node_seq ON events(node_id, seq)`,
 		`CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)`,
-		`ALTER TABLE nodes ADD COLUMN address_candidates TEXT NOT NULL DEFAULT '[]'`,
-		`ALTER TABLE nodes ADD COLUMN last_working_address TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_peer_pushed_events_peer ON peer_pushed_events(peer_node_id)`,
 	}
 	for _, m := range migrations {
 		if _, err := s.db.Exec(m); err != nil {
-			if isDuplicateColumnError(err) {
-				continue
-			}
 			return fmt.Errorf("migrate: %w", err)
 		}
+	}
+	if err := s.addColumnIfMissing("nodes", "address_candidates", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("nodes", "last_working_address", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
 	}
 	return nil
 }
 
-func isDuplicateColumnError(err error) bool {
-	return strings.Contains(err.Error(), "duplicate column name")
+func (s *Store) addColumnIfMissing(table, column, definition string) error {
+	exists, err := s.columnExists(table, column)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition)); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
+func (s *Store) columnExists(table, column string) (bool, error) {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+func isDirectChild(parent, child string) bool {
+	if parent == "" {
+		parent = "/"
+	}
+	if parent == "/" {
+		if child == "/" || !strings.HasPrefix(child, "/") {
+			return false
+		}
+		return !strings.Contains(child[1:], "/")
+	}
+	prefix := strings.TrimRight(parent, "/") + "/"
+	if !strings.HasPrefix(child, prefix) {
+		return false
+	}
+	return !strings.Contains(child[len(prefix):], "/")
 }
 
 // Node operations
@@ -186,7 +242,6 @@ func (s *Store) UpdateNodeFull(n *types.Node) error {
 		n.Status, boolToInt(n.Trusted), timeMillis(n.LastSeen), timeMillis(n.JoinedAt))
 	return err
 }
-
 func (s *Store) GetNode(nodeID string) (*types.Node, error) {
 	row := s.db.QueryRow(`SELECT node_id, name, platform, address, address_candidates, last_working_address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes WHERE node_id = ?`, nodeID)
 	return scanNode(row)
@@ -244,12 +299,55 @@ func (s *Store) GetFileByID(fileID string) (*types.File, error) {
 }
 
 func (s *Store) ListFiles(dirPath string) ([]types.File, error) {
-	prefix := dirPath
-	if prefix != "/" {
-		prefix = dirPath + "/"
+	rows, err := s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE deleted = 0 ORDER BY path ASC`)
+	if err != nil {
+		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE deleted = 0 AND path LIKE ? AND path NOT LIKE ?`,
-		prefix+"%", prefix+"%/%")
+	defer rows.Close()
+	var files []types.File
+	for rows.Next() {
+		f, err := scanFileRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		if isDirectChild(dirPath, f.Path) {
+			files = append(files, *f)
+		}
+	}
+	return files, rows.Err()
+}
+
+func (s *Store) MarkFileDeleted(path string, deletedBy string) error {
+	_, err := s.db.Exec(`UPDATE files SET deleted = 1, modified_by = ?, modified_at = ? WHERE path = ? AND deleted = 0`,
+		deletedBy, time.Now().UnixMilli(), path)
+	return err
+}
+
+func (s *Store) RenameFile(fileID, oldPath, newPath string, modifiedBy string, modifiedAt time.Time) error {
+	_, err := s.db.Exec(`UPDATE files SET path = ?, name = ?, modified_by = ?, modified_at = ? WHERE file_id = ? AND path = ? AND deleted = 0`,
+		newPath, filepath.Base(newPath), modifiedBy, timeMillis(modifiedAt), fileID, oldPath)
+	return err
+}
+
+func (s *Store) MarkFileConflict(originalFileID, conflictFileID, conflictPath, conflictVersionID, parentVersionID, modifiedBy string, modifiedAt time.Time) error {
+	name := filepath.Base(conflictPath)
+	ts := timeMillis(modifiedAt)
+	res, err := s.db.Exec(`UPDATE files SET path = ?, name = ?, version_id = ?, parent_version_id = ?, conflict_of = ?, modified_by = ?, modified_at = ? WHERE file_id = ?`,
+		conflictPath, name, conflictVersionID, parentVersionID, originalFileID, modifiedBy, ts, conflictFileID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil || rows != 0 {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO files (file_id, name, path, version_id, parent_version_id, created_at, modified_at, modified_by, conflict_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		conflictFileID, name, conflictPath, conflictVersionID, parentVersionID, ts, ts, modifiedBy, originalFileID)
+	return err
+}
+
+func (s *Store) ListAllFilesIncludingDeleted() ([]types.File, error) {
+	rows, err := s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files ORDER BY path ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -263,12 +361,6 @@ func (s *Store) ListFiles(dirPath string) ([]types.File, error) {
 		files = append(files, *f)
 	}
 	return files, rows.Err()
-}
-
-func (s *Store) MarkFileDeleted(path string, deletedBy string) error {
-	_, err := s.db.Exec(`UPDATE files SET deleted = 1, modified_by = ?, modified_at = ? WHERE path = ? AND deleted = 0`,
-		deletedBy, time.Now().UnixMilli(), path)
-	return err
 }
 
 func (s *Store) ListAllFiles() ([]types.File, error) {
@@ -347,6 +439,32 @@ func (s *Store) ListChunks() ([]types.Chunk, error) {
 func (s *Store) UpsertReplica(r *types.Replica) error {
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO replicas (chunk_id, node_id, status, stored_at, verified_at) VALUES (?, ?, ?, ?, ?)`,
 		r.ChunkID, r.NodeID, r.Status, r.StoredAt.UnixMilli(), r.VerifiedAt.UnixMilli())
+	return err
+}
+
+func (s *Store) ListReplicas() ([]types.Replica, error) {
+	rows, err := s.db.Query(`SELECT chunk_id, node_id, status, stored_at, verified_at FROM replicas ORDER BY chunk_id ASC, node_id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var reps []types.Replica
+	for rows.Next() {
+		var r types.Replica
+		var stored, verified int64
+		if err := rows.Scan(&r.ChunkID, &r.NodeID, &r.Status, &stored, &verified); err != nil {
+			return nil, err
+		}
+		r.StoredAt = time.UnixMilli(stored)
+		r.VerifiedAt = time.UnixMilli(verified)
+		reps = append(reps, r)
+	}
+	return reps, rows.Err()
+}
+
+func (s *Store) MarkReplicaRemoved(chunkID, nodeID string, verifiedAt time.Time) error {
+	_, err := s.db.Exec(`UPDATE replicas SET status = 'removed', verified_at = ? WHERE chunk_id = ? AND node_id = ?`,
+		timeMillis(verifiedAt), chunkID, nodeID)
 	return err
 }
 
@@ -448,6 +566,57 @@ func (s *Store) GetEventsSince(sinceEventID string, limit int) ([]types.Event, e
 	return events, rows.Err()
 }
 
+func (s *Store) GetUnpushedEvents(peerNodeID string, limit int) ([]types.Event, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows, err := s.db.Query(`SELECT e.event_id, e.type, e.node_id, e.seq, e.timestamp, e.payload
+		FROM events e
+		WHERE NOT EXISTS (
+			SELECT 1 FROM peer_pushed_events p
+			WHERE p.peer_node_id = ? AND p.event_id = e.event_id
+		)
+		ORDER BY e.node_id ASC, e.seq ASC
+		LIMIT ?`, peerNodeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []types.Event
+	for rows.Next() {
+		var e types.Event
+		var ts int64
+		var typ string
+		var payload string
+		if err := rows.Scan(&e.EventID, &typ, &e.NodeID, &e.Seq, &ts, &payload); err != nil {
+			return nil, err
+		}
+		e.Type = types.EventType(typ)
+		e.Timestamp = time.UnixMilli(ts)
+		e.Payload = json.RawMessage(payload)
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+func (s *Store) MarkEventsPushed(peerNodeID string, events []types.Event, pushedAt time.Time) error {
+	if len(events) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, e := range events {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO peer_pushed_events (peer_node_id, event_id, pushed_at) VALUES (?, ?, ?)`,
+			peerNodeID, e.EventID, timeMillis(pushedAt)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) NextSeq(nodeID string) (int64, error) {
 	row := s.db.QueryRow(`SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE node_id = ?`, nodeID)
 	var seq int64
@@ -455,6 +624,18 @@ func (s *Store) NextSeq(nodeID string) (int64, error) {
 		return 0, err
 	}
 	return seq, nil
+}
+
+func (s *Store) LatestEventID() (string, error) {
+	row := s.db.QueryRow(`SELECT event_id FROM events ORDER BY timestamp DESC, node_id DESC, seq DESC LIMIT 1`)
+	var eventID string
+	if err := row.Scan(&eventID); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return eventID, nil
 }
 
 // Storage stats

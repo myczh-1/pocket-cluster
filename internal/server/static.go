@@ -28,6 +28,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/chunks", s.handleStoreChunk)
 	mux.HandleFunc("GET /api/events", s.handleGetEvents)
 	mux.HandleFunc("POST /api/events/push", s.handlePushEvents)
+	mux.HandleFunc("GET /api/snapshot", s.handleSnapshot)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/network/scan", s.handleScanNetwork)
 	mux.HandleFunc("GET /api/logs", s.handleGetLogs)

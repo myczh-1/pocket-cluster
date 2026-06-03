@@ -157,7 +157,7 @@ func (s *Server) pullEventsFrom(ctx context.Context, n types.Node, address strin
 }
 
 func (s *Server) pushEvents(ctx context.Context, n types.Node) (string, error) {
-	events, err := s.store.GetEventsSince("", 1000)
+	events, err := s.store.GetUnpushedEvents(n.NodeID, 1000)
 	if err != nil {
 		return "", err
 	}
@@ -173,6 +173,9 @@ func (s *Server) pushEvents(ctx context.Context, n types.Node) (string, error) {
 		if err := s.pushEventsTo(ctx, n, address, body); err != nil {
 			lastErr = err
 			continue
+		}
+		if err := s.store.MarkEventsPushed(n.NodeID, events, time.Now()); err != nil {
+			return "", err
 		}
 		return address, nil
 	}
@@ -300,7 +303,7 @@ func (s *Server) repairChunkReplicas(ctx context.Context, chunkID string, nodes 
 	}
 	// We don't have the chunk locally, fetch it
 	if err := s.fetchChunkFromReplica(ctx, chunkID); err != nil {
-		return nil
+		return err
 	}
 	return nil
 }
@@ -308,9 +311,9 @@ func (s *Server) repairChunkReplicas(ctx context.Context, chunkID string, nodes 
 func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing map[string]struct{}, nodes []types.Node) (bool, error) {
 	// Filter and sort candidates
 	type candidate struct {
-		node          types.Node
+		node           types.Node
 		availableBytes int64
-		isDesktop     bool
+		isDesktop      bool
 	}
 	var candidates []candidate
 	for _, n := range nodes {
@@ -440,6 +443,48 @@ func (s *Server) storeRemoteChunk(ctx context.Context, address, chunkID string) 
 		return "", 0, fmt.Errorf("chunk fetch status %d", resp.StatusCode)
 	}
 	return s.chunks.Store(resp.Body)
+}
+
+func (s *Server) isChunkReadable(ctx context.Context, chunkID string) bool {
+	cf, _, err := s.chunks.Open(chunkID)
+	if err == nil {
+		cf.Close()
+		return true
+	}
+	replicas, err := s.store.GetReplicas(chunkID)
+	if err != nil {
+		return false
+	}
+	for _, replica := range replicas {
+		if replica.NodeID == s.cfg.NodeID || replica.Status != "available" {
+			continue
+		}
+		n, err := s.store.GetNode(replica.NodeID)
+		if err != nil || n.Address == "" || n.Status == "offline" || !n.Trusted {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+n.Address+"/api/chunks/"+chunkID, nil)
+		if err != nil {
+			cancel()
+			continue
+		}
+		if err := s.signPeerRequest(req, emptyBodySHA256); err != nil {
+			cancel()
+			continue
+		}
+		resp, err := peerHTTPClient.Do(req)
+		cancel()
+		if err != nil {
+			continue
+		}
+		if resp.StatusCode == http.StatusOK {
+			resp.Body.Close()
+			return true
+		}
+		resp.Body.Close()
+	}
+	return false
 }
 
 func (s *Server) writeChunk(ctx context.Context, w io.Writer, chunkID string) error {

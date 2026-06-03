@@ -62,13 +62,49 @@ func (s *Server) applyEvent(e types.Event) error {
 			return err
 		}
 		return s.store.UpsertReplica(&r)
+	case types.EventFileRename:
+		var payload struct {
+			FileID          string `json:"file_id"`
+			OldPath         string `json:"old_path"`
+			NewPath         string `json:"new_path"`
+			VersionID       string `json:"version_id"`
+			ParentVersionID string `json:"parent_version_id"`
+		}
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			return err
+		}
+		return s.store.RenameFile(payload.FileID, payload.OldPath, payload.NewPath, e.NodeID, e.Timestamp)
+	case types.EventFileConflict:
+		var payload struct {
+			OriginalFileID    string `json:"original_file_id"`
+			ConflictFileID    string `json:"conflict_file_id"`
+			ConflictPath      string `json:"conflict_path"`
+			OriginalVersionID string `json:"original_version_id"`
+			ConflictVersionID string `json:"conflict_version_id"`
+			ParentVersionID   string `json:"parent_version_id"`
+		}
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			return err
+		}
+		return s.store.MarkFileConflict(payload.OriginalFileID, payload.ConflictFileID, payload.ConflictPath, payload.ConflictVersionID, payload.ParentVersionID, e.NodeID, e.Timestamp)
+	case types.EventChunkReplicaRemove:
+		var payload struct {
+			ChunkID string `json:"chunk_id"`
+			NodeID  string `json:"node_id"`
+		}
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			return err
+		}
+		return s.store.MarkReplicaRemoved(payload.ChunkID, payload.NodeID, e.Timestamp)
 	case types.EventNodeJoin, types.EventNodeUpdate:
 		var n types.Node
 		if err := json.Unmarshal(e.Payload, &n); err != nil {
 			return err
 		}
 		return s.store.UpdateNodeFull(&n)
-	default:
+	case types.EventSnapshotCreated:
 		return nil
+	default:
+		return fmt.Errorf("unsupported event type %s", e.Type)
 	}
 }
