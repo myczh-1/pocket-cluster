@@ -56,7 +56,7 @@ function NodeCard({ node }) {
   );
 }
 
-function FileRow({ file, onDownload }) {
+function FileRow({ file, onDownload, onDelete }) {
   return (
     <tr className="border-b border-gray-100 hover:bg-gray-50">
       <td className="py-2 px-3 text-sm">
@@ -64,9 +64,12 @@ function FileRow({ file, onDownload }) {
       </td>
       <td className="py-2 px-3 text-sm text-gray-500">{file.is_dir ? "—" : formatBytes(file.size_bytes)}</td>
       <td className="py-2 px-3 text-sm text-gray-500">{file.modified_at ? new Date(file.modified_at).toLocaleDateString() : "—"}</td>
-      <td className="py-2 px-3 text-right">
+      <td className="py-2 px-3 text-right space-x-2">
         {!file.is_dir && (
           <button onClick={() => onDownload(file)} className="text-blue-600 hover:underline text-xs">Download</button>
+        )}
+        {!file.is_dir && (
+          <button onClick={() => onDelete(file)} className="text-red-600 hover:underline text-xs">Delete</button>
         )}
       </td>
     </tr>
@@ -103,6 +106,12 @@ function FilesPage() {
     window.open(`${API}/files/download?path=${encodeURIComponent(file.path)}`);
   };
 
+  const handleDelete = async (file) => {
+    if (!confirm(`Delete "${file.name}"?`)) return;
+    await fetch(`${API}/files?path=${encodeURIComponent(file.path)}`, { method: "DELETE" });
+    loadFiles();
+  };
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
@@ -136,7 +145,7 @@ function FilesPage() {
           </thead>
           <tbody>
             {files.map((f) => (
-              <FileRow key={f.file_id || f.path} file={f} onDownload={handleDownload} />
+              <FileRow key={f.file_id || f.path} file={f} onDownload={handleDownload} onDelete={handleDelete} />
             ))}
             {files.length === 0 && (
               <tr><td colSpan={4} className="py-8 text-center text-gray-400 text-sm">No files</td></tr>

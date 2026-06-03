@@ -265,6 +265,12 @@ func (s *Store) ListFiles(dirPath string) ([]types.File, error) {
 	return files, rows.Err()
 }
 
+func (s *Store) MarkFileDeleted(path string, deletedBy string) error {
+	_, err := s.db.Exec(`UPDATE files SET deleted = 1, modified_by = ?, modified_at = ? WHERE path = ? AND deleted = 0`,
+		deletedBy, time.Now().UnixMilli(), path)
+	return err
+}
+
 func (s *Store) ListAllFiles() ([]types.File, error) {
 	rows, err := s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE deleted = 0`)
 	if err != nil {

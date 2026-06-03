@@ -47,6 +47,15 @@ func (s *Server) applyEvent(e types.Event) error {
 			return err
 		}
 		return s.store.UpsertFile(&f)
+	case types.EventFileDelete:
+		var payload struct {
+			Path      string `json:"path"`
+			DeletedBy string `json:"deleted_by"`
+		}
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			return err
+		}
+		return s.store.MarkFileDeleted(payload.Path, payload.DeletedBy)
 	case types.EventChunkReplicaAdd:
 		var r types.Replica
 		if err := json.Unmarshal(e.Payload, &r); err != nil {

@@ -168,3 +168,29 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path is required")
+		return
+	}
+	f, err := s.store.GetFile(path)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "file not found")
+		return
+	}
+	if f.IsDir {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "cannot delete directory")
+		return
+	}
+	if err := s.store.MarkFileDeleted(path, s.cfg.NodeID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if _, err := s.appendEvent(types.EventFileDelete, map[string]string{"path": path, "deleted_by": s.cfg.NodeID}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]string{"path": path, "status": "deleted"})})
+}
