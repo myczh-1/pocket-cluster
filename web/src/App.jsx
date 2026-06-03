@@ -320,6 +320,8 @@ function JoinPage({ mode }) {
   const [error, setError] = useState(null);
   const [discovered, setDiscovered] = useState([]);
   const [selectedAddr, setSelectedAddr] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const [scanResults, setScanResults] = useState([]);
 
   useEffect(() => {
     if (mode === "invite") {
@@ -332,6 +334,19 @@ function JoinPage({ mode }) {
       return () => clearInterval(poll);
     }
   }, [mode]);
+
+  const handleScan = async () => {
+    setScanning(true);
+    setScanResults([]);
+    try {
+      const r = await api("/network/scan");
+      if (r.ok) setScanResults(r.data?.nodes || []);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const handleCreateCluster = async () => {
     setLoading(true);
@@ -394,6 +409,42 @@ function JoinPage({ mode }) {
             </div>
           </div>
         )}
+
+        {/* Network scan */}
+        <div className="bg-white rounded-lg shadow p-4 mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-sm">Scan local network</h2>
+            <button
+              onClick={handleScan}
+              disabled={scanning}
+              className="px-3 py-1.5 bg-gray-100 rounded text-sm hover:bg-gray-200 disabled:opacity-50"
+            >
+              {scanning ? "Scanning…" : "🔍 Scan"}
+            </button>
+          </div>
+          {scanResults.length > 0 && (
+            <div className="space-y-2">
+              {scanResults.map((n) => (
+                <button
+                  key={n.node_id}
+                  onClick={() => {
+                    setSelectedAddr(`http://${n.address}`);
+                    setBootstrap(`http://${n.address}`);
+                  }}
+                  className={`w-full text-left p-3 rounded-lg border ${
+                    selectedAddr === `http://${n.address}` ? "border-blue-500 bg-blue-50" : "border-gray-200"
+                  }`}
+                >
+                  <p className="font-medium text-sm">{n.node_id.slice(0, 8)}…</p>
+                  <p className="text-xs text-gray-500">{n.address}</p>
+                </button>
+              ))}
+            </div>
+          )}
+          {scanResults.length === 0 && !scanning && (
+            <p className="text-xs text-gray-400">Click scan to find PocketCluster nodes on your network</p>
+          )}
+        </div>
 
         <form onSubmit={handleJoin} className="bg-white rounded-lg shadow p-4 mb-4 space-y-3">
           <h2 className="font-semibold text-sm">Join existing pool</h2>

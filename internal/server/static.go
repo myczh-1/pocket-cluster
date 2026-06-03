@@ -29,6 +29,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/events", s.handleGetEvents)
 	mux.HandleFunc("POST /api/events/push", s.handlePushEvents)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/network/scan", s.handleScanNetwork)
 
 	sub, _ := fs.Sub(webFS, "web-dist")
 	fileServer := http.FileServer(http.FS(sub))
