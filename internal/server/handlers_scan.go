@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -16,8 +17,9 @@ import (
 func (s *Server) handleScanNetwork(w http.ResponseWriter, r *http.Request) {
 	// Get local IP to determine subnet
 	localIP := s.getLocalIP()
+	log.Printf("network scan: local IP = %q", localIP)
 	if localIP == "" {
-		writeError(w, http.StatusInternalServerError, "NO_NETWORK", "cannot determine local network")
+		writeError(w, http.StatusInternalServerError, "NO_NETWORK", "cannot determine local network - try manual join")
 		return
 	}
 
