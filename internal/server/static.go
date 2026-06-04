@@ -62,6 +62,19 @@ func (s *Server) Handler() http.Handler {
 		fileServer.ServeHTTP(w, r)
 	})
 
+	// WebDAV with Basic Auth
+	mux.HandleFunc("/dav/", func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.HasPoolCredentials() {
+			user, pass, ok := r.BasicAuth()
+			if !ok || user != s.cfg.PoolUser || !s.cfg.CheckPoolPassword(pass) {
+				w.Header().Set("WWW-Authenticate", `Basic realm="PocketCluster"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		s.handleWebDAV(w, r)
+	})
+
 	return s.authMiddleware(mux)
 }
 
