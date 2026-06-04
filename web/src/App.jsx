@@ -3,8 +3,10 @@ import { useState, useEffect, useCallback } from "react";
 const API = "/api";
 
 async function api(path, opts) {
-  const res = await fetch(`${API}${path}`, opts);
-  return res.json();
+  const res = await fetch(`${API}${path}`, { ...opts, credentials: "same-origin" });
+  const data = await res.json();
+  data.status = res.status;
+  return data;
 }
 
 function StatusBadge({ status }) {
@@ -58,28 +60,28 @@ function NodeCard({ node }) {
 
 function FileCard({ file, onDownload, onDelete }) {
   return (
-    <div className="bg-white rounded-lg shadow p-4 flex items-center gap-3">
-      <div className="text-2xl">{file.is_dir ? "📁" : "📄"}</div>
+    <div className="bg-white rounded-lg shadow p-3 flex items-center gap-2 min-w-0">
+      <div className="w-7 h-7 rounded bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-500 shrink-0">{file.is_dir ? "D" : "F"}</div>
       <div className="flex-1 min-w-0">
         <p className="font-medium text-sm truncate">{file.name}</p>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-500 truncate">
           {file.is_dir ? "Directory" : formatBytes(file.size_bytes)}
           {file.modified_at && ` · ${new Date(file.modified_at).toLocaleDateString()}`}
         </p>
       </div>
       {!file.is_dir && (
-        <div className="flex gap-2">
+        <div className="flex gap-1 shrink-0">
           <button
             onClick={() => onDownload(file)}
-            className="px-3 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100 active:bg-blue-200"
+            className="px-2 py-1.5 bg-blue-50 text-blue-600 rounded text-xs font-medium hover:bg-blue-100 active:bg-blue-200"
           >
-            ↓
+            Get
           </button>
           <button
             onClick={() => onDelete(file)}
-            className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-medium hover:bg-red-100 active:bg-red-200"
+            className="px-2 py-1.5 bg-red-50 text-red-600 rounded text-xs font-medium hover:bg-red-100 active:bg-red-200"
           >
-            ✕
+            Del
           </button>
         </div>
       )}
@@ -116,7 +118,7 @@ function FilesPage() {
       const formData = new FormData();
       formData.append("path", path === "/" ? `/${file.name}` : `${path}/${file.name}`);
       formData.append("file", file);
-      const res = await fetch(`${API}/files/upload`, { method: "POST", body: formData });
+      const res = await fetch(`${API}/files/upload`, { method: "POST", body: formData, credentials: "same-origin" });
       const data = await res.json();
       if (!data.ok) {
         alert(`Upload failed: ${data.error?.message || "Unknown error"}`);
@@ -130,7 +132,7 @@ function FilesPage() {
   };
 
   const handleDownload = (file) => {
-    window.open(`${API}/files/download?path=${encodeURIComponent(file.path)}`);
+    window.location.assign(`${API}/files/download?path=${encodeURIComponent(file.path)}`);
   };
 
   const handleDelete = async (file) => {
@@ -140,7 +142,7 @@ function FilesPage() {
   };
 
   return (
-    <div>
+    <div className="space-y-4">
       {/* Search and actions */}
       <div className="flex gap-2 mb-4">
         <input
@@ -155,20 +157,20 @@ function FilesPage() {
           disabled={refreshing}
           className="px-4 py-3 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200 active:bg-gray-300 disabled:opacity-50"
         >
-          {refreshing ? "↻" : "↻"}
+          {refreshing ? "..." : "Refresh"}
         </button>
       </div>
 
       {/* Upload button */}
       <label className="block w-full mb-4">
         <div className="bg-blue-600 text-white text-center py-3 rounded-lg font-medium cursor-pointer hover:bg-blue-700 active:bg-blue-800">
-          {uploading ? "Uploading…" : "⬆ Upload File"}
+          {uploading ? "Uploading..." : "Upload File"}
         </div>
         <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
       </label>
 
       {/* File list */}
-      <div className="space-y-2">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {files.map((f) => (
           <FileCard key={f.file_id || f.path} file={f} onDownload={handleDownload} onDelete={handleDelete} />
         ))}
@@ -184,10 +186,13 @@ function FilesPage() {
 
 function NodesPage() {
   const [nodes, setNodes] = useState([]);
+  const [pendingJoins, setPendingJoins] = useState([]);
   const [invite, setInvite] = useState(null);
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [showSwitch, setShowSwitch] = useState(false);
   const [switchAddr, setSwitchAddr] = useState("");
+  const [switchUser, setSwitchUser] = useState("");
+  const [switchPass, setSwitchPass] = useState("");
   const [switchToken, setSwitchToken] = useState("");
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState(null);
@@ -195,13 +200,14 @@ function NodesPage() {
 
   const handleSwitch = async (e) => {
     e.preventDefault();
+    if (!switchUser || !switchPass) { setSwitchError("Pool username and password are required"); return; }
     setSwitchError(null);
     setSwitching(true);
     try {
       const res = await api("/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bootstrap: switchAddr, join_token: switchToken }),
+        body: JSON.stringify({ bootstrap: switchAddr, pool_user: switchUser, pool_password: switchPass, join_token: switchToken }),
       });
       if (res.ok) window.location.reload();
       else setSwitchError(res.error?.message || "Join failed");
@@ -214,7 +220,17 @@ function NodesPage() {
 
   const loadNodes = useCallback(() => {
     api("/nodes").then((r) => { if (r.ok) setNodes(r.data || []); });
+    api("/join/pending").then((r) => { if (r.ok) setPendingJoins(r.data || []); });
   }, []);
+
+  const approveJoin = async (nodeId) => {
+    try {
+      const r = await api(`/join/approve/${nodeId}`, { method: "POST" });
+      if (r.ok) loadNodes();
+    } catch (e) {
+      console.error("Approve failed:", e);
+    }
+  };
 
   useEffect(() => {
     loadNodes();
@@ -237,7 +253,7 @@ function NodesPage() {
   };
 
   return (
-    <div>
+    <div className="space-y-4">
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="bg-white rounded-lg shadow p-3 text-center">
@@ -253,6 +269,29 @@ function NodesPage() {
           <p className="text-xs text-gray-500">Total</p>
         </div>
       </div>
+
+      {/* Pending joins */}
+      {pendingJoins.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-4 mb-4">
+          <h2 className="font-semibold text-sm mb-3">Pending join requests</h2>
+          <div className="space-y-2">
+            {pendingJoins.map((pj) => (
+              <div key={pj.node_id} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                <div>
+                  <p className="font-medium text-sm">{pj.name || pj.node_id.slice(0, 8)}</p>
+                  <p className="text-xs text-gray-500">{pj.platform} / {pj.address}</p>
+                </div>
+                <button
+                  onClick={() => approveJoin(pj.node_id)}
+                  className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700"
+                >
+                  Approve
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Invite */}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
@@ -304,7 +343,7 @@ function NodesPage() {
             disabled={scanning}
             className="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50"
           >
-            {scanning ? "Scanning…" : "🔍 Scan"}
+            {scanning ? "Scanning..." : "Scan"}
           </button>
         </div>
       </div>
@@ -315,7 +354,7 @@ function NodesPage() {
           onClick={() => setShowSwitch(!showSwitch)}
           className="text-sm text-gray-500 hover:text-gray-700 w-full text-left"
         >
-          {showSwitch ? "▲ Hide" : "▼ Join another pool"}…
+          {showSwitch ? "Hide" : "Join another pool"}...
         </button>
         {showSwitch && (
           <form onSubmit={handleSwitch} className="mt-3 space-y-3">
@@ -323,7 +362,23 @@ function NodesPage() {
               type="text"
               value={switchAddr}
               onChange={(e) => setSwitchAddr(e.target.value)}
-              placeholder="http://192.168.1.10:7788"
+              placeholder="Pool address (e.g. http://192.168.1.10:7788)"
+              required
+              className="w-full border rounded-lg px-4 py-3 text-sm"
+            />
+            <input
+              type="text"
+              value={switchUser}
+              onChange={(e) => setSwitchUser(e.target.value)}
+              placeholder="Pool username"
+              required
+              className="w-full border rounded-lg px-4 py-3 text-sm"
+            />
+            <input
+              type="password"
+              value={switchPass}
+              onChange={(e) => setSwitchPass(e.target.value)}
+              placeholder="Pool password"
               required
               className="w-full border rounded-lg px-4 py-3 text-sm"
             />
@@ -331,7 +386,7 @@ function NodesPage() {
               type="text"
               value={switchToken}
               onChange={(e) => setSwitchToken(e.target.value)}
-              placeholder="Invite token (optional for auto mode)"
+              placeholder="Invite token (optional)"
               className="w-full border rounded-lg px-4 py-3 text-sm"
             />
             {switchError && <p className="text-sm text-red-600">{switchError}</p>}
@@ -347,7 +402,7 @@ function NodesPage() {
       </div>
 
       {/* Node list */}
-      <div className="space-y-3">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {nodes.map((n) => <NodeCard key={n.node_id} node={n} />)}
       </div>
     </div>
@@ -410,7 +465,7 @@ function LogsPage() {
           disabled={refreshing}
           className="px-3 py-2 bg-gray-100 rounded-lg text-sm hover:bg-gray-200 disabled:opacity-50"
         >
-          ↻
+          Refresh
         </button>
       </div>
 
@@ -452,15 +507,160 @@ function LogsPage() {
   );
 }
 
+function LocalFilesPage() {
+  const [cwd, setCwd] = useState("");
+  const [parent, setParent] = useState("");
+  const [entries, setEntries] = useState([]);
+  const [migrating, setMigrating] = useState(null);
+  const [targetPath, setTargetPath] = useState("");
+  const [deleteLocal, setDeleteLocal] = useState(false);
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async (path) => {
+    const q = path ? `?path=${encodeURIComponent(path)}` : "";
+    const res = await api(`/local/files${q}`);
+    if (res.ok) {
+      setCwd(res.data.cwd);
+      setParent(res.data.parent);
+      setEntries(res.data.entries || []);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleMigrate = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await fetch(`${API}/local/migrate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          path: migrating.path,
+          target_path: targetPath || `/${migrating.name}`,
+          delete_local: deleteLocal,
+        }),
+      });
+      const data = await res.json();
+      setResult(data);
+      if (data.ok) {
+        setTimeout(() => { setMigrating(null); setResult(null); }, 2000);
+      }
+    } catch (e) {
+      setResult({ ok: false, error: { message: e.message } });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 text-sm text-gray-500 overflow-x-auto">
+        {cwd.split("/").filter(Boolean).map((seg, i, arr) => {
+          const p = "/" + arr.slice(0, i + 1).join("/");
+          return (
+            <span key={p} className="flex items-center gap-2 shrink-0">
+              <span className="text-gray-300">/</span>
+              <button onClick={() => load(p)} className="hover:text-blue-600 truncate max-w-[120px]">{seg}</button>
+            </span>
+          );
+        })}
+      </div>
+
+      {/* Up button */}
+      {parent && parent !== cwd && (
+        <button
+          onClick={() => load(parent)}
+          className="px-3 py-2 bg-gray-100 rounded-lg text-sm hover:bg-gray-200"
+        >
+          Parent
+        </button>
+      )}
+
+      {/* File list */}
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        {entries.map((e) => (
+          <div key={e.path} className="bg-white rounded-lg shadow p-3 flex items-center gap-3">
+            <span className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-500">{e.is_dir ? "D" : "F"}</span>
+            <div className="flex-1 min-w-0">
+              {e.is_dir ? (
+                <button onClick={() => load(e.path)} className="font-medium text-sm text-blue-600 hover:underline truncate block w-full text-left">
+                  {e.name}
+                </button>
+              ) : (
+                <p className="font-medium text-sm truncate">{e.name}</p>
+              )}
+              <p className="text-xs text-gray-400">{e.is_dir ? "Directory" : formatBytes(e.size_bytes)}</p>
+            </div>
+            {!e.is_dir && (
+              <button
+                onClick={() => { setMigrating(e); setTargetPath("/" + e.name); setDeleteLocal(false); setResult(null); }}
+                className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium hover:bg-green-100"
+              >
+                Migrate → Pool
+              </button>
+            )}
+          </div>
+        ))}
+        {entries.length === 0 && (
+          <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400 text-sm col-span-full">
+            Empty directory
+          </div>
+        )}
+      </div>
+
+      {/* Migrate modal */}
+      {migrating && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <h3 className="font-semibold text-base">Migrate to Pool</h3>
+            <p className="text-sm text-gray-500">{migrating.name} ({formatBytes(migrating.size_bytes)})</p>
+            <label className="block">
+              <span className="text-xs text-gray-500 mb-1 block">Target path in pool</span>
+              <input
+                type="text"
+                value={targetPath}
+                onChange={(e) => setTargetPath(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={deleteLocal} onChange={(e) => setDeleteLocal(e.target.checked)} />
+              <span>Delete local file after migration</span>
+            </label>
+            {result && (
+              <div className={`text-sm p-3 rounded-lg ${result.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
+                {result.ok ? `Migrated! ${result.data?.chunk_count} chunks, status: ${result.data?.replica_status}` : result.error?.message}
+              </div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => { setMigrating(null); setResult(null); }} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+              <button onClick={handleMigrate} disabled={busy} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                {busy ? "Migrating…" : "Migrate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function JoinPage({ mode }) {
   const [bootstrap, setBootstrap] = useState("");
   const [token, setToken] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [discovered, setDiscovered] = useState([]);
   const [selectedAddr, setSelectedAddr] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scanResults, setScanResults] = useState([]);
+  const [showCreate, setShowCreate] = useState(false);
 
   useEffect(() => {
     if (mode === "invite") {
@@ -486,12 +686,17 @@ function JoinPage({ mode }) {
       setScanning(false);
     }
   };
-
-  const handleCreateCluster = async () => {
+  const handleCreateCluster = async (e) => {
+    e.preventDefault();
+    if (!username || !password) { setError("Username and password are required"); return; }
     setLoading(true);
     setError(null);
     try {
-      const r = await api("/cluster", { method: "POST" });
+      const r = await api("/cluster", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
       if (r.ok) window.location.reload();
       else setError(r.error?.message || "Failed to create cluster");
     } catch (e) {
@@ -503,6 +708,7 @@ function JoinPage({ mode }) {
 
   const handleJoin = async (e) => {
     e.preventDefault();
+    if (!username || !password) { setError("Pool username and password are required"); return; }
     setLoading(true);
     setError(null);
     try {
@@ -510,7 +716,7 @@ function JoinPage({ mode }) {
       const r = await api("/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bootstrap: addr, join_token: token }),
+        body: JSON.stringify({ bootstrap: addr, join_token: token, pool_user: username, pool_password: password }),
       });
       if (r.ok) window.location.reload();
       else setError(r.error?.message || "Join failed");
@@ -558,7 +764,7 @@ function JoinPage({ mode }) {
               disabled={scanning}
               className="px-3 py-1.5 bg-gray-100 rounded text-sm hover:bg-gray-200 disabled:opacity-50"
             >
-              {scanning ? "Scanning…" : "🔍 Scan"}
+              {scanning ? "Scanning..." : "Scan"}
             </button>
           </div>
           {scanResults.length > 0 && (
@@ -591,14 +797,30 @@ function JoinPage({ mode }) {
             type="text"
             value={bootstrap}
             onChange={(e) => setBootstrap(e.target.value)}
-            placeholder="http://192.168.1.10:7788"
+            placeholder="Pool address (e.g. http://192.168.1.10:7788)"
+            className="w-full border rounded-lg px-4 py-3 text-sm"
+          />
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="Pool username"
+            required
+            className="w-full border rounded-lg px-4 py-3 text-sm"
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Pool password"
+            required
             className="w-full border rounded-lg px-4 py-3 text-sm"
           />
           <input
             type="text"
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            placeholder="Invite token (optional for auto mode)"
+            placeholder="Invite token (optional)"
             className="w-full border rounded-lg px-4 py-3 text-sm"
           />
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -610,74 +832,239 @@ function JoinPage({ mode }) {
             {loading ? "Joining…" : "Join"}
           </button>
         </form>
-
-        <div className="text-center">
+        <div className="bg-white rounded-lg shadow p-4">
           <button
-            onClick={handleCreateCluster}
-            disabled={loading}
-            className="text-sm text-gray-500 hover:text-gray-700"
+            onClick={() => setShowCreate(!showCreate)}
+            className="text-sm text-gray-500 hover:text-gray-700 w-full text-left"
           >
-            Or create a new pool
+            {showCreate ? "Hide" : "Create a new pool"}...
           </button>
+          {showCreate && (
+            <form onSubmit={handleCreateCluster} className="mt-3 space-y-3">
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Pool username"
+                required
+                className="w-full border rounded-lg px-4 py-3 text-sm"
+              />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Pool password"
+                required
+                className="w-full border rounded-lg px-4 py-3 text-sm"
+              />
+              {error && <p className="text-sm text-red-600">{error}</p>}
+              <button
+                type="submit"
+                disabled={loading || !username || !password}
+                className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                {loading ? "Creating..." : "Create Pool"}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>
   );
 }
+function LoginPage() {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        window.location.reload();
+      } else {
+        setError(data.error?.message || "Login failed");
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-bold mb-2">PocketCluster</h1>
+          <p className="text-gray-500 text-sm">Login to your storage pool</p>
+        </div>
+        <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-4 space-y-3">
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="Username"
+            required
+            className="w-full border rounded-lg px-4 py-3 text-sm"
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Password"
+            required
+            className="w-full border rounded-lg px-4 py-3 text-sm"
+          />
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <button
+            type="submit"
+            disabled={busy || !username || !password}
+            className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+          >
+            {busy ? "Logging in..." : "Login"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+const normalNavItems = [
+  { id: "files", label: "Files" },
+  { id: "local", label: "Local" },
+];
+
+const advancedNavItems = [
+  ...normalNavItems,
+  { id: "nodes", label: "Nodes" },
+  { id: "logs", label: "Logs" },
+];
+
 
 export default function App() {
   const [tab, setTab] = useState("files");
   const [clusterId, setClusterId] = useState(null);
   const [discoveryMode, setDiscoveryMode] = useState("auto");
   const [loading, setLoading] = useState(true);
+  const [advanced, setAdvanced] = useState(() => localStorage.getItem("pc-mode") === "advanced");
+  const [needsLogin, setNeedsLogin] = useState(false);
+  const [noCluster, setNoCluster] = useState(false);
 
   useEffect(() => {
-    api("/node/info").then((r) => {
-      setClusterId(r.data?.cluster_id || "");
-      setDiscoveryMode(r.data?.discovery_mode || "auto");
-      setLoading(false);
+    api("/auth/status").then((r) => {
+      if (!r.ok) { setLoading(false); return; }
+      const hasCreds = r.data?.has_credentials;
+      if (!hasCreds) {
+        // No credentials → show create/join page (no auth needed)
+        setNoCluster(true);
+        setLoading(false);
+        return;
+      }
+      // Has credentials → try to access API
+      api("/node/info").then((r2) => {
+        if (r2.ok) {
+          setClusterId(r2.data?.cluster_id || "");
+          setDiscoveryMode(r2.data?.discovery_mode || "auto");
+        } else {
+          // Credentials exist but session invalid → need login
+          setNeedsLogin(true);
+        }
+        setLoading(false);
+      });
     });
   }, []);
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Loading…</div>;
-  if (!clusterId) return <JoinPage mode={discoveryMode} />;
+  const toggleMode = () => {
+    const next = !advanced;
+    setAdvanced(next);
+    localStorage.setItem("pc-mode", next ? "advanced" : "normal");
+    if (!next && (tab === "nodes" || tab === "logs")) setTab("files");
+  };
+
+  const navItems = advanced ? advancedNavItems : normalNavItems;
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Loading...</div>;
+  if (needsLogin) return <LoginPage />;
+  if (noCluster || !clusterId) return <JoinPage mode={discoveryMode} />;
+
 
   return (
-    <div className="min-h-screen pb-20">
-      {/* Header with safe area */}
+    <div className="min-h-screen lg:flex" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
       <header
-        className="bg-white border-b border-gray-200 px-4 py-3"
-        style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
+        className="bg-white border-b border-gray-200 px-4 py-3 lg:fixed lg:inset-y-0 lg:left-0 lg:w-64 lg:border-b-0 lg:border-r lg:px-6 lg:py-6"
       >
-        <h1 className="text-lg font-bold text-center">PocketCluster</h1>
+        <h1 className="text-lg font-bold text-center lg:text-left lg:text-2xl">PocketCluster</h1>
+        <nav className="mt-8 hidden lg:block">
+          <div className="space-y-1">
+            {advancedNavItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setTab(item.id)}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium ${
+                  tab === item.id ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                }`}
+              >
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="mt-8 border-t border-gray-100 pt-4">
+            <button
+              onClick={toggleMode}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+            >
+              <span>{advanced ? "Switch to Normal" : "Switch to Advanced"}</span>
+            </button>
+          </div>
+        </nav>
+        <div className="lg:hidden flex items-center justify-center gap-2 mt-1">
+          <button
+            onClick={toggleMode}
+            className="text-xs text-gray-400 hover:text-gray-600"
+          >
+            {advanced ? "Normal" : "Advanced"}
+          </button>
+        </div>
       </header>
 
-      {/* Content */}
-      <main className="p-4">
-        {tab === "files" && <FilesPage />}
-        {tab === "nodes" && <NodesPage />}
-        {tab === "logs" && <LogsPage />}
+      <main className="p-4 pb-28 lg:ml-64 lg:flex-1 lg:p-8 xl:p-10">
+        <div className="mx-auto w-full max-w-7xl">
+          {tab === "files" && <FilesPage />}
+          {tab === "local" && <LocalFilesPage />}
+          {(tab === "nodes" || tab === "logs") && advanced && (
+            <>
+              {tab === "nodes" && <NodesPage />}
+              {tab === "logs" && <LogsPage />}
+            </>
+          )}
+          {(tab === "nodes" || tab === "logs") && !advanced && <FilesPage />}
+        </div>
       </main>
 
-      {/* Bottom navigation */}
       <nav
-        className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 lg:hidden z-50"
+        style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
         <div className="flex">
-          {[
-            { id: "files", label: "Files", icon: "📁" },
-            { id: "nodes", label: "Nodes", icon: "🔗" },
-            { id: "logs", label: "Logs", icon: "📋" },
-          ].map((item) => (
+          {advancedNavItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => setTab(item.id)}
+              onClick={() => { setTab(item.id); if (!advanced && (item.id === "nodes" || item.id === "logs")) setAdvanced(true); localStorage.setItem("pc-mode", "advanced"); }}
               className={`flex-1 py-3 text-center ${
                 tab === item.id ? "text-blue-600" : "text-gray-500"
               }`}
             >
-              <div className="text-lg">{item.icon}</div>
               <div className="text-xs font-medium">{item.label}</div>
             </button>
           ))}

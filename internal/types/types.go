@@ -99,10 +99,12 @@ type Invite struct {
 }
 
 type JoinRequest struct {
-	JoinToken  string     `json:"join_token"`
-	NodeID     string     `json:"node_id"`
-	PublicKey  string     `json:"public_key"`
-	DeviceInfo DeviceInfo `json:"device_info"`
+	JoinToken    string     `json:"join_token,omitempty"`
+	PoolUser     string     `json:"pool_user,omitempty"`
+	PoolPassword string     `json:"pool_password,omitempty"`
+	NodeID       string     `json:"node_id"`
+	PublicKey    string     `json:"public_key"`
+	DeviceInfo   DeviceInfo `json:"device_info"`
 }
 
 type DeviceInfo struct {

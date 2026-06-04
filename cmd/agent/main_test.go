@@ -23,7 +23,7 @@ func TestNormalizeJoinAddresses(t *testing.T) {
 
 func TestBuildSelfNodeReportsCapacity(t *testing.T) {
 	cfg := testConfig(t)
-	node, err := buildSelfNode(cfg, t.TempDir(), 7788)
+	node, err := buildSelfNode(cfg, t.TempDir(), 7788, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,6 +38,29 @@ func TestBuildSelfNodeReportsCapacity(t *testing.T) {
 	}
 	if node.UsedBytes < 0 {
 		t.Fatalf("used bytes = %d, want >= 0", node.UsedBytes)
+	}
+}
+
+func TestBuildSelfNodeUsesLocalIPOverride(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := buildSelfNode(cfg, t.TempDir(), 7788, " 192.168.50.23 ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Address != "192.168.50.23:7788" {
+		t.Fatalf("address = %q, want local IP override", node.Address)
+	}
+	if len(node.AddressCandidates) != 1 || node.AddressCandidates[0] != node.Address {
+		t.Fatalf("address candidates = %#v, want self address only", node.AddressCandidates)
+	}
+}
+
+func TestBuildSelfNodeIgnoresLoopbackLocalIPOverride(t *testing.T) {
+	if got := usableLocalIP("127.0.0.1"); got != "" {
+		t.Fatalf("usableLocalIP loopback = %q, want empty", got)
+	}
+	if got := usableLocalIP("localhost"); got != "" {
+		t.Fatalf("usableLocalIP localhost = %q, want empty", got)
 	}
 }
 

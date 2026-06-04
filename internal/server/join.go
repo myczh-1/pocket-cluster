@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -13,16 +14,40 @@ import (
 	"github.com/pocketcluster/agent/internal/types"
 )
 
-func (s *Server) JoinViaBootstrap(bootstrap, joinToken string) error {
+func (s *Server) JoinViaBootstrap(bootstrap, joinToken, poolUser, poolPassword string) error {
 	self, err := s.store.GetNode(s.cfg.NodeID)
 	if err != nil {
 		return err
 	}
-	join, err := callJoinRequest(bootstrap, joinToken, s.cfg, self)
+	join, err := callJoinRequest(bootstrap, joinToken, poolUser, poolPassword, s.cfg, self)
 	if err != nil {
 		return err
 	}
+	// Poll for approval if pending
+	if !join.Approved {
+		log.Printf("join request pending, waiting for approval...")
+		pollInterval := 5 * time.Second
+		if s.joinPollInterval > 0 {
+			pollInterval = s.joinPollInterval
+		}
+		for i := 0; i < 60; i++ { // poll for up to 5 minutes
+			time.Sleep(pollInterval)
+			join, err = callJoinRequest(bootstrap, joinToken, poolUser, poolPassword, s.cfg, self)
+			if err != nil {
+				return err
+			}
+			if join.Approved {
+				break
+			}
+		}
+		if !join.Approved {
+			return fmt.Errorf("join request timed out waiting for approval")
+		}
+	}
 	s.cfg.ClusterID = join.ClusterID
+	if poolUser != "" && poolPassword != "" {
+		s.cfg.SetPoolCredentials(poolUser, poolPassword)
+	}
 	if err := s.cfg.Save(); err != nil {
 		return err
 	}
@@ -62,12 +87,14 @@ func (s *Server) JoinViaBootstrap(bootstrap, joinToken string) error {
 	return nil
 }
 
-func callJoinRequest(bootstrap, joinToken string, cfg *config.Config, self *types.Node) (*types.JoinResponse, error) {
+func callJoinRequest(bootstrap, joinToken, poolUser, poolPassword string, cfg *config.Config, self *types.Node) (*types.JoinResponse, error) {
 	bootstrap = normalizeBootstrapURL(bootstrap)
 	reqBody := types.JoinRequest{
-		JoinToken: joinToken,
-		NodeID:    cfg.NodeID,
-		PublicKey: cfg.PublicKey,
+		JoinToken:    joinToken,
+		PoolUser:     poolUser,
+		PoolPassword: poolPassword,
+		NodeID:       cfg.NodeID,
+		PublicKey:    cfg.PublicKey,
 		DeviceInfo: types.DeviceInfo{
 			Name:           cfg.Name,
 			Platform:       cfg.Platform,

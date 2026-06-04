@@ -2,18 +2,23 @@ package com.pocketcluster.agent
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.DownloadManager
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
 import android.util.Log
 import android.view.View
 import android.webkit.ConsoleMessage
+import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 
 class WebUIActivity : Activity() {
 
@@ -76,6 +81,28 @@ class WebUIActivity : Activity() {
                         return false
                     }
                     return true
+                }
+            }
+
+            setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                val filename = URLUtil.guessFileName(url, contentDisposition, mimeType)
+                val request = DownloadManager.Request(Uri.parse(url))
+                    .setMimeType(mimeType)
+                    .addRequestHeader("User-Agent", userAgent)
+                    .setTitle(filename)
+                    .setDescription("Downloading $filename")
+                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
+                    .setAllowedOverMetered(true)
+                    .setAllowedOverRoaming(true)
+
+                try {
+                    val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                    manager.enqueue(request)
+                    Toast.makeText(this@WebUIActivity, "Downloading $filename", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to enqueue download", e)
+                    Toast.makeText(this@WebUIActivity, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }

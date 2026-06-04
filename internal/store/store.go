@@ -37,7 +37,37 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+var schemaVersion = 3
+
 func (s *Store) migrate() error {
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`)
+	var current int
+	s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&current)
+
+	if current < 1 {
+		if err := s.migrateV1(); err != nil {
+			return err
+		}
+	}
+	if current < 2 {
+		if err := s.migrateV2(); err != nil {
+			return err
+		}
+	}
+	if current < 3 {
+		if err := s.migrateV3(); err != nil {
+			return err
+		}
+	}
+
+	if current < schemaVersion {
+		s.db.Exec(`DELETE FROM schema_version`)
+		s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, schemaVersion)
+	}
+	return nil
+}
+
+func (s *Store) migrateV1() error {
 	migrations := []string{
 		`CREATE TABLE IF NOT EXISTS nodes (
 			node_id TEXT PRIMARY KEY,
@@ -113,9 +143,13 @@ func (s *Store) migrate() error {
 	}
 	for _, m := range migrations {
 		if _, err := s.db.Exec(m); err != nil {
-			return fmt.Errorf("migrate: %w", err)
+			return fmt.Errorf("migrate v1: %w", err)
 		}
 	}
+	return nil
+}
+
+func (s *Store) migrateV2() error {
 	if err := s.addColumnIfMissing("nodes", "address_candidates", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
@@ -129,6 +163,21 @@ func (s *Store) migrate() error {
 		return err
 	}
 	return nil
+}
+
+func (s *Store) migrateV3() error {
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS pending_joins (
+		node_id TEXT PRIMARY KEY,
+		name TEXT NOT NULL DEFAULT '',
+		platform TEXT NOT NULL DEFAULT '',
+		address TEXT NOT NULL DEFAULT '',
+		public_key TEXT NOT NULL DEFAULT '',
+		total_bytes INTEGER NOT NULL DEFAULT 0,
+		available_bytes INTEGER NOT NULL DEFAULT 0,
+		requested_at INTEGER NOT NULL DEFAULT 0,
+		expires_at INTEGER NOT NULL DEFAULT 0
+	)`)
+	return err
 }
 
 func (s *Store) addColumnIfMissing(table, column, definition string) error {
@@ -819,4 +868,63 @@ func scanFile(row scannable) (*types.File, error) {
 
 func scanFileRows(rows *sql.Rows) (*types.File, error) {
 	return scanFile(rows)
+}
+
+type PendingJoin struct {
+	NodeID        string    `json:"node_id"`
+	Name          string    `json:"name"`
+	Platform      string    `json:"platform"`
+	Address       string    `json:"address"`
+	PublicKey     string    `json:"public_key"`
+	TotalBytes    int64     `json:"total_bytes"`
+	AvailableBytes int64    `json:"available_bytes"`
+	RequestedAt   time.Time `json:"requested_at"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
+func (s *Store) CreatePendingJoin(pj *PendingJoin) error {
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO pending_joins (node_id, name, platform, address, public_key, total_bytes, available_bytes, requested_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		pj.NodeID, pj.Name, pj.Platform, pj.Address, pj.PublicKey, pj.TotalBytes, pj.AvailableBytes, pj.RequestedAt.UnixMilli(), pj.ExpiresAt.UnixMilli())
+	return err
+}
+
+func (s *Store) ListPendingJoins() ([]PendingJoin, error) {
+	rows, err := s.db.Query(`SELECT node_id, name, platform, address, public_key, total_bytes, available_bytes, requested_at, expires_at FROM pending_joins WHERE expires_at > ? ORDER BY requested_at`, time.Now().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []PendingJoin
+	for rows.Next() {
+		var pj PendingJoin
+	var req, exp int64
+		if err := rows.Scan(&pj.NodeID, &pj.Name, &pj.Platform, &pj.Address, &pj.PublicKey, &pj.TotalBytes, &pj.AvailableBytes, &req, &exp); err != nil {
+			return nil, err
+		}
+		pj.RequestedAt = time.UnixMilli(req)
+		pj.ExpiresAt = time.UnixMilli(exp)
+		result = append(result, pj)
+	}
+	return result, nil
+}
+
+func (s *Store) GetPendingJoin(nodeID string) (*PendingJoin, error) {
+	var pj PendingJoin
+	var req, exp int64
+	err := s.db.QueryRow(`SELECT node_id, name, platform, address, public_key, total_bytes, available_bytes, requested_at, expires_at FROM pending_joins WHERE node_id = ? AND expires_at > ?`, nodeID, time.Now().UnixMilli()).Scan(&pj.NodeID, &pj.Name, &pj.Platform, &pj.Address, &pj.PublicKey, &pj.TotalBytes, &pj.AvailableBytes, &req, &exp)
+	if err != nil {
+		return nil, err
+	}
+	pj.RequestedAt = time.UnixMilli(req)
+	pj.ExpiresAt = time.UnixMilli(exp)
+	return &pj, nil
+}
+
+func (s *Store) DeletePendingJoin(nodeID string) error {
+	_, err := s.db.Exec(`DELETE FROM pending_joins WHERE node_id = ?`, nodeID)
+	return err
+}
+
+func (s *Store) CleanExpiredPendingJoins() {
+	s.db.Exec(`DELETE FROM pending_joins WHERE expires_at <= ?`, time.Now().UnixMilli())
 }

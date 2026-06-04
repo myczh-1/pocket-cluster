@@ -20,53 +20,81 @@ const (
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/health" || r.URL.Path == "/api/join/request" {
+		if r.URL.Path == "/api/health" || r.URL.Path == "/api/join/request" || r.URL.Path == "/api/join" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !requiresPeerSignature(r) {
+		if requiresPeerSignature(r) {
+			s.verifyPeerSignature(w, r, next)
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
-		nodeID := r.Header.Get("X-Node-ID")
-		sigB64 := r.Header.Get("X-Signature")
-		tsStr := r.Header.Get("X-Timestamp")
-		bodyHash := r.Header.Get(authBodySHA256Header)
-		if nodeID == "" || sigB64 == "" || tsStr == "" || bodyHash == "" {
-			writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "peer signature required")
+		if !s.cfg.HasPoolCredentials() {
+			next.ServeHTTP(w, r)
 			return
 		}
-		ts, err := strconv.ParseInt(tsStr, 10, 64)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "invalid timestamp")
+		if r.URL.Path == "/api/auth/login" || r.URL.Path == "/api/auth/status" {
+			next.ServeHTTP(w, r)
 			return
 		}
-		if delta := time.Since(time.UnixMilli(ts)); delta > authSkew || delta < -authSkew {
-			writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "timestamp outside allowed skew")
+		if s.isWebSession(r) {
+			next.ServeHTTP(w, r)
 			return
 		}
-		n, err := s.store.GetNode(nodeID)
-		if err != nil || !n.Trusted {
-			writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "unknown or untrusted node")
-			return
-		}
-		pubBytes, err := base64.StdEncoding.DecodeString(n.PublicKey)
-		if err != nil || len(pubBytes) != ed25519.PublicKeySize {
-			writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "invalid public key")
-			return
-		}
-		sigBytes, err := base64.StdEncoding.DecodeString(sigB64)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "invalid signature format")
-			return
-		}
-		msg := signatureMessage(r.Method, r.URL.RequestURI(), bodyHash, nodeID, tsStr)
-		if !ed25519.Verify(ed25519.PublicKey(pubBytes), []byte(msg), sigBytes) {
-			writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "signature verification failed")
-			return
-		}
-		next.ServeHTTP(w, r)
+		writeError(w, http.StatusUnauthorized, "AUTH_REQUIRED", "login required")
 	})
+}
+
+func (s *Server) isWebSession(r *http.Request) bool {
+	cookie, err := r.Cookie("pc-session")
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	return s.sessions.isValid(cookie.Value)
+}
+
+func (s *Server) verifyPeerSignature(w http.ResponseWriter, r *http.Request, next http.Handler) {
+	nodeID := r.Header.Get("X-Node-ID")
+	sigB64 := r.Header.Get("X-Signature")
+	tsStr := r.Header.Get("X-Timestamp")
+	bodyHash := r.Header.Get(authBodySHA256Header)
+	if nodeID == "" || sigB64 == "" || tsStr == "" || bodyHash == "" {
+		writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "peer signature required")
+		return
+	}
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "invalid timestamp")
+		return
+	}
+	if delta := time.Since(time.UnixMilli(ts)); delta > authSkew || delta < -authSkew {
+		writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "timestamp outside allowed skew")
+		return
+	}
+	n, err := s.store.GetNode(nodeID)
+	if err != nil || !n.Trusted {
+		writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "unknown or untrusted node")
+		return
+	}
+	pubBytes, err := base64.StdEncoding.DecodeString(n.PublicKey)
+	if err != nil || len(pubBytes) != ed25519.PublicKeySize {
+		writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "invalid public key")
+		return
+	}
+	sigBytes, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "invalid signature format")
+		return
+	}
+	msg := signatureMessage(r.Method, r.URL.RequestURI(), bodyHash, nodeID, tsStr)
+	if !ed25519.Verify(ed25519.PublicKey(pubBytes), []byte(msg), sigBytes) {
+		writeError(w, http.StatusUnauthorized, "SIGNATURE_INVALID", "signature verification failed")
+		return
+	}
+	next.ServeHTTP(w, r)
 }
 func (s *Server) signPeerRequest(req *http.Request, bodyHash string) error {
 	privateKey, err := s.cfg.Ed25519PrivateKey()

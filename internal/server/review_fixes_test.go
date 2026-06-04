@@ -28,6 +28,7 @@ func TestUploadShortPathDoesNotPanicAndUsesFallbackMime(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := New(newTestConfig(t, "local"), st, chunks)
+	session := loginTestSession(t, srv)
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -45,7 +46,7 @@ func TestUploadShortPathDoesNotPanicAndUsesFallbackMime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/files/upload", &body)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/files/upload", &body), session)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	res := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(res, req)
@@ -72,6 +73,7 @@ func TestDownloadPrechecksChunksBeforeWritingBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := New(newTestConfig(t, "local"), st, chunks)
+	session := loginTestSession(t, srv)
 	hash, _, err := chunks.Store(bytes.NewReader([]byte("first chunk")))
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +83,7 @@ func TestDownloadPrechecksChunksBeforeWritingBody(t *testing.T) {
 	}
 
 	res := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/files/download?path=/file.bin", nil)
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/files/download?path=/file.bin", nil), session)
 	srv.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("download status = %d, want %d", res.Code, http.StatusNotFound)
@@ -165,8 +167,9 @@ func TestPushEventsMarksEventsPushedPerPeer(t *testing.T) {
 func TestJoinApproveIsNotOpenApprovalStub(t *testing.T) {
 	_, st, srv := newJoinTestServer(t, "local")
 	defer st.Close()
+	session := loginTestSession(t, srv)
 	res := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/join/approve", nil)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/join/approve", nil), session)
 	srv.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("join approve status = %d, want %d", res.Code, http.StatusNotFound)
@@ -187,9 +190,10 @@ func TestAgentLogsUseInjectedRingBuffer(t *testing.T) {
 	ring.Add("first")
 	ring.Add("second")
 	srv := New(newTestConfig(t, "local"), st, chunks, WithLogRing(ring))
+	session := loginTestSession(t, srv)
 
 	res := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/agent/logs", nil)
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/agent/logs", nil), session)
 	srv.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusOK {
 		t.Fatalf("logs status = %d, want %d", res.Code, http.StatusOK)

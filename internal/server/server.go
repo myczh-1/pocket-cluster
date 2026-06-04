@@ -12,12 +12,14 @@ import (
 )
 
 type Server struct {
-	cfg     *config.Config
-	store   *store.Store
-	chunks  *chunk.Storage
-	localIP string // optional: local IP address override
-	logRing *RingBuffer
-	started time.Time
+	cfg             *config.Config
+	store           *store.Store
+	chunks          *chunk.Storage
+	localIP         string
+	logRing         *RingBuffer
+	sessions        *sessionStore
+	started         time.Time
+	joinPollInterval time.Duration
 }
 
 type Option func(*Server)
@@ -33,9 +35,13 @@ func WithLogRing(ring *RingBuffer) Option {
 		s.logRing = ring
 	}
 }
-
+func WithJoinPollInterval(d time.Duration) Option {
+	return func(s *Server) {
+		s.joinPollInterval = d
+	}
+}
 func New(cfg *config.Config, s *store.Store, c *chunk.Storage, opts ...Option) *Server {
-	srv := &Server{cfg: cfg, store: s, chunks: c, started: time.Now()}
+	srv := &Server{cfg: cfg, store: s, chunks: c, sessions: newSessionStore(), started: time.Now()}
 	for _, opt := range opts {
 		opt(srv)
 	}

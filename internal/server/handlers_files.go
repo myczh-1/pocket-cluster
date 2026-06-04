@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,6 +21,19 @@ const (
 	maxUploadBytes       = 16 * 1024 * 1024 * 1024
 	maxUploadMemoryBytes = 8 * 1024 * 1024
 )
+
+var uploadProgress = struct {
+	m map[string]*uploadStatus
+	sync.RWMutex
+}{m: make(map[string]*uploadStatus)}
+
+type uploadStatus struct {
+	ID        string `json:"id"`
+	FileName  string `json:"file_name"`
+	TotalBytes int64 `json:"total_bytes"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
@@ -37,6 +51,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	uploadID := uuid.New().String()
+	progress := &uploadStatus{ID: uploadID, FileName: header.Filename, Status: "uploading"}
+	uploadProgress.Lock()
+	uploadProgress.m[uploadID] = progress
+	uploadProgress.Unlock()
+	defer func() {
+		uploadProgress.Lock()
+		delete(uploadProgress.m, uploadID)
+		uploadProgress.Unlock()
+	}()
 	defer file.Close()
 
 	var chunkIDs []string
@@ -126,9 +150,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	for _, chunkID := range chunkIDs {
 		if err := s.repairChunkReplicas(r.Context(), chunkID, nodes); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			progress.Status = "error"
+			progress.Error = err.Error()
 			return
 		}
 	}
+	progress.Status = "done"
+	progress.TotalBytes = totalSize
 	replicaStatus := s.replicaStatusForChunks(chunkIDs)
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
 		"file_id":        f.FileID,

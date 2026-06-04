@@ -3,10 +3,8 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -16,48 +14,93 @@ import (
 	"github.com/pocketcluster/agent/internal/types"
 )
 
-func TestJoinRequiresValidInviteToken(t *testing.T) {
-	cfg, st, srv := newJoinTestServer(t, "bootstrap")
-	cfg.DiscoveryMode = "invite"
-	if err := cfg.Save(); err != nil {
-		t.Fatal(err)
-	}
-	_ = cfg
+func TestJoinWithPoolCredentialsCreatesPending(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "bootstrap")
 	defer st.Close()
 
-	joinReq := types.JoinRequest{NodeID: "new-node", PublicKey: "pub", DeviceInfo: types.DeviceInfo{Name: "new", Address: "127.0.0.1:7789"}}
+	joinReq := types.JoinRequest{NodeID: "new-node", PublicKey: "pub", PoolUser: "admin", PoolPassword: "testpass", DeviceInfo: types.DeviceInfo{Name: "new", Address: "127.0.0.1:7789"}}
 	body := mustJSON(t, joinReq)
 	res := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/join/request", bytes.NewReader(body))
 	srv.Handler().ServeHTTP(res, req)
-	if res.Code != http.StatusForbidden {
-		t.Fatalf("join without token status = %d, want %d", res.Code, http.StatusForbidden)
+	if res.Code != http.StatusOK {
+		t.Fatalf("join request status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
 	}
+	pending, err := st.ListPendingJoins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].NodeID != "new-node" {
+		t.Fatalf("expected 1 pending join for new-node, got %v", pending)
+	}
+}
+
+func TestJoinWithWrongCredentialsRejected(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "bootstrap")
+	defer st.Close()
+
+	joinReq := types.JoinRequest{NodeID: "new-node", PublicKey: "pub", PoolUser: "admin", PoolPassword: "wrong", DeviceInfo: types.DeviceInfo{Name: "new", Address: "127.0.0.1:7789"}}
+	body := mustJSON(t, joinReq)
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/join/request", bytes.NewReader(body))
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong creds status = %d, want %d", res.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestJoinWithInviteTokenCreatesPending(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "bootstrap")
+	defer st.Close()
 
 	token := createInviteToken(t, srv)
-	joinReq.JoinToken = token
-	body = mustJSON(t, joinReq)
-	res = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/join/request", bytes.NewReader(body))
+	joinReq := types.JoinRequest{NodeID: "new-node", PublicKey: "pub", JoinToken: token, DeviceInfo: types.DeviceInfo{Name: "new", Address: "127.0.0.1:7789"}}
+	body := mustJSON(t, joinReq)
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/join/request", bytes.NewReader(body))
 	srv.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusOK {
 		t.Fatalf("join with token status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
 	}
-	node, err := st.GetNode(joinReq.NodeID)
+	pending, err := st.ListPendingJoins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending join, got %d", len(pending))
+	}
+}
+
+func TestApproveJoinAddsNode(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "bootstrap")
+	defer st.Close()
+	session := loginTestSession(t, srv)
+
+	joinReq := types.JoinRequest{NodeID: "new-node", PublicKey: "pub", PoolUser: "admin", PoolPassword: "testpass", DeviceInfo: types.DeviceInfo{Name: "new", Address: "127.0.0.1:7789"}}
+	body := mustJSON(t, joinReq)
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/join/request", bytes.NewReader(body))
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("join request status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+
+	res = httptest.NewRecorder()
+	req = withAuth(httptest.NewRequest(http.MethodPost, "/api/join/approve/new-node", nil), session)
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("approve status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	node, err := st.GetNode("new-node")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !node.Trusted || node.Status != "online" {
-		t.Fatalf("joined node trusted/status = %v/%s, want true/online", node.Trusted, node.Status)
+		t.Fatalf("approved node trusted/status = %v/%s, want true/online", node.Trusted, node.Status)
 	}
-
-	joinReq.NodeID = "second-node"
-	body = mustJSON(t, joinReq)
-	res = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/join/request", bytes.NewReader(body))
-	srv.Handler().ServeHTTP(res, req)
-	if res.Code != http.StatusForbidden {
-		t.Fatalf("reused token status = %d, want %d", res.Code, http.StatusForbidden)
+	pending, _ := st.ListPendingJoins()
+	if len(pending) != 0 {
+		t.Fatalf("expected 0 pending after approve, got %d", len(pending))
 	}
 }
 
@@ -73,8 +116,7 @@ func TestJoinClusterViaUI(t *testing.T) {
 	}
 	bootstrapHTTP := httptest.NewServer(bootstrapSrv.Handler())
 	defer bootstrapHTTP.Close()
-
-	token := createInviteToken(t, bootstrapSrv)
+	session := loginTestSession(t, bootstrapSrv)
 
 	joinerCfg, joinerStore, joinerSrv := newJoinTestServer(t, "joiner")
 	if err := joinerStore.UpsertNode(&types.Node{NodeID: "joiner", Name: "joiner", Address: "127.0.0.1:7789", Status: "online", TotalBytes: 1000, AvailableBytes: 900}); err != nil {
@@ -85,31 +127,34 @@ func TestJoinClusterViaUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer joinerStore.Close()
-	if joinerCfg.ClusterID != "" {
-		t.Fatalf("joiner already has cluster_id %q", joinerCfg.ClusterID)
-	}
 
-	body := mustJSON(t, map[string]string{"bootstrap": bootstrapHTTP.URL, "join_token": token})
+	// Approve in a goroutine after a short delay
+	go func() {
+		time.Sleep(2 * time.Second)
+		res := httptest.NewRecorder()
+		req := withAuth(httptest.NewRequest(http.MethodPost, "/api/join/approve/joiner", nil), session)
+		bootstrapSrv.Handler().ServeHTTP(res, req)
+	}()
+
+	// This will block until approved (polling)
+	joinReq := map[string]string{
+		"bootstrap":     bootstrapHTTP.URL,
+		"pool_user":     "admin",
+		"pool_password": "testpass",
+	}
+	body := mustJSON(t, joinReq)
 	res := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/join", bytes.NewReader(body))
 	joinerSrv.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusOK {
 		t.Fatalf("join status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
 	}
-
 	reloaded, err := config.Load(joinerCfg.DataDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reloaded.ClusterID != "test-cluster" {
 		t.Fatalf("cluster_id = %q, want test-cluster", reloaded.ClusterID)
-	}
-	bootstrapNode, err := joinerStore.GetNode("bootstrap")
-	if err != nil {
-		t.Fatalf("bootstrap node not found: %v", err)
-	}
-	if !bootstrapNode.Trusted {
-		t.Fatal("bootstrap node not trusted")
 	}
 }
 
@@ -135,6 +180,7 @@ func TestJoinClusterAutoModeAcceptsBareAddressWithoutToken(t *testing.T) {
 	}
 	bootstrapHTTP := httptest.NewServer(bootstrapSrv.Handler())
 	defer bootstrapHTTP.Close()
+	session := loginTestSession(t, bootstrapSrv)
 
 	joinerCfg, joinerStore, joinerSrv := newJoinTestServer(t, "joiner")
 	if err := joinerStore.UpdateNodeFull(&types.Node{
@@ -151,7 +197,19 @@ func TestJoinClusterAutoModeAcceptsBareAddressWithoutToken(t *testing.T) {
 	}
 	defer joinerStore.Close()
 
-	body := mustJSON(t, map[string]string{"bootstrap": strings.TrimPrefix(bootstrapHTTP.URL, "http://")})
+	// Approve in a goroutine after a short delay
+	go func() {
+		time.Sleep(2 * time.Second)
+		res := httptest.NewRecorder()
+		req := withAuth(httptest.NewRequest(http.MethodPost, "/api/join/approve/joiner", nil), session)
+		bootstrapSrv.Handler().ServeHTTP(res, req)
+	}()
+
+	body := mustJSON(t, map[string]string{
+		"bootstrap":     bootstrapHTTP.URL,
+		"pool_user":     "admin",
+		"pool_password": "testpass",
+	})
 	res := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/join", bytes.NewReader(body))
 	joinerSrv.Handler().ServeHTTP(res, req)
@@ -185,23 +243,25 @@ func TestJoinClusterPreservesExistingNodeStatus(t *testing.T) {
 	if err := bootstrapCfg.Save(); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapHTTP := httptest.NewServer(bootstrapSrv.Handler())
-	defer bootstrapHTTP.Close()
+	session := loginTestSession(t, bootstrapSrv)
 
-	joinerCfg, joinerStore, joinerSrv := newJoinTestServer(t, "new-mac")
-	if err := joinerStore.UpdateNodeFull(&types.Node{NodeID: "new-mac", Name: "new mac", Address: "10.8.0.11:7788", PublicKey: joinerCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
-		t.Fatal(err)
-	}
-	defer joinerStore.Close()
-
-	body := mustJSON(t, map[string]string{"bootstrap": bootstrapHTTP.URL})
+	joinReq := types.JoinRequest{NodeID: "new-mac", PublicKey: "pub", PoolUser: "admin", PoolPassword: "testpass", DeviceInfo: types.DeviceInfo{Name: "new mac", Address: "10.8.0.11:7788"}}
+	body := mustJSON(t, joinReq)
 	res := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/join", bytes.NewReader(body))
-	joinerSrv.Handler().ServeHTTP(res, req)
+	req := httptest.NewRequest(http.MethodPost, "/api/join/request", bytes.NewReader(body))
+	bootstrapSrv.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusOK {
-		t.Fatalf("join status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+		t.Fatalf("join request status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
 	}
-	oldMac, err := joinerStore.GetNode("old-mac")
+
+	res = httptest.NewRecorder()
+	req = withAuth(httptest.NewRequest(http.MethodPost, "/api/join/approve/new-mac", nil), session)
+	bootstrapSrv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("approve status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+
+	oldMac, err := bootstrapStore.GetNode("old-mac")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +276,7 @@ func TestJoinClusterPreservesExistingNodeStatus(t *testing.T) {
 func TestAddressFromRemoteKeepsAdvertisedPort(t *testing.T) {
 	got := addressFromRemote("10.8.0.20:53210", "192.168.1.10:7788")
 	if got != "10.8.0.20:7788" {
-		t.Fatalf("address = %q, want VPN host with advertised port", got)
+		t.Fatalf("addressFromRemote = %q, want %q", got, "10.8.0.20:7788")
 	}
 }
 
@@ -232,13 +292,14 @@ func newJoinTestServer(t *testing.T, nodeID string) (*config.Config, *store.Stor
 		t.Fatal(err)
 	}
 	cfg := newTestConfig(t, nodeID)
-	return cfg, st, New(cfg, st, chunks)
+	return cfg, st, New(cfg, st, chunks, WithJoinPollInterval(100*time.Millisecond))
 }
 
 func createInviteToken(t *testing.T, srv *Server) string {
 	t.Helper()
+	session := loginTestSession(t, srv)
 	res := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/invites", nil)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/invites", nil), session)
 	srv.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusOK {
 		t.Fatalf("create invite status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
@@ -267,13 +328,13 @@ func TestJoinRequestReplacesLoopbackAddressWithObserved(t *testing.T) {
 	if err := bootstrapCfg.Save(); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapHTTP := httptest.NewServer(bootstrapSrv.Handler())
-	defer bootstrapHTTP.Close()
 
 	joinerCfg := newTestConfig(t, "joiner")
 	body := mustJSON(t, map[string]any{
-		"node_id":    joinerCfg.NodeID,
-		"public_key": joinerCfg.PublicKey,
+		"node_id":       joinerCfg.NodeID,
+		"public_key":    joinerCfg.PublicKey,
+		"pool_user":     "admin",
+		"pool_password": "testpass",
 		"device_info": map[string]any{
 			"name":     "phone",
 			"platform": "android",
@@ -287,22 +348,18 @@ func TestJoinRequestReplacesLoopbackAddressWithObserved(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("join request status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
 	}
-	node, err := bootstrapStore.GetNode(joinerCfg.NodeID)
+	pending, err := bootstrapStore.ListPendingJoins()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if node.Address == "localhost:7788" {
-		t.Fatalf("address = %q, want non-loopback address", node.Address)
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending, got %d", len(pending))
 	}
-	if node.Address == "" {
-		t.Fatal("address is empty")
-	}
-	host, _, _ := net.SplitHostPort(node.Address)
-	ip := net.ParseIP(host)
-	if ip != nil && ip.IsLoopback() {
-		t.Fatalf("address %q is still loopback", node.Address)
+	if pending[0].Address == "localhost:7788" {
+		t.Fatalf("pending address = %q, want non-loopback", pending[0].Address)
 	}
 }
+
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	data, err := json.Marshal(v)

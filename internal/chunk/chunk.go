@@ -52,6 +52,11 @@ func (s *Storage) Store(r io.Reader) (hash string, size int64, err error) {
 	if err = os.Rename(tmpPath, finalPath); err != nil {
 		return "", 0, fmt.Errorf("rename chunk: %w", err)
 	}
+	// Verify integrity after write
+	if err = s.Verify(hash); err != nil {
+		os.Remove(finalPath)
+		return "", 0, fmt.Errorf("verify chunk: %w", err)
+	}
 	return hash, size, nil
 }
 
@@ -81,4 +86,21 @@ func (s *Storage) Path(hash string) string {
 
 func (s *Storage) Remove(hash string) error {
 	return os.Remove(s.Path(hash))
+}
+
+func (s *Storage) Verify(hash string) error {
+	f, _, err := s.Open(hash)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	actual := fmt.Sprintf("%x", h.Sum(nil))
+	if actual != hash {
+		return fmt.Errorf("chunk %s: hash mismatch, got %s", hash, actual)
+	}
+	return nil
 }

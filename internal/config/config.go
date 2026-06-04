@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -19,9 +20,11 @@ type Config struct {
 	ClusterID     string `json:"cluster_id,omitempty"`
 	PublicKey     string `json:"public_key"`
 	SecretKey     string `json:"secret_key"`
+	PoolUser      string `json:"pool_user,omitempty"`
+	PoolPassHash  string `json:"pool_pass_hash,omitempty"`
 	DataDir       string `json:"-"`
 	HTTPPort      int    `json:"http_port"`
-	DiscoveryMode string `json:"discovery_mode,omitempty"` // "auto" (default) or "invite"
+	DiscoveryMode string `json:"discovery_mode,omitempty"`
 }
 
 func Load(dataDir string) (*Config, error) {
@@ -99,4 +102,23 @@ func (c *Config) Ed25519PublicKey() (ed25519.PublicKey, error) {
 		return nil, err
 	}
 	return ed25519.PublicKey(b), nil
+}
+
+
+func (c *Config) SetPoolCredentials(user, password string) {
+	c.PoolUser = user
+	c.PoolPassHash = hashPassword(password)
+}
+
+func (c *Config) HasPoolCredentials() bool {
+	return c.PoolUser != "" && c.PoolPassHash != ""
+}
+
+func (c *Config) CheckPoolPassword(password string) bool {
+	return c.PoolUser != "" && c.PoolPassHash == hashPassword(password)
+}
+
+func hashPassword(password string) string {
+	h := sha256.Sum256([]byte("pocketcluster:" + password))
+	return base64.StdEncoding.EncodeToString(h[:])
 }

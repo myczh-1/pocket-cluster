@@ -16,6 +16,7 @@ import (
 func TestUploadExistingPathCreatesConflictFile(t *testing.T) {
 	_, st, srv := newJoinTestServer(t, "local")
 	defer st.Close()
+	session := loginTestSession(t, srv)
 
 	existing := &types.File{
 		FileID:     "original-file",
@@ -32,7 +33,7 @@ func TestUploadExistingPathCreatesConflictFile(t *testing.T) {
 	}
 
 	res := httptest.NewRecorder()
-	req := uploadRequest(t, "/shared.txt", "shared.txt", []byte("new content"))
+	req := withAuth(uploadRequest(t, "/shared.txt", "shared.txt", []byte("new content")), session)
 	srv.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusOK {
 		t.Fatalf("upload status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())

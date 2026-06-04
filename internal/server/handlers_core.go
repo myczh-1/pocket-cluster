@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/pocketcluster/agent/internal/store"
 	"github.com/pocketcluster/agent/internal/types"
 )
 
@@ -46,24 +47,50 @@ func (s *Server) handleNodeInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.ClusterID != "" {
+	if s.cfg.ClusterID != "" && s.cfg.HasPoolCredentials() {
 		writeError(w, http.StatusConflict, "ALREADY_JOINED", "node already belongs to a cluster")
 		return
 	}
-	s.cfg.ClusterID = uuid.New().String()
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&req)
+	}
+	if req.Username == "" || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "username and password are required")
+		return
+	}
+	if s.cfg.ClusterID == "" {
+		s.cfg.ClusterID = uuid.New().String()
+	}
+	s.cfg.SetPoolCredentials(req.Username, req.Password)
 	if err := s.cfg.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
+	sessionToken := s.sessions.create()
+	http.SetCookie(w, &http.Cookie{
+		Name:     "pc-session",
+		Value:    sessionToken,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(24 * time.Hour.Seconds()),
+	})
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
 		"cluster_id": s.cfg.ClusterID,
+		"username":   s.cfg.PoolUser,
 	})})
 }
 
 func (s *Server) handleJoinCluster(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Bootstrap string `json:"bootstrap"`
-		JoinToken string `json:"join_token"`
+		Bootstrap    string `json:"bootstrap"`
+		JoinToken    string `json:"join_token,omitempty"`
+		PoolUser     string `json:"pool_user,omitempty"`
+		PoolPassword string `json:"pool_password,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
@@ -73,11 +100,20 @@ func (s *Server) handleJoinCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "bootstrap required")
 		return
 	}
-	if err := s.JoinViaBootstrap(req.Bootstrap, req.JoinToken); err != nil {
+	if err := s.JoinViaBootstrap(req.Bootstrap, req.JoinToken, req.PoolUser, req.PoolPassword); err != nil {
 		writeError(w, http.StatusBadGateway, "JOIN_FAILED", err.Error())
 		return
 	}
 	nodes, _ := s.store.ListNodes()
+	sessionToken := s.sessions.create()
+	http.SetCookie(w, &http.Cookie{
+		Name:     "pc-session",
+		Value:    sessionToken,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(24 * time.Hour.Seconds()),
+	})
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
 		"cluster_id": s.cfg.ClusterID,
 		"node_count": len(nodes),
@@ -157,49 +193,149 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
-	now := time.Now()
-	if s.cfg.DiscoveryMode == "auto" {
-		// Auto mode: no token required
-	} else if req.JoinToken == "" {
-		writeError(w, http.StatusForbidden, "JOIN_TOKEN_REQUIRED", "join token required")
-		return
-	} else {
-		accepted, err := s.store.UseInvite(inviteTokenHash(req.JoinToken), now)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
-		}
-		if !accepted {
-			writeError(w, http.StatusForbidden, "JOIN_TOKEN_INVALID", "join token is invalid, expired, or already used")
-			return
-		}
-	}
 	if s.cfg.ClusterID == "" {
-		s.cfg.ClusterID = uuid.New().String()
-		if err := s.cfg.Save(); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		writeError(w, http.StatusBadRequest, "NOT_READY", "this node is not part of a pool yet")
+		return
+	}
+	// Check if node is already trusted (approved while polling)
+	existing, err := s.store.GetNode(req.NodeID)
+	if err == nil && existing.Trusted {
+		nodes, _ := s.store.ListNodes()
+		var refs []types.NodeRef
+		for _, n := range nodes {
+			if n.NodeID != req.NodeID {
+				refs = append(refs, types.NodeRef{
+					NodeID:             n.NodeID,
+					Name:               n.Name,
+					Platform:           n.Platform,
+					Address:            n.Address,
+					AddressCandidates:  n.AddressCandidates,
+					LastWorkingAddress: n.LastWorkingAddress,
+					PublicKey:          n.PublicKey,
+					TotalBytes:         n.TotalBytes,
+					UsedBytes:          n.UsedBytes,
+					AvailableBytes:     n.AvailableBytes,
+					Status:             n.Status,
+					LastSeen:           n.LastSeen,
+					JoinedAt:           n.JoinedAt,
+				})
+			}
+		}
+		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(types.JoinResponse{
+			ClusterID:     s.cfg.ClusterID,
+			Approved:      true,
+			ExistingNodes: refs,
+		})})
+		return
+	}
+	// Validate pool credentials if provided
+	if req.PoolUser != "" && req.PoolPassword != "" {
+		if req.PoolUser != s.cfg.PoolUser || !s.cfg.CheckPoolPassword(req.PoolPassword) {
+			writeError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "invalid pool credentials")
 			return
 		}
+	} else if req.JoinToken != "" {
+		accepted, err := s.store.UseInvite(inviteTokenHash(req.JoinToken), time.Now())
+		if err != nil || !accepted {
+			writeError(w, http.StatusForbidden, "JOIN_TOKEN_INVALID", "join token is invalid or expired")
+			return
+		}
+	} else {
+		writeError(w, http.StatusBadRequest, "CREDENTIALS_REQUIRED", "pool credentials or invite token required")
+		return
 	}
+	// Normalize address
 	advertisedAddress := normalizeNodeAddress(req.DeviceInfo.Address)
 	observedAddress := addressFromRemote(r.RemoteAddr, advertisedAddress)
 	if advertisedAddress == "" || isLoopbackAddress(advertisedAddress) {
 		advertisedAddress = observedAddress
 	}
-	candidates := filterLoopbackAddresses(mergeAddresses(advertisedAddress, observedAddress))
-	if len(candidates) == 0 {
-		candidates = mergeAddresses(advertisedAddress, observedAddress)
+	now := time.Now()
+	pj := &store.PendingJoin{
+		NodeID:         req.NodeID,
+		Name:           req.DeviceInfo.Name,
+		Platform:       req.DeviceInfo.Platform,
+		Address:        advertisedAddress,
+		PublicKey:      req.PublicKey,
+		TotalBytes:     req.DeviceInfo.TotalBytes,
+		AvailableBytes: req.DeviceInfo.AvailableBytes,
+		RequestedAt:    now,
+		ExpiresAt:      now.Add(30 * time.Minute),
 	}
+	if err := s.store.CreatePendingJoin(pj); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+		"approved": false,
+		"pending":  true,
+		"message":  "join request received, waiting for approval from pool member",
+	})})
+}
+
+
+func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		path = "/"
+	}
+	keyword := r.URL.Query().Get("q")
+	if keyword != "" {
+		files, err := s.store.SearchFiles(keyword)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"path": path, "entries": files})})
+		return
+	}
+	files, err := s.store.ListFiles(path)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"path": path, "entries": files})})
+}
+
+
+func (s *Server) handleUploadProgress(w http.ResponseWriter, r *http.Request) {
+	uploadProgress.RLock()
+	defer uploadProgress.RUnlock()
+	var list []uploadStatus
+	for _, v := range uploadProgress.m {
+		list = append(list, *v)
+	}
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(list)})
+}
+
+func (s *Server) handleJoinApprove(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.PathValue("nodeId")
+	if nodeID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "nodeId required")
+		return
+	}
+	pj, err := s.store.GetPendingJoin(nodeID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "pending join request not found")
+		return
+	}
+	now := time.Now()
+	advertisedAddress := normalizeNodeAddress(pj.Address)
+	observedAddress := ""
+	if advertisedAddress == "" || isLoopbackAddress(advertisedAddress) {
+		advertisedAddress = observedAddress
+	}
+	candidates := filterLoopbackAddresses(mergeAddresses(advertisedAddress, observedAddress))
 	newNode := &types.Node{
-		NodeID:             req.NodeID,
-		Name:               req.DeviceInfo.Name,
-		Platform:           req.DeviceInfo.Platform,
+		NodeID:             pj.NodeID,
+		Name:               pj.Name,
+		Platform:           pj.Platform,
 		Address:            advertisedAddress,
 		AddressCandidates:  candidates,
 		LastWorkingAddress: observedAddress,
-		PublicKey:          req.PublicKey,
-		TotalBytes:         req.DeviceInfo.TotalBytes,
-		AvailableBytes:     req.DeviceInfo.AvailableBytes,
+		PublicKey:          pj.PublicKey,
+		TotalBytes:         pj.TotalBytes,
+		AvailableBytes:     pj.AvailableBytes,
 		Status:             "online",
 		Trusted:            true,
 		LastSeen:           now,
@@ -209,14 +345,12 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	if _, err := s.appendEvent(types.EventNodeJoin, newNode); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
+	s.store.DeletePendingJoin(nodeID)
+	s.appendEvent(types.EventNodeJoin, newNode)
 	nodes, _ := s.store.ListNodes()
 	var refs []types.NodeRef
 	for _, n := range nodes {
-		if n.NodeID != req.NodeID {
+		if n.NodeID != nodeID {
 			refs = append(refs, types.NodeRef{
 				NodeID:             n.NodeID,
 				Name:               n.Name,
@@ -241,29 +375,12 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 	})})
 }
 
-func (s *Server) handleJoinApprove(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotFound, "NOT_FOUND", "manual join approval is not implemented")
-}
-
-func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = "/"
-	}
-	keyword := r.URL.Query().Get("q")
-	if keyword != "" {
-		files, err := s.store.SearchFiles(keyword)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"path": path, "entries": files})})
-		return
-	}
-	files, err := s.store.ListFiles(path)
+func (s *Server) handleListPendingJoins(w http.ResponseWriter, r *http.Request) {
+	s.store.CleanExpiredPendingJoins()
+	pending, err := s.store.ListPendingJoins()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"path": path, "entries": files})})
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(pending)})
 }

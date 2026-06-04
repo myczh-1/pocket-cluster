@@ -16,6 +16,8 @@ import com.pocketcluster.agent.R
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import java.net.Inet4Address
+import java.net.NetworkInterface
 
 class AgentService : Service() {
 
@@ -206,6 +208,23 @@ class AgentService : Service() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to get WiFi IP: ${e.message}")
+        }
+
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val intf = interfaces.nextElement()
+                if (intf.isLoopback || !intf.isUp) continue
+                val addresses = intf.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    val addr = addresses.nextElement()
+                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
+                        return addr.hostAddress
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to enumerate network interfaces: ${e.message}")
         }
         return null
     }

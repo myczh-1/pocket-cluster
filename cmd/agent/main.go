@@ -16,7 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pocketcluster/agent/internal/chunk"
 	"github.com/pocketcluster/agent/internal/config"
 	"github.com/pocketcluster/agent/internal/discovery"
@@ -72,7 +71,7 @@ func main() {
 		log.Fatalf("init chunk storage: %v", err)
 	}
 
-	selfNode, err := buildSelfNode(cfg, *dataDir, *port)
+	selfNode, err := buildSelfNode(cfg, *dataDir, *port, *localIP)
 	if err != nil {
 		log.Printf("read disk capacity: %v", err)
 	}
@@ -109,20 +108,28 @@ func main() {
 
 	if *joinBootstrap != "" {
 		bootstrap := normalizeBaseURL(*joinBootstrap)
-		if err := srv.JoinViaBootstrap(bootstrap, *joinToken); err != nil {
+		if err := srv.JoinViaBootstrap(bootstrap, *joinToken, "", ""); err != nil {
 			log.Fatalf("join cluster: %v", err)
 		}
 		log.Printf("joined cluster %s via %s", cfg.ClusterID, bootstrap)
 	}
 	go srv.StartSync(ctx, 2*time.Second)
-	go refreshSelfNode(ctx, cfg, s, srv, *dataDir, *port)
+	go refreshSelfNode(ctx, cfg, s, srv, *dataDir, *port, *localIP)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 	log.Println("shutting down...")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
 	disc.Stop()
-	httpSrv.Close()
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown: %v", err)
+		httpSrv.Close()
+	}
+	cancel()
 }
 
 func defaultDataDir() string {
@@ -142,7 +149,6 @@ func syncDiscoveredNodes(ctx context.Context, s *store.Store, srv *server.Server
 			now := time.Now()
 			discovered := disc.Nodes()
 
-			joined := false
 
 			for _, n := range discovered {
 				if n.NodeID == cfg.NodeID {
@@ -152,12 +158,10 @@ func syncDiscoveredNodes(ctx context.Context, s *store.Store, srv *server.Server
 					continue
 				}
 				if cfg.DiscoveryMode == "auto" && cfg.ClusterID == "" {
-					if err := srv.JoinViaBootstrap("http://"+n.Address, ""); err != nil {
+				if err := srv.JoinViaBootstrap("http://"+n.Address, "", "", ""); err != nil {
 						log.Printf("auto-join %s (%s): %v", n.Name, n.Address, err)
 					} else {
-						log.Printf("auto-joined %s (%s)", n.Name, n.Address)
-						joined = true
-						break
+						log.Printf("auto-join request sent to %s (%s)", n.Name, n.Address)
 					}
 				}
 				if cfg.DiscoveryMode == "invite" || cfg.ClusterID != "" {
@@ -174,24 +178,16 @@ func syncDiscoveredNodes(ctx context.Context, s *store.Store, srv *server.Server
 				}
 			}
 
-			if cfg.DiscoveryMode == "auto" && cfg.ClusterID == "" && !joined {
-				ticksWithoutCluster++
-				if ticksWithoutCluster >= 5 {
-					cfg.ClusterID = uuid.New().String()
-					if err := cfg.Save(); err != nil {
-						log.Printf("auto-create cluster: %v", err)
-					} else {
-						log.Printf("auto-created cluster %s", cfg.ClusterID)
-					}
-				}
-			} else {
+			if cfg.ClusterID != "" {
 				ticksWithoutCluster = 0
+			} else {
+				ticksWithoutCluster++
 			}
 		}
 	}
 }
 
-func buildSelfNode(cfg *config.Config, dataDir string, port int) (*types.Node, error) {
+func buildSelfNode(cfg *config.Config, dataDir string, port int, localIP string) (*types.Node, error) {
 	disk, err := config.GetDiskStats(dataDir)
 	totalBytes, availableBytes := int64(0), int64(0)
 	if disk != nil {
@@ -203,7 +199,7 @@ func buildSelfNode(cfg *config.Config, dataDir string, port int) (*types.Node, e
 		usedBytes = 0
 	}
 	now := time.Now()
-	address := fmt.Sprintf("%s:%d", localAddress(), port)
+	address := selfNodeAddress(localIP, port)
 	return &types.Node{
 		NodeID:            cfg.NodeID,
 		Name:              cfg.Name,
@@ -221,7 +217,7 @@ func buildSelfNode(cfg *config.Config, dataDir string, port int) (*types.Node, e
 	}, err
 }
 
-func refreshSelfNode(ctx context.Context, cfg *config.Config, s *store.Store, srv *server.Server, dataDir string, port int) {
+func refreshSelfNode(ctx context.Context, cfg *config.Config, s *store.Store, srv *server.Server, dataDir string, port int, localIP string) {
 	ticker := time.NewTicker(nodeCapacityUpdateInterval)
 	defer ticker.Stop()
 	for {
@@ -229,7 +225,7 @@ func refreshSelfNode(ctx context.Context, cfg *config.Config, s *store.Store, sr
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			n, err := buildSelfNode(cfg, dataDir, port)
+			n, err := buildSelfNode(cfg, dataDir, port, localIP)
 			if err != nil {
 				log.Printf("refresh self node: %v", err)
 				continue
@@ -265,6 +261,25 @@ func normalizePeerAddress(value string) string {
 	value = strings.TrimPrefix(value, "http://")
 	value = strings.TrimPrefix(value, "https://")
 	return strings.TrimRight(value, "/")
+}
+
+func selfNodeAddress(localIP string, port int) string {
+	host := usableLocalIP(localIP)
+	if host == "" {
+		host = localAddress()
+	}
+	return net.JoinHostPort(host, fmt.Sprint(port))
+}
+
+func usableLocalIP(value string) string {
+	ip := net.ParseIP(strings.TrimSpace(value))
+	if ip == nil || ip.IsLoopback() {
+		return ""
+	}
+	if ipv4 := ip.To4(); ipv4 != nil {
+		return ipv4.String()
+	}
+	return ip.String()
 }
 
 func localAddress() string {
