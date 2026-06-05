@@ -203,3 +203,54 @@ func TestAgentLogsUseInjectedRingBuffer(t *testing.T) {
 		t.Fatalf("logs response = %s, want injected ring lines", res.Body.String())
 	}
 }
+
+func TestDeleteRemovesChunks(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "local")
+	defer st.Close()
+	session := loginTestSession(t, srv)
+
+	// Upload a file
+	content := []byte("test content for delete")
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	mw.WriteField("path", "/delete-test.txt")
+	part, _ := mw.CreateFormFile("file", "delete-test.txt")
+	part.Write(content)
+	mw.Close()
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/files/upload", &body), session)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("upload status = %d: %s", res.Code, res.Body.String())
+	}
+
+	// Get the file to find chunk IDs
+	f, err := st.GetFile("/delete-test.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.ChunkIDs) == 0 {
+		t.Fatal("no chunks")
+	}
+	chunkID := f.ChunkIDs[0]
+
+	// Verify chunk exists on disk
+	if !srv.chunks.Exists(chunkID) {
+		t.Fatal("chunk should exist before delete")
+	}
+
+	// Delete the file
+	res = httptest.NewRecorder()
+	req = withAuth(httptest.NewRequest(http.MethodDelete, "/api/files?path=/delete-test.txt", nil), session)
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("delete status = %d: %s", res.Code, res.Body.String())
+	}
+
+	// Verify chunk is removed from disk
+	if srv.chunks.Exists(chunkID) {
+		t.Fatal("chunk should be removed after delete")
+	}
+}

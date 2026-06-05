@@ -241,6 +241,14 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
+	// Clean up unreferenced chunks
+	for _, chunkID := range f.ChunkIDs {
+		ref, _ := s.store.IsChunkReferenced(chunkID)
+		if !ref {
+			s.chunks.Remove(chunkID)
+			s.store.MarkReplicaRemoved(chunkID, s.cfg.NodeID, time.Now())
+		}
+	}
 	if _, err := s.appendEvent(types.EventFileDelete, map[string]string{"path": path, "deleted_by": s.cfg.NodeID}); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return

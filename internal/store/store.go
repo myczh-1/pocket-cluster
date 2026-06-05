@@ -1070,3 +1070,13 @@ func (s *Store) DeletePendingJoin(nodeID string) error {
 func (s *Store) CleanExpiredPendingJoins() {
 	s.db.Exec(`DELETE FROM pending_joins WHERE expires_at <= ?`, time.Now().UnixMilli())
 }
+
+func (s *Store) IsChunkReferenced(chunkID string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM files WHERE deleted = 0 AND chunk_ids LIKE ?`, `%"`+chunkID+`"%`).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
