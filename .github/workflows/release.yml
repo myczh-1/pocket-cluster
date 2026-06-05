@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web UI
+        run: |
+          cd web
+          npm ci
+          npm run build
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build binaries
+        run: ./scripts/build.sh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/agent-darwin-arm64
+            dist/agent-darwin-amd64
+            dist/agent-linux-arm64
+            dist/agent-linux-amd64
+            dist/agent-windows-amd64.exe
+            dist/agent-windows-arm64.exe
+            dist/agent-android-arm64
