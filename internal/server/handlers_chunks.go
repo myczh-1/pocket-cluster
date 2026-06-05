@@ -97,12 +97,14 @@ func (s *Server) handlePushEvents(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		if inserted {
-			if err := s.applyEvent(e); err != nil {
-				continue
-			}
+		if !inserted {
 			accepted++
+			continue
 		}
+		if err := s.applyEvent(e); err != nil {
+			continue
+		}
+		accepted++
 	}
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
 		"accepted":  accepted,

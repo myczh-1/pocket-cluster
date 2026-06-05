@@ -12,6 +12,7 @@ import android.os.Environment
 import android.util.Log
 import android.view.View
 import android.webkit.ConsoleMessage
+import android.webkit.CookieManager
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -89,6 +90,7 @@ class WebUIActivity : Activity() {
                 val request = DownloadManager.Request(Uri.parse(url))
                     .setMimeType(mimeType)
                     .addRequestHeader("User-Agent", userAgent)
+                    .addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url) ?: "")
                     .setTitle(filename)
                     .setDescription("Downloading $filename")
                     .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)

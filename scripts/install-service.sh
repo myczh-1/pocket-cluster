@@ -3,7 +3,12 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-BINARY="$PROJECT_DIR/dist/agent-$(uname -s | tr A-Z a-z)-$(uname -m)"
+ARCH="$(uname -m)"
+case "$ARCH" in
+    x86_64|amd64) ARCH="amd64" ;;
+    arm64|aarch64) ARCH="arm64" ;;
+esac
+BINARY="$PROJECT_DIR/dist/agent-$(uname -s | tr A-Z a-z)-$ARCH"
 DATA_DIR="${PC_DATA_DIR:-$HOME/.pocketcluster}"
 PORT="${PC_PORT:-7788}"
 

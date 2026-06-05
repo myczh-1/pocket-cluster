@@ -84,6 +84,13 @@ func TestApproveJoinAddsNode(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("join request status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
 	}
+	pendingBeforeApprove, err := st.GetPendingJoin("new-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pendingBeforeApprove.ObservedAddress == "" || isLoopbackAddress(pendingBeforeApprove.ObservedAddress) {
+		t.Fatalf("observed address = %q, want non-loopback address", pendingBeforeApprove.ObservedAddress)
+	}
 
 	res = httptest.NewRecorder()
 	req = withAuth(httptest.NewRequest(http.MethodPost, "/api/join/approve/new-node", nil), session)
@@ -97,6 +104,9 @@ func TestApproveJoinAddsNode(t *testing.T) {
 	}
 	if !node.Trusted || node.Status != "online" {
 		t.Fatalf("approved node trusted/status = %v/%s, want true/online", node.Trusted, node.Status)
+	}
+	if node.LastWorkingAddress != pendingBeforeApprove.ObservedAddress {
+		t.Fatalf("last working address = %q, want observed %q", node.LastWorkingAddress, pendingBeforeApprove.ObservedAddress)
 	}
 	pending, _ := st.ListPendingJoins()
 	if len(pending) != 0 {
@@ -123,6 +133,8 @@ func TestJoinClusterViaUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	joinerCfg.ClusterID = ""
+	joinerCfg.PoolUser = ""
+	joinerCfg.PoolPassHash = ""
 	if err := joinerCfg.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +167,89 @@ func TestJoinClusterViaUI(t *testing.T) {
 	}
 	if reloaded.ClusterID != "test-cluster" {
 		t.Fatalf("cluster_id = %q, want test-cluster", reloaded.ClusterID)
+	}
+}
+
+func TestJoinClusterRequiresSessionWhenConfigured(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "configured")
+	defer st.Close()
+
+	body := mustJSON(t, map[string]string{"bootstrap": "http://127.0.0.1:1", "pool_user": "admin", "pool_password": "testpass"})
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/join", bytes.NewReader(body))
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("join without session status = %d, want %d: %s", res.Code, http.StatusUnauthorized, res.Body.String())
+	}
+}
+
+func TestInviteJoinPollingDoesNotReconsumeTokenAndSavesCredentials(t *testing.T) {
+	bootstrapCfg, bootstrapStore, bootstrapSrv := newJoinTestServer(t, "bootstrap")
+	if err := bootstrapStore.UpdateNodeFull(&types.Node{
+		NodeID:         "bootstrap",
+		Name:           "bootstrap",
+		Address:        "127.0.0.1:7788",
+		PublicKey:      bootstrapCfg.PublicKey,
+		Status:         "online",
+		Trusted:        true,
+		TotalBytes:     2000,
+		AvailableBytes: 1800,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer bootstrapStore.Close()
+	bootstrapHTTP := httptest.NewServer(bootstrapSrv.Handler())
+	defer bootstrapHTTP.Close()
+	session := loginTestSession(t, bootstrapSrv)
+	token := createInviteToken(t, bootstrapSrv)
+
+	joinerCfg, joinerStore, joinerSrv := newJoinTestServer(t, "joiner")
+	if err := joinerStore.UpdateNodeFull(&types.Node{
+		NodeID:         "joiner",
+		Name:           "joiner",
+		Address:        "127.0.0.1:7789",
+		PublicKey:      joinerCfg.PublicKey,
+		Status:         "online",
+		Trusted:        true,
+		TotalBytes:     1000,
+		AvailableBytes: 900,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	joinerCfg.ClusterID = ""
+	joinerCfg.PoolUser = ""
+	joinerCfg.PoolPassHash = ""
+	if err := joinerCfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	defer joinerStore.Close()
+
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		res := httptest.NewRecorder()
+		req := withAuth(httptest.NewRequest(http.MethodPost, "/api/join/approve/joiner", nil), session)
+		bootstrapSrv.Handler().ServeHTTP(res, req)
+	}()
+
+	body := mustJSON(t, map[string]string{
+		"bootstrap":  bootstrapHTTP.URL,
+		"join_token": token,
+	})
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/join", bytes.NewReader(body))
+	joinerSrv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("invite join status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	reloaded, err := config.Load(joinerCfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ClusterID != bootstrapCfg.ClusterID {
+		t.Fatalf("cluster_id = %q, want %q", reloaded.ClusterID, bootstrapCfg.ClusterID)
+	}
+	if reloaded.PoolUser != "admin" || !reloaded.CheckPoolPassword("testpass") {
+		t.Fatalf("joined node did not persist pool credentials")
 	}
 }
 
@@ -196,6 +291,9 @@ func TestJoinClusterAutoModeAcceptsBareAddressWithoutToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer joinerStore.Close()
+	joinerCfg.ClusterID = ""
+	joinerCfg.PoolUser = ""
+	joinerCfg.PoolPassHash = ""
 
 	// Approve in a goroutine after a short delay
 	go func() {

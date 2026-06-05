@@ -174,7 +174,7 @@ func (s *Server) pushEvents(ctx context.Context, n types.Node) (string, error) {
 	}
 	var lastErr error
 	for _, address := range nodeDialAddresses(n) {
-		if err := s.pushEventsTo(ctx, n, address, body); err != nil {
+		if err := s.pushEventsTo(ctx, n, address, body, len(events)); err != nil {
 			lastErr = err
 			continue
 		}
@@ -189,7 +189,7 @@ func (s *Server) pushEvents(ctx context.Context, n types.Node) (string, error) {
 	return "", lastErr
 }
 
-func (s *Server) pushEventsTo(ctx context.Context, n types.Node, address string, body []byte) error {
+func (s *Server) pushEventsTo(ctx context.Context, n types.Node, address string, body []byte, expected int) error {
 	ctx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+address+"/api/events/push", bytes.NewReader(body))
@@ -207,6 +207,22 @@ func (s *Server) pushEventsTo(ctx context.Context, n types.Node, address string,
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("push events to %s at %s: status %d", n.NodeID, address, resp.StatusCode)
+	}
+	var envelope types.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return err
+	}
+	if !envelope.OK {
+		return fmt.Errorf("push events to %s at %s: api error", n.NodeID, address)
+	}
+	var payload struct {
+		Accepted int `json:"accepted"`
+	}
+	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
+		return err
+	}
+	if payload.Accepted != expected {
+		return fmt.Errorf("push events to %s at %s: accepted %d of %d", n.NodeID, address, payload.Accepted, expected)
 	}
 	return nil
 }
@@ -321,7 +337,7 @@ func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing m
 	}
 	var candidates []candidate
 	for _, n := range nodes {
-		if n.NodeID == s.cfg.NodeID || n.Address == "" || n.Status == "offline" || !n.Trusted {
+		if n.NodeID == s.cfg.NodeID || n.Status == "offline" || !n.Trusted || len(nodeDialAddresses(n)) == 0 {
 			continue
 		}
 		if _, ok := existing[n.NodeID]; ok {
@@ -356,12 +372,22 @@ func (s *Server) fetchChunkFromReplica(ctx context.Context, chunkID string) erro
 			continue
 		}
 		n, err := s.store.GetNode(replica.NodeID)
-		if err != nil || n.Address == "" || n.Status == "offline" || !n.Trusted {
+		if err != nil || n.Status == "offline" || !n.Trusted || len(nodeDialAddresses(*n)) == 0 {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
-		hash, size, fetchErr := s.storeRemoteChunk(ctx, n.Address, chunkID)
-		cancel()
+		var hash string
+		var size int64
+		var fetchErr error
+		var workingAddress string
+		for _, address := range nodeDialAddresses(*n) {
+			ctx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
+			hash, size, fetchErr = s.storeRemoteChunk(ctx, address, chunkID)
+			cancel()
+			if fetchErr == nil {
+				workingAddress = address
+				break
+			}
+		}
 		if fetchErr != nil {
 			continue
 		}
@@ -370,6 +396,7 @@ func (s *Server) fetchChunkFromReplica(ctx context.Context, chunkID string) erro
 			continue
 		}
 		now := time.Now()
+		_ = s.store.UpdateNodeLastWorkingAddress(replica.NodeID, workingAddress, now)
 		if err := s.store.UpsertChunk(&types.Chunk{ChunkID: chunkID, SizeBytes: size, StoredAt: now}); err != nil {
 			return err
 		}
@@ -384,49 +411,65 @@ func (s *Server) fetchChunkFromReplica(ctx context.Context, chunkID string) erro
 }
 
 func (s *Server) storeChunkToPeer(ctx context.Context, n types.Node, chunkID string) error {
-	cf, size, err := s.chunks.Open(chunkID)
-	if err != nil {
-		return err
+	var lastErr error
+	for _, address := range nodeDialAddresses(n) {
+		cf, size, err := s.chunks.Open(chunkID)
+		if err != nil {
+			return err
+		}
+		reqCtx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, "http://"+address+"/api/chunks", cf)
+		if err != nil {
+			cf.Close()
+			cancel()
+			return err
+		}
+		if err := s.signPeerRequest(req, chunkID); err != nil {
+			cf.Close()
+			cancel()
+			return err
+		}
+		req.Header.Set("X-Chunk-Hash", chunkID)
+		req.ContentLength = size
+		resp, err := peerHTTPClient.Do(req)
+		cf.Close()
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("chunk store status %d", resp.StatusCode)
+			resp.Body.Close()
+			continue
+		}
+		var envelope types.APIResponse
+		if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+			resp.Body.Close()
+			return err
+		}
+		resp.Body.Close()
+		if !envelope.OK {
+			lastErr = fmt.Errorf("chunk store api error")
+			continue
+		}
+		var payload struct {
+			Replica *types.Replica `json:"replica"`
+		}
+		if err := json.Unmarshal(envelope.Data, &payload); err != nil {
+			return err
+		}
+		now := time.Now()
+		_ = s.store.UpdateNodeLastWorkingAddress(n.NodeID, address, now)
+		if payload.Replica != nil {
+			return s.store.UpsertReplica(payload.Replica)
+		}
+		return s.store.UpsertReplica(&types.Replica{ChunkID: chunkID, NodeID: n.NodeID, Status: "available", StoredAt: now, VerifiedAt: now})
 	}
-	defer cf.Close()
-
-	ctx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+n.Address+"/api/chunks", cf)
-	if err != nil {
-		return err
+	if lastErr != nil {
+		return lastErr
 	}
-	if err := s.signPeerRequest(req, chunkID); err != nil {
-		return err
-	}
-	req.Header.Set("X-Chunk-Hash", chunkID)
-	req.ContentLength = size
-	resp, err := peerHTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("chunk store status %d", resp.StatusCode)
-	}
-	var envelope types.APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return err
-	}
-	if !envelope.OK {
-		return fmt.Errorf("chunk store api error")
-	}
-	var payload struct {
-		Replica *types.Replica `json:"replica"`
-	}
-	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
-		return err
-	}
-	if payload.Replica != nil {
-		return s.store.UpsertReplica(payload.Replica)
-	}
-	now := time.Now()
-	return s.store.UpsertReplica(&types.Replica{ChunkID: chunkID, NodeID: n.NodeID, Status: "available", StoredAt: now, VerifiedAt: now})
+	return fmt.Errorf("no dial address")
 }
 
 func (s *Server) storeRemoteChunk(ctx context.Context, address, chunkID string) (string, int64, error) {
@@ -464,29 +507,32 @@ func (s *Server) isChunkReadable(ctx context.Context, chunkID string) bool {
 			continue
 		}
 		n, err := s.store.GetNode(replica.NodeID)
-		if err != nil || n.Address == "" || n.Status == "offline" || !n.Trusted {
+		if err != nil || n.Status == "offline" || !n.Trusted || len(nodeDialAddresses(*n)) == 0 {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+n.Address+"/api/chunks/"+chunkID, nil)
-		if err != nil {
+		for _, address := range nodeDialAddresses(*n) {
+			reqCtx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
+			req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, "http://"+address+"/api/chunks/"+chunkID, nil)
+			if err != nil {
+				cancel()
+				continue
+			}
+			if err := s.signPeerRequest(req, emptyBodySHA256); err != nil {
+				cancel()
+				continue
+			}
+			resp, err := peerHTTPClient.Do(req)
 			cancel()
-			continue
-		}
-		if err := s.signPeerRequest(req, emptyBodySHA256); err != nil {
-			cancel()
-			continue
-		}
-		resp, err := peerHTTPClient.Do(req)
-		cancel()
-		if err != nil {
-			continue
-		}
-		if resp.StatusCode == http.StatusOK {
+			if err != nil {
+				continue
+			}
+			if resp.StatusCode == http.StatusOK {
+				resp.Body.Close()
+				_ = s.store.UpdateNodeLastWorkingAddress(replica.NodeID, address, time.Now())
+				return true
+			}
 			resp.Body.Close()
-			return true
 		}
-		resp.Body.Close()
 	}
 	return false
 }
@@ -507,28 +553,33 @@ func (s *Server) writeChunk(ctx context.Context, w io.Writer, chunkID string) er
 			continue
 		}
 		n, err := s.store.GetNode(replica.NodeID)
-		if err != nil || n.Address == "" || n.Status == "offline" || !n.Trusted {
+		if err != nil || n.Status == "offline" || !n.Trusted || len(nodeDialAddresses(*n)) == 0 {
 			continue
 		}
-		url := "http://" + n.Address + "/api/chunks/" + chunkID
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			continue
-		}
-		if err := s.signPeerRequest(req, emptyBodySHA256); err != nil {
-			continue
-		}
-		resp, err := peerHTTPClient.Do(req)
-		if err != nil {
-			continue
-		}
-		if resp.StatusCode != http.StatusOK {
+		for _, address := range nodeDialAddresses(*n) {
+			url := "http://" + address + "/api/chunks/" + chunkID
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				continue
+			}
+			if err := s.signPeerRequest(req, emptyBodySHA256); err != nil {
+				continue
+			}
+			resp, err := peerHTTPClient.Do(req)
+			if err != nil {
+				continue
+			}
+			if resp.StatusCode != http.StatusOK {
+				resp.Body.Close()
+				continue
+			}
+			_, err = io.Copy(w, resp.Body)
 			resp.Body.Close()
-			continue
+			if err == nil {
+				_ = s.store.UpdateNodeLastWorkingAddress(replica.NodeID, address, time.Now())
+			}
+			return err
 		}
-		_, err = io.Copy(w, resp.Body)
-		resp.Body.Close()
-		return err
 	}
 	return fmt.Errorf("chunk unavailable: %s", strings.TrimSpace(chunkID))
 }

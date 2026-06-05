@@ -28,11 +28,29 @@ var uploadProgress = struct {
 }{m: make(map[string]*uploadStatus)}
 
 type uploadStatus struct {
-	ID        string `json:"id"`
-	FileName  string `json:"file_name"`
-	TotalBytes int64 `json:"total_bytes"`
-	Status    string `json:"status"`
-	Error     string `json:"error,omitempty"`
+	ID         string `json:"id"`
+	FileName   string `json:"file_name"`
+	TotalBytes int64  `json:"total_bytes"`
+	Status     string `json:"status"`
+	Error      string `json:"error,omitempty"`
+}
+
+func setUploadProgress(uploadID, status, errMsg string, totalBytes int64) {
+	uploadProgress.Lock()
+	defer uploadProgress.Unlock()
+	progress, ok := uploadProgress.m[uploadID]
+	if !ok {
+		return
+	}
+	if status != "" {
+		progress.Status = status
+	}
+	if errMsg != "" {
+		progress.Error = errMsg
+	}
+	if totalBytes >= 0 {
+		progress.TotalBytes = totalBytes
+	}
 }
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -150,13 +168,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	for _, chunkID := range chunkIDs {
 		if err := s.repairChunkReplicas(r.Context(), chunkID, nodes); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			progress.Status = "error"
-			progress.Error = err.Error()
+			setUploadProgress(uploadID, "error", err.Error(), -1)
 			return
 		}
 	}
-	progress.Status = "done"
-	progress.TotalBytes = totalSize
+	setUploadProgress(uploadID, "done", "", totalSize)
 	replicaStatus := s.replicaStatusForChunks(chunkIDs)
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
 		"file_id":        f.FileID,

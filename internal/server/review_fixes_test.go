@@ -132,10 +132,11 @@ func TestPushEventsMarksEventsPushedPerPeer(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if len(req.Events) > 0 {
-			firstBatch.Add(int32(len(req.Events)))
+		accepted := len(req.Events)
+		if accepted > 0 {
+			firstBatch.Add(int32(accepted))
 		}
-		w.WriteHeader(http.StatusOK)
+		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"accepted": accepted})})
 	}))
 	defer remoteHTTP.Close()
 

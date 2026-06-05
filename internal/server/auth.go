@@ -20,8 +20,20 @@ const (
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/health" || r.URL.Path == "/api/join/request" || r.URL.Path == "/api/join" {
+		if r.URL.Path == "/api/health" || r.URL.Path == "/api/join/request" {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == "/api/join" {
+			if s.cfg.ClusterID == "" && !s.cfg.HasPoolCredentials() {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if s.isWebSession(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeError(w, http.StatusUnauthorized, "AUTH_REQUIRED", "login required")
 			return
 		}
 		if requiresPeerSignature(r) {

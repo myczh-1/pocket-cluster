@@ -45,3 +45,23 @@ func TestPeerEventEndpointAcceptsTrustedSignature(t *testing.T) {
 		t.Fatalf("signed peer request status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
 	}
 }
+
+func TestLogoutRevokesServerSession(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "receiver")
+	defer st.Close()
+	session := loginTestSession(t, srv)
+
+	res := httptest.NewRecorder()
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil), session)
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("logout status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+
+	res = httptest.NewRecorder()
+	req = withAuth(httptest.NewRequest(http.MethodGet, "/api/node/info", nil), session)
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("reused session status = %d, want %d", res.Code, http.StatusUnauthorized)
+	}
+}

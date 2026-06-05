@@ -119,6 +119,8 @@ type JoinResponse struct {
 	ClusterID     string    `json:"cluster_id"`
 	Approved      bool      `json:"approved"`
 	ExistingNodes []NodeRef `json:"existing_nodes"`
+	PoolUser      string    `json:"pool_user,omitempty"`
+	PoolPassHash  string    `json:"pool_pass_hash,omitempty"`
 }
 
 type NodeRef struct {

@@ -37,6 +37,7 @@ die () {
     exit 1
 } >&2
 
+cygwin=false
 OS_NAME=$( uname -s ) || true
 case $OS_NAME in
   CYGWIN* | MINGW* | MSYS* )
@@ -48,13 +49,14 @@ CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
 
 if [ ! -f "$CLASSPATH" ]; then
     echo "Downloading Gradle wrapper..."
-    WRAPPER_URL="https://services.gradle.org/distributions/gradle-8.9-bin.zip"
     if command -v curl > /dev/null 2>&1; then
-        curl -sL --output "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
-            "https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar" 2>/dev/null
+        curl -fsSL --output "$CLASSPATH" \
+            "https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar"
     elif command -v wget > /dev/null 2>&1; then
-        wget -q -O "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
-            "https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar" 2>/dev/null
+        wget -q -O "$CLASSPATH" \
+            "https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar"
+    else
+        die "ERROR: gradle-wrapper.jar is missing and neither curl nor wget is available."
     fi
 fi
 

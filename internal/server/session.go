@@ -48,6 +48,12 @@ func (s *sessionStore) isValid(token string) bool {
 	return true
 }
 
+func (s *sessionStore) delete(token string) {
+	s.mu.Lock()
+	delete(s.sessions, token)
+	s.mu.Unlock()
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "POST required")
@@ -84,11 +90,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie("pc-session"); err == nil {
+		s.sessions.delete(cookie.Value)
+	}
 	http.SetCookie(w, &http.Cookie{
-		Name:   "pc-session",
-		Value:  "",
-		Path:   "/",
-		MaxAge: -1,
+		Name:     "pc-session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
 	})
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true})
 }

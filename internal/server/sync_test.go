@@ -59,7 +59,7 @@ func TestFetchMissingChunksCopiesReplicaAndPublishesLocalReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 	localSrv := New(localCfg, localStore, localChunks)
-	if err := localStore.UpsertNode(&types.Node{NodeID: remoteCfg.NodeID, Address: strings.TrimPrefix(remoteHTTP.URL, "http://"), PublicKey: remoteCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
+	if err := localStore.UpsertNode(&types.Node{NodeID: remoteCfg.NodeID, Address: "127.0.0.1:1", AddressCandidates: []string{strings.TrimPrefix(remoteHTTP.URL, "http://")}, PublicKey: remoteCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
 		t.Fatal(err)
 	}
 	// In sharding mode, local node only fetches chunks it has a replica record for
@@ -269,7 +269,7 @@ func TestSyncOncePushesWhenPullFails(t *testing.T) {
 			http.Error(w, "pull disabled", http.StatusServiceUnavailable)
 		case "/api/events/push":
 			pushed.Add(1)
-			w.WriteHeader(http.StatusOK)
+			writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"accepted": 1})})
 		default:
 			http.NotFound(w, r)
 		}
@@ -313,6 +313,52 @@ func TestSyncOncePushesWhenPullFails(t *testing.T) {
 	}
 	if got.Status != "online" {
 		t.Fatalf("status = %q, want online", got.Status)
+	}
+}
+
+func TestPushEventsDoesNotMarkRejectedBatchPushed(t *testing.T) {
+	localCfg := newTestConfig(t, "local")
+	remoteHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/events/push" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"accepted": 0})})
+	}))
+	defer remoteHTTP.Close()
+
+	localStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer localStore.Close()
+	localChunks := chunk.New(t.TempDir())
+	if err := localChunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	remoteNode := types.Node{
+		NodeID:  "remote",
+		Address: strings.TrimPrefix(remoteHTTP.URL, "http://"),
+		Status:  "online",
+		Trusted: true,
+	}
+	if err := localStore.UpdateNodeFull(&remoteNode); err != nil {
+		t.Fatal(err)
+	}
+	localSrv := New(localCfg, localStore, localChunks)
+	if err := localSrv.PublishNodeUpdate(&types.Node{NodeID: localCfg.NodeID, PublicKey: localCfg.PublicKey, Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := localSrv.pushEvents(context.Background(), remoteNode); err == nil {
+		t.Fatal("pushEvents succeeded; want accepted-count error")
+	}
+	events, err := localStore.GetUnpushedEvents(remoteNode.NodeID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 {
+		t.Fatal("rejected event was marked as pushed")
 	}
 }
 

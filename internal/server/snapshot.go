@@ -27,27 +27,7 @@ type snapshotCluster struct {
 }
 
 func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
-	nodes, err := s.store.ListNodes()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	files, err := s.store.ListAllFilesIncludingDeleted()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	chunks, err := s.store.ListChunks()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	replicas, err := s.store.ListReplicas()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	lastEventID, err := s.store.LatestEventID()
+	data, err := s.store.MetadataSnapshot()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -56,12 +36,12 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		SnapshotID:  uuid.NewString(),
 		CreatedAt:   time.Now(),
 		CreatedBy:   s.cfg.NodeID,
-		LastEventID: lastEventID,
+		LastEventID: data.LastEventID,
 		Cluster:     snapshotCluster{ClusterID: s.cfg.ClusterID},
-		Nodes:       nodes,
-		Files:       files,
-		Chunks:      chunks,
-		Replicas:    replicas,
+		Nodes:       data.Nodes,
+		Files:       data.Files,
+		Chunks:      data.Chunks,
+		Replicas:    data.Replicas,
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)

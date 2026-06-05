@@ -197,9 +197,9 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "NOT_READY", "this node is not part of a pool yet")
 		return
 	}
-	// Check if node is already trusted (approved while polling)
+	// Check if this node was already approved while the joiner is polling.
 	existing, err := s.store.GetNode(req.NodeID)
-	if err == nil && existing.Trusted {
+	if err == nil && existing.Trusted && req.PublicKey != "" && req.PublicKey == existing.PublicKey {
 		nodes, _ := s.store.ListNodes()
 		var refs []types.NodeRef
 		for _, n := range nodes {
@@ -225,6 +225,16 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 			ClusterID:     s.cfg.ClusterID,
 			Approved:      true,
 			ExistingNodes: refs,
+			PoolUser:      s.cfg.PoolUser,
+			PoolPassHash:  s.cfg.PoolPassHash,
+		})})
+		return
+	}
+	if pending, err := s.store.GetPendingJoin(req.NodeID); err == nil && req.PublicKey != "" && req.PublicKey == pending.PublicKey {
+		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+			"approved": false,
+			"pending":  true,
+			"message":  "join request is still waiting for approval from pool member",
 		})})
 		return
 	}
@@ -252,15 +262,16 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	pj := &store.PendingJoin{
-		NodeID:         req.NodeID,
-		Name:           req.DeviceInfo.Name,
-		Platform:       req.DeviceInfo.Platform,
-		Address:        advertisedAddress,
-		PublicKey:      req.PublicKey,
-		TotalBytes:     req.DeviceInfo.TotalBytes,
-		AvailableBytes: req.DeviceInfo.AvailableBytes,
-		RequestedAt:    now,
-		ExpiresAt:      now.Add(30 * time.Minute),
+		NodeID:          req.NodeID,
+		Name:            req.DeviceInfo.Name,
+		Platform:        req.DeviceInfo.Platform,
+		Address:         advertisedAddress,
+		ObservedAddress: observedAddress,
+		PublicKey:       req.PublicKey,
+		TotalBytes:      req.DeviceInfo.TotalBytes,
+		AvailableBytes:  req.DeviceInfo.AvailableBytes,
+		RequestedAt:     now,
+		ExpiresAt:       now.Add(30 * time.Minute),
 	}
 	if err := s.store.CreatePendingJoin(pj); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
@@ -272,7 +283,6 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 		"message":  "join request received, waiting for approval from pool member",
 	})})
 }
-
 
 func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
@@ -297,7 +307,6 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"path": path, "entries": files})})
 }
 
-
 func (s *Server) handleUploadProgress(w http.ResponseWriter, r *http.Request) {
 	uploadProgress.RLock()
 	defer uploadProgress.RUnlock()
@@ -321,7 +330,7 @@ func (s *Server) handleJoinApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	advertisedAddress := normalizeNodeAddress(pj.Address)
-	observedAddress := ""
+	observedAddress := normalizeNodeAddress(pj.ObservedAddress)
 	if advertisedAddress == "" || isLoopbackAddress(advertisedAddress) {
 		advertisedAddress = observedAddress
 	}
@@ -372,6 +381,8 @@ func (s *Server) handleJoinApprove(w http.ResponseWriter, r *http.Request) {
 		ClusterID:     s.cfg.ClusterID,
 		Approved:      true,
 		ExistingNodes: refs,
+		PoolUser:      s.cfg.PoolUser,
+		PoolPassHash:  s.cfg.PoolPassHash,
 	})})
 }
 

@@ -47,6 +47,9 @@ func (s *Server) JoinViaBootstrap(bootstrap, joinToken, poolUser, poolPassword s
 	s.cfg.ClusterID = join.ClusterID
 	if poolUser != "" && poolPassword != "" {
 		s.cfg.SetPoolCredentials(poolUser, poolPassword)
+	} else if join.PoolUser != "" && join.PoolPassHash != "" {
+		s.cfg.PoolUser = join.PoolUser
+		s.cfg.PoolPassHash = join.PoolPassHash
 	}
 	if err := s.cfg.Save(); err != nil {
 		return err

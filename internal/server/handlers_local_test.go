@@ -48,7 +48,7 @@ func TestListLocalFilesReturnsEntries(t *testing.T) {
 	}
 }
 
-func TestMigrateLocalFileStoresChunksAndDeletesLocal(t *testing.T) {
+func TestMigrateLocalFileKeepsLocalWhenReplicationIncomplete(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "migrate-me.txt")
 	os.WriteFile(src, []byte("hello pool"), 0o644)
@@ -64,30 +64,23 @@ func TestMigrateLocalFileStoresChunksAndDeletesLocal(t *testing.T) {
 	res := httptest.NewRecorder()
 	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/local/migrate", bytes.NewReader(body)), session)
 	srv.Handler().ServeHTTP(res, req)
-	if res.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	if res.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusConflict, res.Body.String())
 	}
 	var resp struct {
-		OK   bool `json:"ok"`
-		Data struct {
-			FileID   string `json:"file_id"`
-			Path     string `json:"path"`
-			ChunkCnt int    `json:"chunk_count"`
-			DelLocal bool   `json:"delete_local"`
-			DelErr   string `json:"delete_error"`
-		} `json:"data"`
+		OK    bool `json:"ok"`
+		Error *struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
 	json.NewDecoder(res.Body).Decode(&resp)
-	if !resp.OK {
-		t.Fatal("ok = false")
+	if resp.OK {
+		t.Fatal("ok = true")
 	}
-	if resp.Data.Path != "/migrated.txt" {
-		t.Fatalf("path = %q", resp.Data.Path)
+	if resp.Error == nil || resp.Error.Code != "REPLICATION_INCOMPLETE" {
+		t.Fatalf("error = %#v, want REPLICATION_INCOMPLETE", resp.Error)
 	}
-	if resp.Data.ChunkCnt != 1 {
-		t.Fatalf("chunk_count = %d, want 1", resp.Data.ChunkCnt)
-	}
-	if _, err := os.Stat(src); !os.IsNotExist(err) {
-		t.Fatalf("local file should have been deleted")
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("local file should have been kept: %v", err)
 	}
 }

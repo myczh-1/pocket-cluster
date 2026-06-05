@@ -182,20 +182,36 @@ func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
+	var repairErr error
 	nodes, err := s.store.ListNodes()
-	if err == nil {
+	if err != nil {
+		repairErr = err
+	} else {
 		for _, chunkID := range chunkIDs {
-			_ = s.repairChunkReplicas(r.Context(), chunkID, nodes)
+			if err := s.repairChunkReplicas(r.Context(), chunkID, nodes); err != nil && repairErr == nil {
+				repairErr = err
+			}
 		}
 	}
 
+	replicaStatus := s.replicaStatusForChunks(chunkIDs)
 	var deleteErr string
+	deleteLocal := false
 	if req.DeleteLocal {
+		if repairErr != nil {
+			writeError(w, http.StatusConflict, "REPLICATION_INCOMPLETE", "migration copied to pool but local file was kept: "+repairErr.Error())
+			return
+		}
+		if replicaStatus != types.ReplicaHealthy {
+			writeError(w, http.StatusConflict, "REPLICATION_INCOMPLETE", "migration copied to pool but local file was kept: replica status is "+string(replicaStatus))
+			return
+		}
 		if err := os.Remove(abs); err != nil {
 			deleteErr = err.Error()
+		} else {
+			deleteLocal = true
 		}
 	}
-	replicaStatus := s.replicaStatusForChunks(chunkIDs)
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
 		"file_id":        poolFile.FileID,
 		"path":           poolFile.Path,
@@ -203,7 +219,7 @@ func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) 
 		"chunk_count":    len(chunkIDs),
 		"version_id":     poolFile.VersionID,
 		"replica_status": string(replicaStatus),
-		"delete_local":   req.DeleteLocal,
+		"delete_local":   deleteLocal,
 		"delete_error":   deleteErr,
 	})})
 }

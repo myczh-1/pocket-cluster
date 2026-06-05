@@ -37,7 +37,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-var schemaVersion = 3
+var schemaVersion = 4
 
 func (s *Store) migrate() error {
 	s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`)
@@ -56,6 +56,11 @@ func (s *Store) migrate() error {
 	}
 	if current < 3 {
 		if err := s.migrateV3(); err != nil {
+			return err
+		}
+	}
+	if current < 4 {
+		if err := s.migrateV4(); err != nil {
 			return err
 		}
 	}
@@ -175,9 +180,14 @@ func (s *Store) migrateV3() error {
 		total_bytes INTEGER NOT NULL DEFAULT 0,
 		available_bytes INTEGER NOT NULL DEFAULT 0,
 		requested_at INTEGER NOT NULL DEFAULT 0,
+		observed_address TEXT NOT NULL DEFAULT '',
 		expires_at INTEGER NOT NULL DEFAULT 0
 	)`)
 	return err
+}
+
+func (s *Store) migrateV4() error {
+	return s.addColumnIfMissing("pending_joins", "observed_address", "TEXT NOT NULL DEFAULT ''")
 }
 
 func (s *Store) addColumnIfMissing(table, column, definition string) error {
@@ -775,6 +785,137 @@ func (s *Store) NextSeq(nodeID string) (int64, error) {
 	return seq, nil
 }
 
+type MetadataSnapshot struct {
+	LastEventID string
+	Nodes       []types.Node
+	Files       []types.File
+	Chunks      []types.Chunk
+	Replicas    []types.Replica
+}
+
+func (s *Store) MetadataSnapshot() (*MetadataSnapshot, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	nodes, err := listNodesTx(tx)
+	if err != nil {
+		return nil, err
+	}
+	files, err := listAllFilesIncludingDeletedTx(tx)
+	if err != nil {
+		return nil, err
+	}
+	chunks, err := listChunksTx(tx)
+	if err != nil {
+		return nil, err
+	}
+	replicas, err := listReplicasTx(tx)
+	if err != nil {
+		return nil, err
+	}
+	lastEventID, err := latestEventIDTx(tx)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &MetadataSnapshot{
+		LastEventID: lastEventID,
+		Nodes:       nodes,
+		Files:       files,
+		Chunks:      chunks,
+		Replicas:    replicas,
+	}, nil
+}
+
+func listNodesTx(tx *sql.Tx) ([]types.Node, error) {
+	rows, err := tx.Query(`SELECT node_id, name, platform, address, address_candidates, last_working_address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var nodes []types.Node
+	for rows.Next() {
+		n, err := scanNodeRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, *n)
+	}
+	return nodes, rows.Err()
+}
+
+func listAllFilesIncludingDeletedTx(tx *sql.Tx) ([]types.File, error) {
+	rows, err := tx.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files ORDER BY path ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var files []types.File
+	for rows.Next() {
+		f, err := scanFileRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, *f)
+	}
+	return files, rows.Err()
+}
+
+func listChunksTx(tx *sql.Tx) ([]types.Chunk, error) {
+	rows, err := tx.Query(`SELECT chunk_id, size_bytes, stored_at FROM chunks`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var chunks []types.Chunk
+	for rows.Next() {
+		var c types.Chunk
+		var ts int64
+		if err := rows.Scan(&c.ChunkID, &c.SizeBytes, &ts); err != nil {
+			return nil, err
+		}
+		c.StoredAt = time.UnixMilli(ts)
+		chunks = append(chunks, c)
+	}
+	return chunks, rows.Err()
+}
+
+func listReplicasTx(tx *sql.Tx) ([]types.Replica, error) {
+	rows, err := tx.Query(`SELECT chunk_id, node_id, status, stored_at, verified_at FROM replicas ORDER BY chunk_id ASC, node_id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var reps []types.Replica
+	for rows.Next() {
+		var r types.Replica
+		var stored, verified int64
+		if err := rows.Scan(&r.ChunkID, &r.NodeID, &r.Status, &stored, &verified); err != nil {
+			return nil, err
+		}
+		r.StoredAt = time.UnixMilli(stored)
+		r.VerifiedAt = time.UnixMilli(verified)
+		reps = append(reps, r)
+	}
+	return reps, rows.Err()
+}
+
+func latestEventIDTx(tx *sql.Tx) (string, error) {
+	row := tx.QueryRow(`SELECT event_id FROM events ORDER BY timestamp DESC, node_id DESC, seq DESC LIMIT 1`)
+	var eventID string
+	if err := row.Scan(&eventID); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return eventID, nil
+}
 func (s *Store) LatestEventID() (string, error) {
 	row := s.db.QueryRow(`SELECT event_id FROM events ORDER BY timestamp DESC, node_id DESC, seq DESC LIMIT 1`)
 	var eventID string
@@ -871,25 +1012,26 @@ func scanFileRows(rows *sql.Rows) (*types.File, error) {
 }
 
 type PendingJoin struct {
-	NodeID        string    `json:"node_id"`
-	Name          string    `json:"name"`
-	Platform      string    `json:"platform"`
-	Address       string    `json:"address"`
-	PublicKey     string    `json:"public_key"`
-	TotalBytes    int64     `json:"total_bytes"`
-	AvailableBytes int64    `json:"available_bytes"`
-	RequestedAt   time.Time `json:"requested_at"`
-	ExpiresAt     time.Time `json:"expires_at"`
+	NodeID          string    `json:"node_id"`
+	Name            string    `json:"name"`
+	Platform        string    `json:"platform"`
+	Address         string    `json:"address"`
+	ObservedAddress string    `json:"observed_address"`
+	PublicKey       string    `json:"public_key"`
+	TotalBytes      int64     `json:"total_bytes"`
+	AvailableBytes  int64     `json:"available_bytes"`
+	RequestedAt     time.Time `json:"requested_at"`
+	ExpiresAt       time.Time `json:"expires_at"`
 }
 
 func (s *Store) CreatePendingJoin(pj *PendingJoin) error {
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO pending_joins (node_id, name, platform, address, public_key, total_bytes, available_bytes, requested_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		pj.NodeID, pj.Name, pj.Platform, pj.Address, pj.PublicKey, pj.TotalBytes, pj.AvailableBytes, pj.RequestedAt.UnixMilli(), pj.ExpiresAt.UnixMilli())
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO pending_joins (node_id, name, platform, address, observed_address, public_key, total_bytes, available_bytes, requested_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		pj.NodeID, pj.Name, pj.Platform, pj.Address, pj.ObservedAddress, pj.PublicKey, pj.TotalBytes, pj.AvailableBytes, pj.RequestedAt.UnixMilli(), pj.ExpiresAt.UnixMilli())
 	return err
 }
 
 func (s *Store) ListPendingJoins() ([]PendingJoin, error) {
-	rows, err := s.db.Query(`SELECT node_id, name, platform, address, public_key, total_bytes, available_bytes, requested_at, expires_at FROM pending_joins WHERE expires_at > ? ORDER BY requested_at`, time.Now().UnixMilli())
+	rows, err := s.db.Query(`SELECT node_id, name, platform, address, observed_address, public_key, total_bytes, available_bytes, requested_at, expires_at FROM pending_joins WHERE expires_at > ? ORDER BY requested_at`, time.Now().UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -897,21 +1039,21 @@ func (s *Store) ListPendingJoins() ([]PendingJoin, error) {
 	var result []PendingJoin
 	for rows.Next() {
 		var pj PendingJoin
-	var req, exp int64
-		if err := rows.Scan(&pj.NodeID, &pj.Name, &pj.Platform, &pj.Address, &pj.PublicKey, &pj.TotalBytes, &pj.AvailableBytes, &req, &exp); err != nil {
+		var req, exp int64
+		if err := rows.Scan(&pj.NodeID, &pj.Name, &pj.Platform, &pj.Address, &pj.ObservedAddress, &pj.PublicKey, &pj.TotalBytes, &pj.AvailableBytes, &req, &exp); err != nil {
 			return nil, err
 		}
 		pj.RequestedAt = time.UnixMilli(req)
 		pj.ExpiresAt = time.UnixMilli(exp)
 		result = append(result, pj)
 	}
-	return result, nil
+	return result, rows.Err()
 }
 
 func (s *Store) GetPendingJoin(nodeID string) (*PendingJoin, error) {
 	var pj PendingJoin
 	var req, exp int64
-	err := s.db.QueryRow(`SELECT node_id, name, platform, address, public_key, total_bytes, available_bytes, requested_at, expires_at FROM pending_joins WHERE node_id = ? AND expires_at > ?`, nodeID, time.Now().UnixMilli()).Scan(&pj.NodeID, &pj.Name, &pj.Platform, &pj.Address, &pj.PublicKey, &pj.TotalBytes, &pj.AvailableBytes, &req, &exp)
+	err := s.db.QueryRow(`SELECT node_id, name, platform, address, observed_address, public_key, total_bytes, available_bytes, requested_at, expires_at FROM pending_joins WHERE node_id = ? AND expires_at > ?`, nodeID, time.Now().UnixMilli()).Scan(&pj.NodeID, &pj.Name, &pj.Platform, &pj.Address, &pj.ObservedAddress, &pj.PublicKey, &pj.TotalBytes, &pj.AvailableBytes, &req, &exp)
 	if err != nil {
 		return nil, err
 	}
