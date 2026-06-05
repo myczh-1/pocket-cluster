@@ -940,13 +940,8 @@ function LoginPage() {
   );
 }
 
-const normalNavItems = [
+const navItems = [
   { id: "files", label: "Files" },
-  { id: "local", label: "Local" },
-];
-
-const advancedNavItems = [
-  ...normalNavItems,
   { id: "nodes", label: "Nodes" },
   { id: "logs", label: "Logs" },
 ];
@@ -957,7 +952,6 @@ export default function App() {
   const [clusterId, setClusterId] = useState(null);
   const [discoveryMode, setDiscoveryMode] = useState("auto");
   const [loading, setLoading] = useState(true);
-  const [advanced, setAdvanced] = useState(() => localStorage.getItem("pc-mode") === "advanced");
   const [needsLogin, setNeedsLogin] = useState(false);
   const [noCluster, setNoCluster] = useState(false);
 
@@ -966,18 +960,15 @@ export default function App() {
       if (!r.ok) { setLoading(false); return; }
       const hasCreds = r.data?.has_credentials;
       if (!hasCreds) {
-        // No credentials → show create/join page (no auth needed)
         setNoCluster(true);
         setLoading(false);
         return;
       }
-      // Has credentials → try to access API
       api("/node/info").then((r2) => {
         if (r2.ok) {
           setClusterId(r2.data?.cluster_id || "");
           setDiscoveryMode(r2.data?.discovery_mode || "auto");
         } else {
-          // Credentials exist but session invalid → need login
           setNeedsLogin(true);
         }
         setLoading(false);
@@ -985,70 +976,36 @@ export default function App() {
     });
   }, []);
 
-  const toggleMode = () => {
-    const next = !advanced;
-    setAdvanced(next);
-    localStorage.setItem("pc-mode", next ? "advanced" : "normal");
-    if (!next && (tab === "nodes" || tab === "logs")) setTab("files");
-  };
-
-  const navItems = advanced ? advancedNavItems : normalNavItems;
-
   if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Loading...</div>;
   if (needsLogin) return <LoginPage />;
   if (noCluster || !clusterId) return <JoinPage mode={discoveryMode} />;
 
-
   return (
     <div className="min-h-screen lg:flex" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
-      <header
-        className="bg-white border-b border-gray-200 px-4 py-3 lg:fixed lg:inset-y-0 lg:left-0 lg:w-64 lg:border-b-0 lg:border-r lg:px-6 lg:py-6"
-      >
+      <header className="bg-white border-b border-gray-200 px-4 py-3 lg:fixed lg:inset-y-0 lg:left-0 lg:w-64 lg:border-b-0 lg:border-r lg:px-6 lg:py-6">
         <h1 className="text-lg font-bold text-center lg:text-left lg:text-2xl">PocketCluster</h1>
         <nav className="mt-8 hidden lg:block">
           <div className="space-y-1">
-            {advancedNavItems.map((item) => (
+            {navItems.map((item) => (
               <button
                 key={item.id}
                 onClick={() => setTab(item.id)}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium ${
+                className={`flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium ${
                   tab === item.id ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                 }`}
               >
-                <span>{item.label}</span>
+                {item.label}
               </button>
             ))}
           </div>
-          <div className="mt-8 border-t border-gray-100 pt-4">
-            <button
-              onClick={toggleMode}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-50"
-            >
-              <span>{advanced ? "Switch to Normal" : "Switch to Advanced"}</span>
-            </button>
-          </div>
         </nav>
-        <div className="lg:hidden flex items-center justify-center gap-2 mt-1">
-          <button
-            onClick={toggleMode}
-            className="text-xs text-gray-400 hover:text-gray-600"
-          >
-            {advanced ? "Normal" : "Advanced"}
-          </button>
-        </div>
       </header>
 
       <main className="p-4 pb-28 lg:ml-64 lg:flex-1 lg:p-8 xl:p-10">
         <div className="mx-auto w-full max-w-7xl">
           {tab === "files" && <FilesPage />}
-          {tab === "local" && <LocalFilesPage />}
-          {(tab === "nodes" || tab === "logs") && advanced && (
-            <>
-              {tab === "nodes" && <NodesPage />}
-              {tab === "logs" && <LogsPage />}
-            </>
-          )}
-          {(tab === "nodes" || tab === "logs") && !advanced && <FilesPage />}
+          {tab === "nodes" && <NodesPage />}
+          {tab === "logs" && <LogsPage />}
         </div>
       </main>
 
@@ -1057,10 +1014,10 @@ export default function App() {
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
         <div className="flex">
-          {advancedNavItems.map((item) => (
+          {navItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => { setTab(item.id); if (!advanced && (item.id === "nodes" || item.id === "logs")) setAdvanced(true); localStorage.setItem("pc-mode", "advanced"); }}
+              onClick={() => setTab(item.id)}
               className={`flex-1 py-3 text-center ${
                 tab === item.id ? "text-blue-600" : "text-gray-500"
               }`}
