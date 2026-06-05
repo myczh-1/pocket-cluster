@@ -13,3 +13,15 @@ web/dist/
 # Test/build outputs
 coverage.out
 dist/
+
+# Android build artifacts
+android/app/build/
+android/build/
+android/.gradle/
+
+# Android binary (rebuilt by CI)
+android/app/src/main/jniLibs/
+android/app/src/main/assets/agent-*
+
+# Large files in history
+proxy*
