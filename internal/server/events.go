@@ -55,7 +55,22 @@ func (s *Server) applyEvent(e types.Event) error {
 		if err := json.Unmarshal(e.Payload, &payload); err != nil {
 			return err
 		}
-		return s.store.MarkFileDeleted(payload.Path, payload.DeletedBy)
+		// Get file before marking deleted to find chunk IDs
+		f, _ := s.store.GetFile(payload.Path)
+		if err := s.store.MarkFileDeleted(payload.Path, payload.DeletedBy); err != nil {
+			return err
+		}
+		// Clean up unreferenced chunks
+		if f != nil {
+			for _, chunkID := range f.ChunkIDs {
+				ref, _ := s.store.IsChunkReferenced(chunkID)
+				if !ref {
+					s.chunks.Remove(chunkID)
+					s.store.MarkReplicaRemoved(chunkID, s.cfg.NodeID, e.Timestamp)
+				}
+			}
+		}
+		return nil
 	case types.EventChunkReplicaAdd:
 		var r types.Replica
 		if err := json.Unmarshal(e.Payload, &r); err != nil {
