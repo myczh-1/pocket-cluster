@@ -20,6 +20,7 @@ const (
 	syncRequestTimeout = 15 * time.Second
 	targetReplicaCount = 2
 	nodeOfflineAfter   = 30 * time.Second
+	minFreeSpace       = 256 * 1024 * 1024 // 256MB minimum free space to accept a chunk
 )
 
 var peerHTTPClient = peernet.NewHTTPClient()
@@ -357,11 +358,19 @@ func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing m
 		isDesktop      bool
 	}
 	var candidates []candidate
+	chunk, err := s.store.GetChunk(chunkID)
+	if err != nil {
+		return false, fmt.Errorf("get chunk %s: %w", chunkID, err)
+	}
 	for _, n := range nodes {
 		if n.NodeID == s.cfg.NodeID || n.Status == "offline" || !n.Trusted || len(nodeDialAddresses(n)) == 0 {
 			continue
 		}
 		if _, ok := existing[n.NodeID]; ok {
+			continue
+		}
+		// Skip nodes without enough free space
+		if n.AvailableBytes > 0 && n.AvailableBytes-chunk.SizeBytes < minFreeSpace {
 			continue
 		}
 		isDesktop := n.Platform == "darwin" || n.Platform == "linux" || n.Platform == "windows"
