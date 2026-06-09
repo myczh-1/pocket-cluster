@@ -478,6 +478,42 @@ func (s *Store) PurgeFile(fileID string) error {
 	}
 	return s.deleteFileIndex(fileID)
 }
+// RenameChildren updates the paths of all children when a directory is renamed.
+func (s *Store) RenameChildren(oldDirPath, newDirPath, modifiedBy string, modifiedAt time.Time) error {
+	oldPrefix := strings.TrimSuffix(oldDirPath, "/") + "/"
+	newPrefix := strings.TrimSuffix(newDirPath, "/") + "/"
+	millis := timeMillis(modifiedAt)
+	rows, err := s.db.Query(`SELECT file_id, path FROM files WHERE path LIKE ? || '%' AND deleted = 0`, oldPrefix)
+	if err != nil {
+		return err
+	}
+	type update struct {
+		fileID string
+		newP   string
+		newN   string
+	}
+	var updates []update
+	for rows.Next() {
+		var fileID, childPath string
+		if err := rows.Scan(&fileID, &childPath); err != nil {
+			continue
+		}
+		rest := childPath[len(oldPrefix):]
+		np := newPrefix + rest
+		updates = append(updates, update{fileID: fileID, newP: np, newN: filepath.Base(np)})
+	}
+	rows.Close()
+	for _, u := range updates {
+		if _, err := s.db.Exec(`UPDATE files SET path = ?, name = ?, modified_by = ?, modified_at = ? WHERE file_id = ?`,
+			u.newP, u.newN, modifiedBy, millis, u.fileID); err != nil {
+			return err
+		}
+		// Update FTS
+		s.db.Exec(`DELETE FROM files_fts WHERE file_id = ?`, u.fileID)
+		s.db.Exec(`INSERT INTO files_fts (file_id, name, path) VALUES (?, ?, ?)`, u.fileID, u.newN, u.newP)
+	}
+	return nil
+}
 
 func (s *Store) RenameFile(fileID, oldPath, newPath string, modifiedBy string, modifiedAt time.Time) error {
 	name := filepath.Base(newPath)

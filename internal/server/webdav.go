@@ -127,8 +127,14 @@ func (d *davFS) Rename(_ context.Context, oldName, newName string) error {
 	if err != nil {
 		return os.ErrNotExist
 	}
-	if err := d.store.RenameFile(f.FileID, oldName, newName, d.nodeID, time.Now()); err != nil {
+	now := time.Now()
+	if err := d.store.RenameFile(f.FileID, oldName, newName, d.nodeID, now); err != nil {
 		return err
+	}
+	if f.IsDir {
+		if err := d.store.RenameChildren(oldName, newName, d.nodeID, now); err != nil {
+			return err
+		}
 	}
 	if d.srv != nil {
 		d.srv.appendEvent(types.EventFileRename, map[string]string{

@@ -272,9 +272,16 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "file not found")
 		return
 	}
-	if err := s.store.RenameFile(f.FileID, req.Path, req.NewPath, s.cfg.NodeID, time.Now()); err != nil {
+	now := time.Now()
+	if err := s.store.RenameFile(f.FileID, req.Path, req.NewPath, s.cfg.NodeID, now); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
+	}
+	if f.IsDir {
+		if err := s.store.RenameChildren(req.Path, req.NewPath, s.cfg.NodeID, now); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
 	}
 	if _, err := s.appendEvent(types.EventFileRename, map[string]string{
 		"file_id":  f.FileID,
