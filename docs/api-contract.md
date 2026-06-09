@@ -297,6 +297,41 @@ Chunks are reassembled in order and streamed to the client.
 Download a file by file_id.
 
 **Response:** Same as path-based download.
+### DELETE /api/files?path=/report.pdf
+Delete a file or directory. Directories are recursively deleted (all children are tombstoned).
+**Query parameters:**
+| Parameter | Type   | Required | Description            |
+|-----------|--------|----------|------------------------|
+| `path`    | string | yes      | File or directory path |
+**Response:**
+```json
+{
+  "ok": true,
+  "data": {
+    "path": "/report.pdf",
+    "status": "deleted"
+  }
+}
+```
+Deleted files are tombstoned (soft-deleted) and retained for 7 days before permanent removal.
+### PATCH /api/files/rename
+Rename or move a file.
+**Request body (JSON):**
+| Field     | Type   | Required | Description     |
+|-----------|--------|----------|-----------------|
+| `path`    | string | yes      | Current path    |
+| `new_path`| string | yes      | New path        |
+**Response:**
+```json
+{
+  "ok": true,
+  "data": {
+    "file_id": "f-001",
+    "old_path": "/report.pdf",
+    "new_path": "/Documents/report.pdf"
+  }
+}
+```
 
 ### GET /api/chunks/{hash}
 

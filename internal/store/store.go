@@ -459,6 +459,18 @@ func (s *Store) MarkFileDeleted(path string, deletedBy string) error {
 	_, err = s.db.Exec(`DELETE FROM files_fts WHERE file_id IN (SELECT file_id FROM files WHERE path = ?)`, path)
 	return err
 }
+// MarkChildrenDeleted soft-deletes all files and directories under dirPath (inclusive).
+func (s *Store) MarkChildrenDeleted(dirPath string, deletedBy string) error {
+	now := time.Now().UnixMilli()
+	prefix := strings.TrimSuffix(dirPath, "/") + "/"
+	_, err := s.db.Exec(`UPDATE files SET deleted = 1, modified_by = ?, modified_at = ? WHERE (path = ? OR path LIKE ? || '%') AND deleted = 0`,
+		deletedBy, now, dirPath, prefix)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`DELETE FROM files_fts WHERE file_id IN (SELECT file_id FROM files WHERE deleted = 1 AND (path = ? OR path LIKE ? || '%'))`, dirPath, prefix)
+	return err
+}
 func (s *Store) PurgeFile(fileID string) error {
 	_, err := s.db.Exec(`DELETE FROM files WHERE file_id = ? AND deleted = 1`, fileID)
 	if err != nil {

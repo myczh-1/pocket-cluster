@@ -101,13 +101,19 @@ func (d *davFS) RemoveAll(_ context.Context, name string) error {
 	if err != nil {
 		return os.ErrNotExist
 	}
-	if err := d.store.MarkFileDeleted(name, d.nodeID); err != nil {
-		return err
-	}
-	if d.srv != nil {
-		if f.IsDir {
+	if f.IsDir {
+		// Recursively delete directory and all children
+		if err := d.store.MarkChildrenDeleted(name, d.nodeID); err != nil {
+			return err
+		}
+		if d.srv != nil {
 			d.srv.appendEvent(types.EventDirDelete, map[string]string{"path": name, "deleted_by": d.nodeID})
-		} else {
+		}
+	} else {
+		if err := d.store.MarkFileDeleted(name, d.nodeID); err != nil {
+			return err
+		}
+		if d.srv != nil {
 			d.srv.appendEvent(types.EventFileDelete, map[string]string{"path": name, "deleted_by": d.nodeID})
 		}
 	}

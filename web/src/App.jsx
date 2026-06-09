@@ -58,9 +58,9 @@ function NodeCard({ node }) {
   );
 }
 
-function FileCard({ file, onDownload, onDelete }) {
+function FileCard({ file, onDownload, onDelete, onRename }) {
   return (
-    <div className="bg-white rounded-lg shadow p-3 flex items-center gap-2 min-w-0">
+    <div className={`bg-white rounded-lg shadow p-3 flex items-center gap-2 min-w-0 ${file.conflict_of ? "border-l-4 border-yellow-400" : ""}`}>
       <div className="w-7 h-7 rounded bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-500 shrink-0">{file.is_dir ? "D" : "F"}</div>
       <div className="flex-1 min-w-0">
         <p className="font-medium text-sm truncate">{file.name}</p>
@@ -68,23 +68,32 @@ function FileCard({ file, onDownload, onDelete }) {
           {file.is_dir ? "Directory" : formatBytes(file.size_bytes)}
           {file.modified_at && ` · ${new Date(file.modified_at).toLocaleDateString()}`}
         </p>
+        {file.conflict_of && (
+          <p className="text-xs text-yellow-600 mt-0.5">⚠ Conflict — original: {file.conflict_of}</p>
+        )}
       </div>
-      {!file.is_dir && (
-        <div className="flex gap-1 shrink-0">
+      <div className="flex gap-1 shrink-0">
+        {!file.is_dir && (
           <button
             onClick={() => onDownload(file)}
             className="px-2 py-1.5 bg-blue-50 text-blue-600 rounded text-xs font-medium hover:bg-blue-100 active:bg-blue-200"
           >
             Get
           </button>
-          <button
-            onClick={() => onDelete(file)}
-            className="px-2 py-1.5 bg-red-50 text-red-600 rounded text-xs font-medium hover:bg-red-100 active:bg-red-200"
-          >
-            Del
-          </button>
-        </div>
-      )}
+        )}
+        <button
+          onClick={() => onRename(file)}
+          className="px-2 py-1.5 bg-gray-50 text-gray-600 rounded text-xs font-medium hover:bg-gray-100 active:bg-gray-200"
+        >
+          Rename
+        </button>
+        <button
+          onClick={() => onDelete(file)}
+          className="px-2 py-1.5 bg-red-50 text-red-600 rounded text-xs font-medium hover:bg-red-100 active:bg-red-200"
+        >
+          Del
+        </button>
+      </div>
     </div>
   );
 }
@@ -140,7 +149,20 @@ function FilesPage() {
     await fetch(`${API}/files?path=${encodeURIComponent(file.path)}`, { method: "DELETE" });
     loadFiles();
   };
-
+  const handleRename = async (file) => {
+    const newPath = prompt(`Rename "${file.name}" to:`, file.path);
+    if (!newPath || newPath === file.path) return;
+    const res = await fetch(`${API}/files/rename`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: file.path, new_path: newPath }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(`Rename failed: ${err.error?.message || res.statusText}`);
+    }
+    loadFiles();
+  };
   return (
     <div className="space-y-4">
       {/* Search and actions */}
@@ -172,7 +194,7 @@ function FilesPage() {
       {/* File list */}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {files.map((f) => (
-          <FileCard key={f.file_id || f.path} file={f} onDownload={handleDownload} onDelete={handleDelete} />
+          <FileCard key={f.file_id || f.path} file={f} onDownload={handleDownload} onDelete={handleDelete} onRename={handleRename} />
         ))}
         {files.length === 0 && (
           <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400 text-sm">

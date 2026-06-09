@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -10,9 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
-
 	"github.com/google/uuid"
-
 	"github.com/pocketcluster/agent/internal/chunk"
 	"github.com/pocketcluster/agent/internal/types"
 )
@@ -234,18 +233,60 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if f.IsDir {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "cannot delete directory")
-		return
-	}
-	if err := s.store.MarkFileDeleted(path, s.cfg.NodeID); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	// Emit delete event. Physical chunk cleanup is deferred
-	// to CleanupTombstones to avoid data loss before peers sync.
-	if _, err := s.appendEvent(types.EventFileDelete, map[string]string{"path": path, "deleted_by": s.cfg.NodeID}); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
+		if err := s.store.MarkChildrenDeleted(path, s.cfg.NodeID); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		if _, err := s.appendEvent(types.EventDirDelete, map[string]string{"path": path, "deleted_by": s.cfg.NodeID}); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+	} else {
+		if err := s.store.MarkFileDeleted(path, s.cfg.NodeID); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		if _, err := s.appendEvent(types.EventFileDelete, map[string]string{"path": path, "deleted_by": s.cfg.NodeID}); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]string{"path": path, "status": "deleted"})})
+}
+// PATCH /api/files/rename — rename or move a file
+func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path    string `json:"path"`
+		NewPath string `json:"new_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if req.Path == "" || req.NewPath == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path and new_path are required")
+		return
+	}
+	f, err := s.store.GetFile(req.Path)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "file not found")
+		return
+	}
+	if err := s.store.RenameFile(f.FileID, req.Path, req.NewPath, s.cfg.NodeID, time.Now()); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if _, err := s.appendEvent(types.EventFileRename, map[string]string{
+		"file_id":  f.FileID,
+		"old_path": req.Path,
+		"new_path": req.NewPath,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]string{
+		"file_id":  f.FileID,
+		"old_path": req.Path,
+		"new_path": req.NewPath,
+	})})
 }
