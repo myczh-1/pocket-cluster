@@ -27,13 +27,14 @@ func runDoctor(dataDir string, port int) {
 	var results []checkResult
 
 	results = append(results, checkDataDir(dataDir))
+	results = append(results, checkChunkDir(dataDir))
 	results = append(results, checkPort(port))
 	results = append(results, checkAgentRunning(port))
 	results = append(results, checkMDNS())
 	results = append(results, checkWebDAV(port))
 	results = append(results, checkNodeConnectivity(port))
+	results = append(results, checkReplicaHealth(port))
 	results = append(results, checkStorageWritable(dataDir))
-
 	okCount, warnCount, failCount := 0, 0, 0
 	for _, r := range results {
 		icon := "✓"
@@ -184,4 +185,64 @@ func checkStorageWritable(dataDir string) checkResult {
 	}
 	os.Remove(testFile)
 	return checkResult{"Storage writable", "ok", dataDir}
+}
+func checkChunkDir(dataDir string) checkResult {
+	chunkDir := filepath.Join(dataDir, "chunks")
+	info, err := os.Stat(chunkDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return checkResult{"Chunk directory", "warn", fmt.Sprintf("%s does not exist (will be created on first use)", chunkDir)}
+		}
+		return checkResult{"Chunk directory", "fail", err.Error()}
+	}
+	if !info.IsDir() {
+		return checkResult{"Chunk directory", "fail", fmt.Sprintf("%s is not a directory", chunkDir)}
+	}
+	entries, err := os.ReadDir(chunkDir)
+	if err != nil {
+		return checkResult{"Chunk directory", "fail", err.Error()}
+	}
+	return checkResult{"Chunk directory", "ok", fmt.Sprintf("%s (%d entries)", chunkDir, len(entries))}
+}
+func checkReplicaHealth(port int) checkResult {
+	ctx, cancel := context.WithTimeout(context.Background(), doctorTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/health/summary", port), nil)
+	if err != nil {
+		return checkResult{"Replica health", "fail", err.Error()}
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return checkResult{"Replica health", "warn", "cannot reach health API (agent may not be running)"}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return checkResult{"Replica health", "warn", fmt.Sprintf("status %d", resp.StatusCode)}
+	}
+	var envelope struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			OverallStatus   string `json:"overall_status"`
+			TotalChunks     int    `json:"total_chunks"`
+			HealthyChunks   int    `json:"healthy_chunks"`
+			UnderReplicated int    `json:"under_replicated_chunks"`
+			Unavailable     int    `json:"unavailable_chunks"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return checkResult{"Replica health", "fail", err.Error()}
+	}
+	if !envelope.OK {
+		return checkResult{"Replica health", "fail", "unexpected response"}
+	}
+	d := envelope.Data
+	msg := fmt.Sprintf("%s (%d/%d healthy, %d under-replicated, %d unavailable",
+		d.OverallStatus, d.HealthyChunks, d.TotalChunks, d.UnderReplicated, d.Unavailable)
+	status := "ok"
+	if d.Unavailable > 0 {
+		status = "fail"
+	} else if d.UnderReplicated > 0 {
+		status = "warn"
+	}
+	return checkResult{"Replica health", status, msg}
 }

@@ -63,6 +63,7 @@ type healthScanner struct {
 	summary          HealthSummary
 	chunkHealth      map[string]ChunkHealthDetail
 	repairing        map[string]bool // chunkIDs currently being repaired
+	underReplicated  []string        // chunkIDs needing repair, set by scan
 	skipRemoteVerify bool            // skip HEAD verification in tests
 }
 func newHealthScanner() *healthScanner {
@@ -214,6 +215,7 @@ func (s *Server) runHealthScan(ctx context.Context) {
 	s.health.mu.Lock()
 	s.health.summary = summary
 	s.health.chunkHealth = chunkHealthMap
+	s.health.underReplicated = underReplicated
 	s.health.mu.Unlock()
 	if len(underReplicated) > 0 {
 		log.Printf("health scan: %d under-replicated chunks detected (sync loop will repair)", len(underReplicated))
@@ -248,6 +250,30 @@ func (s *Server) CleanupTombstones() error {
 		}
 	}
 	return nil
+}
+// DrainUnderReplicated returns and clears the under-replicated chunk list from the last scan.
+func (s *Server) DrainUnderReplicated() []string {
+	s.health.mu.Lock()
+	defer s.health.mu.Unlock()
+	chunks := s.health.underReplicated
+	s.health.underReplicated = nil
+	return chunks
+}
+// MarkRepairing sets the repairing state for a chunk (for UI display).
+func (s *Server) MarkRepairing(chunkID string, repairing bool) {
+	s.health.mu.Lock()
+	defer s.health.mu.Unlock()
+	if repairing {
+		s.health.repairing[chunkID] = true
+	} else {
+		delete(s.health.repairing, chunkID)
+	}
+}
+// SetLastRepairAt updates the last repair timestamp.
+func (s *Server) SetLastRepairAt(t time.Time) {
+	s.health.mu.Lock()
+	defer s.health.mu.Unlock()
+	s.health.summary.LastRepairAt = t
 }
 
 // HealthSummarySnapshot returns the current health summary (thread-safe).

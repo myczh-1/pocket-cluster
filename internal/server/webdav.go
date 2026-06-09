@@ -65,7 +65,7 @@ func (d *davFS) Mkdir(_ context.Context, name string, _ os.FileMode) error {
 func (d *davFS) OpenFile(_ context.Context, name string, flag int, _ os.FileMode) (webdav.File, error) {
 	name = normPath(name)
 	if flag&os.O_CREATE != 0 {
-		return &davWriteFile{name: name, store: d.store, chunks: d.chunks, nodeID: d.nodeID}, nil
+		return &davWriteFile{name: name, store: d.store, chunks: d.chunks, nodeID: d.nodeID, srv: d.srv}, nil
 	}
 	if name == "/" {
 		return d.openDir("/")
@@ -97,11 +97,21 @@ func (d *davFS) openDir(name string) (webdav.File, error) {
 
 func (d *davFS) RemoveAll(_ context.Context, name string) error {
 	name = normPath(name)
-	_, err := d.store.GetFile(name)
+	f, err := d.store.GetFile(name)
 	if err != nil {
 		return os.ErrNotExist
 	}
-	return d.store.MarkFileDeleted(name, d.nodeID)
+	if err := d.store.MarkFileDeleted(name, d.nodeID); err != nil {
+		return err
+	}
+	if d.srv != nil {
+		if f.IsDir {
+			d.srv.appendEvent(types.EventDirDelete, map[string]string{"path": name, "deleted_by": d.nodeID})
+		} else {
+			d.srv.appendEvent(types.EventFileDelete, map[string]string{"path": name, "deleted_by": d.nodeID})
+		}
+	}
+	return nil
 }
 
 func (d *davFS) Rename(_ context.Context, oldName, newName string) error {
@@ -111,9 +121,18 @@ func (d *davFS) Rename(_ context.Context, oldName, newName string) error {
 	if err != nil {
 		return os.ErrNotExist
 	}
-	return d.store.RenameFile(f.FileID, oldName, newName, d.nodeID, time.Now())
+	if err := d.store.RenameFile(f.FileID, oldName, newName, d.nodeID, time.Now()); err != nil {
+		return err
+	}
+	if d.srv != nil {
+		d.srv.appendEvent(types.EventFileRename, map[string]string{
+			"file_id":  f.FileID,
+			"old_path": oldName,
+			"new_path": newName,
+		})
+	}
+	return nil
 }
-
 func (d *davFS) Stat(_ context.Context, name string) (os.FileInfo, error) {
 	name = normPath(name)
 	if name == "/" {
@@ -229,9 +248,9 @@ type davWriteFile struct {
 	store  *store.Store
 	chunks *chunk.Storage
 	nodeID string
+	srv    *Server
 	buf    bytes.Buffer
 }
-
 func (f *davWriteFile) Close() error {
 	data := f.buf.Bytes()
 	if len(data) == 0 {
@@ -250,7 +269,11 @@ func (f *davWriteFile) Close() error {
 			}
 			now := time.Now()
 			f.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: size, StoredAt: now})
-			f.store.UpsertReplica(&types.Replica{ChunkID: hash, NodeID: f.nodeID, Status: "available", StoredAt: now, VerifiedAt: now})
+			replica := &types.Replica{ChunkID: hash, NodeID: f.nodeID, Status: "available", StoredAt: now, VerifiedAt: now}
+			f.store.UpsertReplica(replica)
+			if f.srv != nil {
+				f.srv.appendEvent(types.EventChunkReplicaAdd, replica)
+			}
 			chunkIDs = append(chunkIDs, hash)
 			totalSize += size
 		}
@@ -273,7 +296,7 @@ func (f *davWriteFile) Close() error {
 		}
 	}
 	now2 := time.Now()
-	return f.store.UpsertFile(&types.File{
+	file := &types.File{
 		FileID:     uuid.New().String(),
 		Name:       path.Base(f.name),
 		Path:       f.name,
@@ -284,7 +307,14 @@ func (f *davWriteFile) Close() error {
 		CreatedAt:  now2,
 		ModifiedAt: now2,
 		ModifiedBy: f.nodeID,
-	})
+	}
+	if err := f.store.UpsertFile(file); err != nil {
+		return err
+	}
+	if f.srv != nil {
+		f.srv.appendEvent(types.EventFilePut, file)
+	}
+	return nil
 }
 
 func (f *davWriteFile) Read([]byte) (int, error)          { return 0, os.ErrPermission }

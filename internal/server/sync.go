@@ -83,6 +83,21 @@ func (s *Server) SyncOnce(ctx context.Context) error {
 	if err := s.fetchMissingChunks(ctx); err != nil && firstErr == nil {
 		firstErr = err
 	}
+	// Repair chunks flagged by health scanner
+	if s.health != nil {
+		underReplicated := s.DrainUnderReplicated()
+		if len(underReplicated) > 0 {
+			nodes, _ := s.store.ListNodes()
+			for _, chunkID := range underReplicated {
+				s.MarkRepairing(chunkID, true)
+				if err := s.repairChunkReplicas(ctx, chunkID, nodes); err != nil {
+					log.Printf("sync: repair chunk %s: %v", chunkID, err)
+				}
+				s.MarkRepairing(chunkID, false)
+			}
+			s.SetLastRepairAt(time.Now())
+		}
+	}
 	return firstErr
 }
 
@@ -352,6 +367,9 @@ func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing m
 		isDesktop := n.Platform == "darwin" || n.Platform == "linux" || n.Platform == "windows"
 		candidates = append(candidates, candidate{node: n, availableBytes: n.AvailableBytes, isDesktop: isDesktop})
 	}
+	if len(candidates) == 0 {
+		return false, nil
+	}
 	// Sort: desktop first, then by available space descending
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].isDesktop != candidates[j].isDesktop {
@@ -365,7 +383,7 @@ func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing m
 		}
 		return true, nil
 	}
-	return false, nil
+	return false, fmt.Errorf("push chunk %s: all %d candidates rejected", chunkID, len(candidates))
 }
 
 func (s *Server) fetchChunkFromReplica(ctx context.Context, chunkID string) error {
