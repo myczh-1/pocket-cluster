@@ -355,9 +355,53 @@ func fileToInfo(f *types.File) *davInfo {
 	return &davInfo{name: f.Name, size: f.SizeBytes, modTime: f.ModifiedAt}
 }
 
+// ---------- ETag support ----------
+type etagResponseWriter struct {
+	http.ResponseWriter
+	etag   string
+	status int
+}
+func (w *etagResponseWriter) WriteHeader(code int) {
+	w.status = code
+	if w.etag != "" && code == http.StatusOK {
+		w.ResponseWriter.Header().Set("ETag", w.etag)
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+func (w *etagResponseWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
 // ---------- mount ----------
-
 func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
+	// Set ETag for GET/HEAD based on file version
+	if r.Method == "GET" || r.Method == "HEAD" {
+		name := normPath(strings.TrimPrefix(r.URL.Path, "/dav"))
+		if f, err := s.store.GetFile(name); err == nil && !f.Deleted && f.VersionID != "" {
+			etag := `"` + f.VersionID + `"`
+			w.Header().Set("ETag", etag)
+			// Check If-Match / If-None-Match
+			if match := r.Header.Get("If-None-Match"); match == etag {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+	}
+	// Check If-Match on write methods to prevent concurrent overwrites
+	if r.Method == "PUT" || r.Method == "PATCH" || r.Method == "PROPPATCH" {
+		if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
+			name := normPath(strings.TrimPrefix(r.URL.Path, "/dav"))
+			if f, err := s.store.GetFile(name); err == nil && !f.Deleted {
+				currentETag := `"` + f.VersionID + `"`
+				if ifMatch != currentETag {
+					w.WriteHeader(http.StatusPreconditionFailed)
+					return
+				}
+			}
+		}
+	}
 	(&webdav.Handler{
 		FileSystem: &davFS{store: s.store, chunks: s.chunks, nodeID: s.cfg.NodeID, srv: s},
 		LockSystem: webdav.NewMemLS(),

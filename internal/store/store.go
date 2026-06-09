@@ -432,7 +432,15 @@ func (s *Store) GetFileByID(fileID string) (*types.File, error) {
 }
 
 func (s *Store) ListFiles(dirPath string) ([]types.File, error) {
-	rows, err := s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE deleted = 0 ORDER BY path ASC`)
+	var rows *sql.Rows
+	var err error
+	if dirPath == "/" || dirPath == "" {
+		rows, err = s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE deleted = 0 AND path LIKE '/%' ESCAPE '\' AND INSTR(SUBSTR(path, 2), '/') = 0 ORDER BY path ASC`)
+	} else {
+		prefix := strings.TrimRight(dirPath, "/") + "/"
+		escaped := escapeLike(prefix)
+		rows, err = s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE deleted = 0 AND path LIKE ? ESCAPE '\' AND INSTR(SUBSTR(path, ?), '/') = 0 ORDER BY path ASC`, escaped+"%", len(prefix)+1)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -443,11 +451,16 @@ func (s *Store) ListFiles(dirPath string) ([]types.File, error) {
 		if err != nil {
 			return nil, err
 		}
-		if isDirectChild(dirPath, f.Path) {
-			files = append(files, *f)
-		}
+		files = append(files, *f)
 	}
 	return files, rows.Err()
+}
+// escapeLike escapes % and _ for SQLite LIKE patterns.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }
 
 func (s *Store) MarkFileDeleted(path string, deletedBy string) error {
