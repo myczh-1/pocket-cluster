@@ -23,19 +23,44 @@ type davFS struct {
 	store  *store.Store
 	chunks *chunk.Storage
 	nodeID string
+	srv    *Server
 }
 
 func normPath(name string) string {
 	if name == "" {
 		return "/"
 	}
-	if !strings.HasPrefix(name, "/") {
-		return "/" + name
+	clean := path.Clean(name)
+	if clean == "." {
+		return "/"
 	}
-	return name
+	if !strings.HasPrefix(clean, "/") {
+		clean = "/" + clean
+	}
+	return clean
 }
-
-func (d *davFS) Mkdir(_ context.Context, _ string, _ os.FileMode) error { return nil }
+func (d *davFS) Mkdir(_ context.Context, name string, _ os.FileMode) error {
+	name = normPath(name)
+	if name == "/" {
+		return nil
+	}
+	dir := &types.File{
+		FileID:     uuid.New().String(),
+		Name:       path.Base(name),
+		Path:       name,
+		IsDir:      true,
+		CreatedAt:  time.Now(),
+		ModifiedAt: time.Now(),
+		ModifiedBy: d.nodeID,
+	}
+	if err := d.store.UpsertFile(dir); err != nil {
+		return err
+	}
+	if d.srv != nil {
+		d.srv.appendEvent(types.EventDirCreate, map[string]string{"path": name, "created_by": d.nodeID})
+	}
+	return nil
+}
 
 func (d *davFS) OpenFile(_ context.Context, name string, flag int, _ os.FileMode) (webdav.File, error) {
 	name = normPath(name)
@@ -237,7 +262,17 @@ func (f *davWriteFile) Close() error {
 	if detected := mime.TypeByExtension(path.Ext(f.name)); detected != "" {
 		mimeType = detected
 	}
-	now := time.Now()
+	// Clean up old chunks if overwriting
+	if old, err := f.store.GetFile(f.name); err == nil && !old.Deleted {
+		for _, cid := range old.ChunkIDs {
+			ref, _ := f.store.IsChunkReferenced(cid)
+			if !ref {
+				f.chunks.Remove(cid)
+				f.store.MarkReplicaRemoved(cid, f.nodeID, time.Now())
+			}
+		}
+	}
+	now2 := time.Now()
 	return f.store.UpsertFile(&types.File{
 		FileID:     uuid.New().String(),
 		Name:       path.Base(f.name),
@@ -246,8 +281,8 @@ func (f *davWriteFile) Close() error {
 		MimeType:   mimeType,
 		VersionID:  uuid.NewString(),
 		ChunkIDs:   chunkIDs,
-		CreatedAt:  now,
-		ModifiedAt: now,
+		CreatedAt:  now2,
+		ModifiedAt: now2,
 		ModifiedBy: f.nodeID,
 	})
 }
@@ -282,7 +317,7 @@ func fileToInfo(f *types.File) *davInfo {
 
 func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 	(&webdav.Handler{
-		FileSystem: &davFS{store: s.store, chunks: s.chunks, nodeID: s.cfg.NodeID},
+		FileSystem: &davFS{store: s.store, chunks: s.chunks, nodeID: s.cfg.NodeID, srv: s},
 		LockSystem: webdav.NewMemLS(),
 		Prefix:     "/dav",
 	}).ServeHTTP(w, r)

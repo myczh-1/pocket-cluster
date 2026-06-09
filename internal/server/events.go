@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
+	"github.com/google/uuid"
 	"github.com/pocketcluster/agent/internal/types"
 )
 
@@ -55,29 +55,16 @@ func (s *Server) applyEvent(e types.Event) error {
 		if err := json.Unmarshal(e.Payload, &payload); err != nil {
 			return err
 		}
-		// Get file before marking deleted to find chunk IDs
-		f, _ := s.store.GetFile(payload.Path)
-		if err := s.store.MarkFileDeleted(payload.Path, payload.DeletedBy); err != nil {
-			return err
-		}
-		// Clean up unreferenced chunks
-		if f != nil {
-			for _, chunkID := range f.ChunkIDs {
-				ref, _ := s.store.IsChunkReferenced(chunkID)
-				if !ref {
-					s.chunks.Remove(chunkID)
-					s.store.MarkReplicaRemoved(chunkID, s.cfg.NodeID, e.Timestamp)
-				}
-			}
-		}
-		return nil
+		// Only tombstone the file. Physical chunk cleanup is deferred
+		// to CleanupTombstones to avoid deleting data before peers sync.
+		return s.store.MarkFileDeleted(payload.Path, payload.DeletedBy)
 	case types.EventChunkReplicaAdd:
 		var r types.Replica
 		if err := json.Unmarshal(e.Payload, &r); err != nil {
 			return err
 		}
 		return s.store.UpsertReplica(&r)
-	case types.EventFileRename:
+	case types.EventFileMove, types.EventFileRename:
 		var payload struct {
 			FileID          string `json:"file_id"`
 			OldPath         string `json:"old_path"`
@@ -118,6 +105,32 @@ func (s *Server) applyEvent(e types.Event) error {
 		}
 		s.sanitizeNodeAddress(&n)
 		return s.store.UpdateNodeFull(&n)
+	case types.EventDirCreate:
+		var payload struct {
+			Path      string `json:"path"`
+			CreatedBy string `json:"created_by"`
+		}
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			return err
+		}
+		return s.store.UpsertFile(&types.File{
+			FileID:     uuid.New().String(),
+			Name:       payload.Path,
+			Path:       payload.Path,
+			IsDir:      true,
+			CreatedAt:  e.Timestamp,
+			ModifiedAt: e.Timestamp,
+			ModifiedBy: payload.CreatedBy,
+		})
+	case types.EventDirDelete:
+		var payload struct {
+			Path      string `json:"path"`
+			DeletedBy string `json:"deleted_by"`
+		}
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			return err
+		}
+		return s.store.MarkFileDeleted(payload.Path, payload.DeletedBy)
 	case types.EventSnapshotCreated:
 		return nil
 	default:

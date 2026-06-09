@@ -29,6 +29,18 @@ var version = "dev"
 const nodeCapacityUpdateInterval = 30 * time.Second
 
 func main() {
+	// Check for subcommands before flag parsing
+	if len(os.Args) > 1 && os.Args[1] == "doctor" {
+		port := 7788
+		dataDir := defaultDataDir()
+		// Parse optional flags after "doctor"
+		fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+		fs.IntVar(&port, "port", 7788, "agent HTTP port to check")
+		fs.StringVar(&dataDir, "data", defaultDataDir(), "data directory path")
+		fs.Parse(os.Args[2:])
+		runDoctor(dataDir, port)
+		return
+	}
 	dataDir := flag.String("data", defaultDataDir(), "data directory path")
 	port := flag.Int("port", 7788, "HTTP listen port")
 	name := flag.String("name", "", "node name (default: hostname)")
@@ -39,7 +51,6 @@ func main() {
 	joinToken := flag.String("join-token", "", "invite token for joining an existing cluster")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
-
 	if *showVersion {
 		fmt.Println("PocketCluster Agent", version)
 		os.Exit(0)
@@ -114,6 +125,7 @@ func main() {
 		log.Printf("joined cluster %s via %s", cfg.ClusterID, bootstrap)
 	}
 	go srv.StartSync(ctx, 2*time.Second)
+	go srv.StartHealthScan(ctx)
 	go refreshSelfNode(ctx, cfg, s, srv, *dataDir, *port, *localIP)
 
 	sigCh := make(chan os.Signal, 1)

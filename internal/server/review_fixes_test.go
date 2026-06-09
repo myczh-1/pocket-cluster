@@ -249,8 +249,18 @@ func TestDeleteRemovesChunks(t *testing.T) {
 		t.Fatalf("delete status = %d: %s", res.Code, res.Body.String())
 	}
 
-	// Verify chunk is removed from disk
-	if srv.chunks.Exists(chunkID) {
-		t.Fatal("chunk should be removed after delete")
+	// Chunks are no longer removed immediately on delete.
+	// They are tombstoned and cleaned up later by CleanupTombstones.
+	// Verify file is tombstoned
+	f2, err := st.GetFileByID(f.FileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f2.Deleted {
+		t.Fatal("file should be marked deleted")
+	}
+	// Chunk should still exist until GC runs
+	if !srv.chunks.Exists(chunkID) {
+		t.Fatal("chunk should still exist until tombstone cleanup")
 	}
 }

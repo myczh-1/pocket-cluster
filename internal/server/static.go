@@ -26,6 +26,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/files", s.handleDelete)
 	mux.HandleFunc("GET /api/files/download", s.handleDownload)
 	mux.HandleFunc("GET /api/chunks/{hash}", s.handleGetChunk)
+	mux.HandleFunc("HEAD /api/chunks/{hash}", s.handleHeadChunk)
 	mux.HandleFunc("POST /api/chunks", s.handleStoreChunk)
 	mux.HandleFunc("GET /api/events", s.handleGetEvents)
 	mux.HandleFunc("POST /api/events/push", s.handlePushEvents)
@@ -40,6 +41,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/uploads", s.handleUploadProgress)
+	mux.HandleFunc("GET /api/health/summary", s.handleHealthSummary)
+	mux.HandleFunc("GET /api/health/chunks", s.handleHealthChunks)
+	mux.HandleFunc("GET /api/health/chunks/{hash}", s.handleHealthChunkDetail)
+	mux.HandleFunc("GET /api/health/files/{fileId}", s.handleHealthFileDetail)
 
 	sub, _ := fs.Sub(webFS, "web-dist")
 	fileServer := http.FileServer(http.FS(sub))

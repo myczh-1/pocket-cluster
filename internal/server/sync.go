@@ -30,6 +30,8 @@ func (s *Server) StartSync(ctx context.Context, interval time.Duration) {
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	tombstoneTicker := time.NewTicker(1 * time.Hour)
+	defer tombstoneTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -37,6 +39,10 @@ func (s *Server) StartSync(ctx context.Context, interval time.Duration) {
 		case <-ticker.C:
 			if err := s.SyncOnce(ctx); err != nil {
 				log.Printf("sync: %v", err)
+			}
+		case <-tombstoneTicker.C:
+			if err := s.CleanupTombstones(); err != nil {
+				log.Printf("tombstone cleanup: %v", err)
 			}
 		}
 	}

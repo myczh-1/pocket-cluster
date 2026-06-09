@@ -459,6 +459,13 @@ func (s *Store) MarkFileDeleted(path string, deletedBy string) error {
 	_, err = s.db.Exec(`DELETE FROM files_fts WHERE file_id IN (SELECT file_id FROM files WHERE path = ?)`, path)
 	return err
 }
+func (s *Store) PurgeFile(fileID string) error {
+	_, err := s.db.Exec(`DELETE FROM files WHERE file_id = ? AND deleted = 1`, fileID)
+	if err != nil {
+		return err
+	}
+	return s.deleteFileIndex(fileID)
+}
 
 func (s *Store) RenameFile(fileID, oldPath, newPath string, modifiedBy string, modifiedAt time.Time) error {
 	name := filepath.Base(newPath)

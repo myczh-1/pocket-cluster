@@ -431,6 +431,70 @@ Simple health check. No authentication required.
 }
 ```
 
+### GET /api/health/summary
+Returns the overall replica health summary of the pool.
+**Response:**
+```json
+{
+  "ok": true,
+  "data": {
+    "total_files": 15,
+    "total_chunks": 42,
+    "healthy_chunks": 38,
+    "under_replicated_chunks": 3,
+    "unavailable_chunks": 1,
+    "repairing_chunks": 0,
+    "overall_status": "under_replicated",
+    "last_scan_at": "2026-06-09T10:00:00Z",
+    "last_repair_at": "2026-06-09T09:55:00Z"
+  }
+}
+```
+### GET /api/health/chunks
+Returns per-chunk health details with replica node information.
+**Response:**
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "chunk_id": "sha256...",
+      "size_bytes": 67108864,
+      "replica_count": 2,
+      "online_replicas": 2,
+      "target_replicas": 2,
+      "status": "healthy",
+      "replica_nodes": [
+        { "node_id": "nodeA", "status": "available", "online": true, "has_chunk": true },
+        { "node_id": "nodeB", "status": "available", "online": true, "has_chunk": true }
+      ],
+      "referencing_files": ["/photo.jpg"]
+    }
+  ]
+}
+```
+### GET /api/health/chunks/{hash}
+Returns health detail for a specific chunk.
+**Path parameter:** `hash` = SHA256 of the chunk.
+**Response:** Single chunk health detail object (same shape as items in `/api/health/chunks`).
+### GET /api/health/files/{fileId}
+Returns health detail for a specific file with per-chunk breakdown.
+**Path parameter:** `fileId` = file ID.
+**Response:**
+```json
+{
+  "ok": true,
+  "data": {
+    "file_id": "f-001",
+    "path": "/photo.jpg",
+    "name": "photo.jpg",
+    "size_bytes": 5242880,
+    "chunk_count": 1,
+    "status": "healthy",
+    "chunks": [ ... ]
+  }
+}
+```
 ## Error Codes
 
 | Code                | HTTP Status | Description                              |

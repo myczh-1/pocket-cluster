@@ -18,6 +18,7 @@ type Server struct {
 	localIP         string
 	logRing         *RingBuffer
 	sessions        *sessionStore
+	health          *healthScanner
 	started         time.Time
 	joinPollInterval time.Duration
 }

@@ -940,9 +940,162 @@ function LoginPage() {
   );
 }
 
+function HealthPage() {
+  const [summary, setSummary] = useState(null);
+  const [chunks, setChunks] = useState([]);
+  const [selectedChunk, setSelectedChunk] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(0);
+  const pageSize = 100;
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [sumRes, chunkRes] = await Promise.all([
+      api("/health/summary"),
+      api(`/health/chunks?limit=${pageSize}&offset=${page * pageSize}`),
+    ]);
+    if (sumRes.ok) setSummary(sumRes.data);
+    if (chunkRes.ok) setChunks(chunkRes.data?.chunks || []);
+    setLoading(false);
+  }, [page]);
+  useEffect(() => { load(); }, [load]);
+  if (loading) return <div className="text-center text-gray-400 py-8">Loading health data...</div>;
+  if (!summary) return <div className="text-center text-gray-400 py-8">Health data unavailable</div>;
+  const statusColor = {
+    healthy: "text-green-600 bg-green-50",
+    under_replicated: "text-yellow-600 bg-yellow-50",
+    unavailable: "text-red-600 bg-red-50",
+    repairing: "text-blue-600 bg-blue-50",
+  };
+  return (
+    <div className="space-y-6">
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className={`rounded-lg p-4 ${statusColor[summary.overall_status] || "bg-gray-50"}`}>
+          <div className="text-xs font-medium uppercase opacity-70">Overall</div>
+          <div className="text-lg font-bold mt-1">{summary.overall_status}</div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-xs font-medium text-gray-500 uppercase">Files</div>
+          <div className="text-lg font-bold mt-1">{summary.total_files}</div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-xs font-medium text-gray-500 uppercase">Chunks</div>
+          <div className="text-lg font-bold mt-1">{summary.total_chunks}</div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-xs font-medium text-gray-500 uppercase">Healthy</div>
+          <div className="text-lg font-bold mt-1 text-green-600">{summary.healthy_chunks}</div>
+        </div>
+      </div>
+      {/* Detail stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-xs font-medium text-gray-500 uppercase">Under-replicated</div>
+          <div className={`text-lg font-bold mt-1 ${summary.under_replicated_chunks > 0 ? "text-yellow-600" : "text-gray-400"}`}>
+            {summary.under_replicated_chunks}
+          </div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-xs font-medium text-gray-500 uppercase">Unavailable</div>
+          <div className={`text-lg font-bold mt-1 ${summary.unavailable_chunks > 0 ? "text-red-600" : "text-gray-400"}`}>
+            {summary.unavailable_chunks}
+          </div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-xs font-medium text-gray-500 uppercase">Repairing</div>
+          <div className={`text-lg font-bold mt-1 ${summary.repairing_chunks > 0 ? "text-blue-600" : "text-gray-400"}`}>
+            {summary.repairing_chunks}
+          </div>
+        </div>
+      </div>
+      {/* Scan info */}
+      <div className="text-xs text-gray-400">
+        Last scan: {summary.last_scan_at ? new Date(summary.last_scan_at).toLocaleString() : "never"}
+        {summary.last_repair_at && <> · Last repair: {new Date(summary.last_repair_at).toLocaleString()}</>}
+      </div>
+      {/* Chunk detail */}
+      {selectedChunk && (
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="font-medium text-sm">Chunk Detail</h3>
+            <button onClick={() => setSelectedChunk(null)} className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
+          </div>
+          <div className="text-xs font-mono text-gray-500 mb-2 break-all">{selectedChunk.chunk_id}</div>
+          <div className="grid grid-cols-2 gap-2 text-sm mb-3">
+            <div>Size: {formatBytes(selectedChunk.size_bytes)}</div>
+            <div>Replicas: {selectedChunk.online_replicas}/{selectedChunk.target_replicas}</div>
+            <div>Status: <span className={`font-medium ${selectedChunk.status === "healthy" ? "text-green-600" : selectedChunk.status === "unavailable" ? "text-red-600" : "text-yellow-600"}`}>{selectedChunk.status}</span></div>
+          </div>
+          {selectedChunk.replica_nodes && selectedChunk.replica_nodes.length > 0 && (
+            <div>
+              <div className="text-xs font-medium text-gray-500 mb-1">Replica Nodes</div>
+              <div className="space-y-1">
+                {selectedChunk.replica_nodes.map((r) => (
+                  <div key={r.node_id} className="flex items-center gap-2 text-xs">
+                    <span className={`w-2 h-2 rounded-full ${r.online ? "bg-green-500" : "bg-gray-300"}`}></span>
+                    <span className="font-mono">{r.node_id}</span>
+                    <span className="text-gray-400">{r.online ? "online" : "offline"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {selectedChunk.referencing_files && selectedChunk.referencing_files.length > 0 && (
+            <div className="mt-3">
+              <div className="text-xs font-medium text-gray-500 mb-1">Referencing Files</div>
+              <div className="space-y-1">
+                {selectedChunk.referencing_files.map((p) => (
+                  <div key={p} className="text-xs font-mono text-gray-600">{p}</div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {/* Chunk list */}
+      <div>
+        <h3 className="font-medium text-sm mb-3">All Chunks ({chunks.length})</h3>
+        <div className="space-y-2">
+          {chunks.map((c) => (
+            <button
+              key={c.chunk_id}
+              onClick={() => setSelectedChunk(c)}
+              className={`w-full text-left bg-white rounded-lg shadow p-3 hover:shadow-md transition-shadow ${
+                selectedChunk?.chunk_id === c.chunk_id ? "ring-2 ring-blue-500" : ""
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div className="font-mono text-xs text-gray-500 truncate max-w-[200px]">{c.chunk_id}</div>
+                <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                  c.status === "healthy" ? "bg-green-100 text-green-700" :
+                  c.status === "unavailable" ? "bg-red-100 text-red-700" :
+                  c.status === "repairing" ? "bg-blue-100 text-blue-700" :
+                  "bg-yellow-100 text-yellow-700"
+                }`}>
+                  {c.status}
+                </span>
+              </div>
+              <div className="flex gap-4 mt-1 text-xs text-gray-400">
+                <span>{formatBytes(c.size_bytes)}</span>
+                <span>{c.online_replicas}/{c.target_replicas} replicas</span>
+                {c.referencing_files && <span>{c.referencing_files.length} file(s)</span>}
+              </div>
+            </button>
+          ))}
+          {chunks.length === 0 && (
+            <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400 text-sm">
+              No chunks found
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 const navItems = [
   { id: "files", label: "Files" },
   { id: "nodes", label: "Nodes" },
+  { id: "health", label: "Health" },
   { id: "logs", label: "Logs" },
 ];
 
@@ -1005,6 +1158,7 @@ export default function App() {
         <div className="mx-auto w-full max-w-7xl">
           {tab === "files" && <FilesPage />}
           {tab === "nodes" && <NodesPage />}
+          {tab === "health" && <HealthPage />}
           {tab === "logs" && <LogsPage />}
         </div>
       </main>

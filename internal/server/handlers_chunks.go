@@ -10,6 +10,22 @@ import (
 	"github.com/pocketcluster/agent/internal/types"
 )
 
+// handleHeadChunk is a lightweight existence check for a chunk.
+func (s *Server) handleHeadChunk(w http.ResponseWriter, r *http.Request) {
+	hash := r.PathValue("hash")
+	if hash == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	f, size, err := s.chunks.Open(hash)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	f.Close()
+	w.Header().Set("Content-Length", fmt.Sprint(size))
+	w.WriteHeader(http.StatusOK)
+}
 func (s *Server) handleGetChunk(w http.ResponseWriter, r *http.Request) {
 	hash := r.PathValue("hash")
 	if hash == "" {
