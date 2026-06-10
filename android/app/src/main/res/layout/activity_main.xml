@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:fillViewport="true">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
     android:orientation="vertical"
     android:padding="24dp"
     android:gravity="center_horizontal">
@@ -13,7 +18,7 @@
         android:text="PocketCluster"
         android:textSize="28sp"
         android:textStyle="bold"
-        android:layout_marginTop="48dp" />
+        android:layout_marginTop="24dp" />
 
     <TextView
         android:id="@+id/tvStatus"
@@ -21,8 +26,45 @@
         android:layout_height="wrap_content"
         android:text="○ Stopped"
         android:textSize="18sp"
-        android:layout_marginTop="24dp"
+        android:layout_marginTop="16dp"
         android:textColor="#888888" />
+
+    <!-- Battery optimization prompt (shown when needed) -->
+    <LinearLayout
+        android:id="@+id/batteryCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/card_bg"
+        android:padding="16dp"
+        android:layout_marginTop="16dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚠ Battery Optimization"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="#FF9800" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Android may kill the agent when idle. Disable battery optimization for reliable operation."
+            android:textSize="12sp"
+            android:textColor="#666666"
+            android:layout_marginTop="4dp" />
+
+        <Button
+            android:id="@+id/btnBattery"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Disable Optimization"
+            android:textSize="12sp"
+            android:layout_marginTop="8dp"
+            style="?android:attr/borderlessButtonStyle" />
+    </LinearLayout>
 
     <!-- Address card (shown when running) -->
     <LinearLayout
@@ -32,71 +74,87 @@
         android:orientation="vertical"
         android:background="@drawable/card_bg"
         android:padding="16dp"
-        android:layout_marginTop="24dp"
+        android:layout_marginTop="16dp"
         android:visibility="gone">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Address"
+            android:text="Pool Address"
             android:textSize="12sp"
             android:textColor="#666666" />
 
         <TextView
             android:id="@+id/tvAddress"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text=""
-            android:textSize="16sp"
-            android:fontFamily="monospace"
-            android:textColor="#1a1a1a"
-            android:layout_marginTop="4dp" />
+            android:textSize="18sp"
+            android:textStyle="monospace"
+            android:layout_marginTop="4dp"
+            android:textColor="#333333" />
 
         <TextView
             android:id="@+id/tvNodeId"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text=""
             android:textSize="12sp"
-            android:fontFamily="monospace"
-            android:textColor="#888888"
+            android:textColor="#666666"
             android:layout_marginTop="8dp" />
 
         <Button
             android:id="@+id/btnCopy"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Copy Address"
-            android:layout_marginTop="12dp"
-            android:visibility="gone" />
+            android:textSize="12sp"
+            android:layout_marginTop="8dp"
+            style="?android:attr/borderlessButtonStyle" />
     </LinearLayout>
 
     <TextView
         android:id="@+id/tvNodeInfo"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text=""
-        android:textSize="14sp"
-        android:layout_marginTop="16dp"
-        android:textColor="#666666"
-        android:gravity="center"
+        android:text="Other nodes can join using this address"
+        android:textSize="12sp"
+        android:textColor="#888888"
+        android:layout_marginTop="8dp"
         android:visibility="gone" />
 
+    <!-- Status cards container -->
+    <LinearLayout
+        android:id="@+id/statusContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="16dp" />
+
+    <!-- Action buttons -->
     <Button
         android:id="@+id/btnToggle"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="wrap_content"
         android:text="Start Agent"
         android:textSize="16sp"
-        android:layout_marginTop="32dp" />
+        android:layout_marginTop="24dp" />
 
     <Button
         android:id="@+id/btnWebUI"
         android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:text="Open WebUI"
-        android:textSize="14sp"
-        android:layout_marginTop="12dp"
+        android:layout_height="wrap_content"
+        android:text="Open Web UI"
+        android:textSize="16sp"
+        android:layout_marginTop="8dp"
         android:visibility="gone" />
 
+    <Button
+        android:id="@+id/btnLogs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="View Logs"
+        android:textSize="14sp"
+        android:layout_marginTop="8dp"
+        style="?android:attr/borderlessButtonStyle" />
+
 </LinearLayout>
+</ScrollView>

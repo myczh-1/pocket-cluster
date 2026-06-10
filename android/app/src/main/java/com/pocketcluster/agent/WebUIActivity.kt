@@ -5,21 +5,22 @@ import android.app.Activity
 import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.util.Log
 import android.view.View
-import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.ProgressBar
 import android.widget.Toast
+import android.widget.FrameLayout
 
 class WebUIActivity : Activity() {
 
@@ -30,20 +31,14 @@ class WebUIActivity : Activity() {
     }
 
     private lateinit var webView: WebView
+    private lateinit var progressBar: ProgressBar
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Edge-to-edge display
-        window.decorView.systemUiVisibility = (
-            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-        )
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
+        val container = FrameLayout(this)
 
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -53,27 +48,41 @@ class WebUIActivity : Activity() {
             settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
             webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    return false
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    progressBar.visibility = View.GONE
+                }
+
+                override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                    super.onReceivedError(view, request, error)
+                    if (request?.isForMainFrame == true) {
+                        val url = request.url?.toString() ?: ""
+                        view?.loadUrl("about:blank")
+                        view?.loadData("""
+                            <html><body style="font-family:sans-serif;text-align:center;padding:40px">
+                            <h2>Connection Error</h2>
+                            <p>Cannot connect to agent at <code>$url</code></p>
+                            <p>Make sure the agent is running.</p>
+                            <button onclick="location.reload()" style="padding:8px 16px;font-size:16px;margin-top:16px">Retry</button>
+                            </body></html>
+                        """.trimIndent(), "text/html", "UTF-8")
+                    }
                 }
             }
 
             webChromeClient = object : WebChromeClient() {
-                override fun onConsoleMessage(cm: ConsoleMessage): Boolean {
-                    Log.d(TAG, "${cm.sourceId()}:${cm.lineNumber()}: ${cm.message()}")
-                    return true
-                }
-
                 override fun onShowFileChooser(
-                    webView: WebView,
-                    callback: ValueCallback<Array<Uri>>,
-                    params: FileChooserParams
+                    webView: WebView?,
+                    callback: ValueCallback<Array<Uri>>?,
+                    params: FileChooserParams?
                 ): Boolean {
-                    // Cancel any pending callback
                     fileChooserCallback?.onReceiveValue(null)
                     fileChooserCallback = callback
-
-                    val intent = params.createIntent()
+                    val intent = params?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                        type = "*/*"
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                    }
                     try {
                         startActivityForResult(intent, FILE_CHOOSER_REQUEST)
                     } catch (e: Exception) {
@@ -109,25 +118,41 @@ class WebUIActivity : Activity() {
             }
         }
 
-        setContentView(webView)
+        progressBar = ProgressBar(this).apply {
+            isIndeterminate = true
+            val lp = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.gravity = android.view.Gravity.CENTER
+            layoutParams = lp
+        }
+
+        container.addView(webView)
+        container.addView(progressBar)
+        setContentView(container)
+
+        progressBar.visibility = View.VISIBLE
         webView.loadUrl("http://localhost:$PORT/")
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == FILE_CHOOSER_REQUEST) {
             val results = if (resultCode == RESULT_OK && data != null) {
-                val uri = data.data
-                if (uri != null) arrayOf(uri) else emptyArray()
-            } else {
-                emptyArray()
-            }
+                val clipData = data.clipData
+                if (clipData != null) {
+                    Array(clipData.itemCount) { clipData.getItemAt(it).uri }
+                } else {
+                    data.data?.let { arrayOf(it) }
+                }
+            } else null
             fileChooserCallback?.onReceiveValue(results)
             fileChooserCallback = null
-            return
         }
-        super.onActivityResult(requestCode, resultCode, data)
     }
 
+    @Suppress("DEPRECATION")
     override fun onBackPressed() {
         if (webView.canGoBack()) {
             webView.goBack()
