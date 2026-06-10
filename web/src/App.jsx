@@ -58,7 +58,10 @@ function NodeCard({ node }) {
   );
 }
 
-function FileCard({ file, onDownload, onDelete, onRename }) {
+function FileCard({ file, onDownload, onDelete, onRename, onPreview }) {
+  const canPreview = !file.is_dir && file.mime_type && (
+    file.mime_type.startsWith("image/") || file.mime_type.startsWith("text/") || file.mime_type === "application/json"
+  );
   return (
     <div className={`bg-white rounded-lg shadow p-3 flex items-center gap-2 min-w-0 ${file.conflict_of ? "border-l-4 border-yellow-400" : ""}`}>
       <div className="w-7 h-7 rounded bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-500 shrink-0">{file.is_dir ? "D" : "F"}</div>
@@ -73,6 +76,14 @@ function FileCard({ file, onDownload, onDelete, onRename }) {
         )}
       </div>
       <div className="flex gap-1 shrink-0">
+        {canPreview && (
+          <button
+            onClick={() => onPreview(file)}
+            className="px-2 py-1.5 bg-green-50 text-green-600 rounded text-xs font-medium hover:bg-green-100 active:bg-green-200"
+          >
+            View
+          </button>
+        )}
         {!file.is_dir && (
           <button
             onClick={() => onDownload(file)}
@@ -97,53 +108,95 @@ function FileCard({ file, onDownload, onDelete, onRename }) {
     </div>
   );
 }
+function FilePreview({ file, onClose }) {
+  const [content, setContent] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const url = `${API}/files/download?path=${encodeURIComponent(file.path)}`;
+  useEffect(() => {
+    if (file.mime_type?.startsWith("image/")) {
+      setLoading(false);
+      return;
+    }
+    fetch(url, { credentials: "same-origin" })
+      .then(r => r.text())
+      .then(t => { setContent(t); setLoading(false); })
+      .catch(() => { setContent("Failed to load"); setLoading(false); });
+  }, [file.path]);
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl max-w-4xl max-h-[90vh] w-full overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <div className="min-w-0">
+            <p className="font-medium text-sm truncate">{file.name}</p>
+            <p className="text-xs text-gray-500">{formatBytes(file.size_bytes)} · {file.mime_type}</p>
+          </div>
+          <div className="flex gap-2 shrink-0 ml-4">
+            <a href={url} download className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded text-xs font-medium hover:bg-blue-100">Download</a>
+            <button onClick={onClose} className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded text-xs font-medium hover:bg-gray-200">Close</button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto p-4">
+          {loading ? (
+            <div className="text-center text-gray-400 py-8">Loading...</div>
+          ) : file.mime_type?.startsWith("image/") ? (
+            <img src={url} alt={file.name} className="max-w-full max-h-[70vh] mx-auto object-contain" />
+          ) : (
+            <pre className="text-sm font-mono whitespace-pre-wrap break-words bg-gray-50 rounded p-4">{content}</pre>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function FilesPage() {
   const [path, setPath] = useState("/");
   const [files, setFiles] = useState([]);
   const [search, setSearch] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
-
+  const [previewFile, setPreviewFile] = useState(null);
   const loadFiles = useCallback(async () => {
     const q = search ? `?q=${encodeURIComponent(search)}` : `?path=${encodeURIComponent(path)}`;
     const res = await api(`/files${q}`);
     if (res.ok) setFiles(res.data.entries || []);
   }, [path, search]);
-
   useEffect(() => { loadFiles(); }, [loadFiles]);
-
   const handleRefresh = async () => {
     setRefreshing(true);
     await loadFiles();
     setRefreshing(false);
   };
-
-  const handleUpload = async (e) => {
+  const handleUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("path", path === "/" ? `/${file.name}` : `${path}/${file.name}`);
-      formData.append("file", file);
-      const res = await fetch(`${API}/files/upload`, { method: "POST", body: formData, credentials: "same-origin" });
-      const data = await res.json();
-      if (!data.ok) {
-        alert(`Upload failed: ${data.error?.message || "Unknown error"}`);
-      }
-    } catch (err) {
-      alert(`Upload error: ${err.message}`);
-    } finally {
+    setUploadProgress(0);
+    const formData = new FormData();
+    formData.append("path", path === "/" ? `/${file.name}` : `${path}/${file.name}`);
+    formData.append("file", file);
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable) setUploadProgress(Math.round(ev.loaded / ev.total * 100));
+    };
+    xhr.onload = () => {
       setUploading(false);
+      setUploadProgress(null);
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (!data.ok) alert(`Upload failed: ${data.error?.message || "Unknown error"}`);
+      } catch { /* ignore */ }
       loadFiles();
-    }
+    };
+    xhr.onerror = () => { setUploading(false); setUploadProgress(null); alert("Upload error"); };
+    xhr.open("POST", `${API}/files/upload`);
+    xhr.withCredentials = true;
+    xhr.send(formData);
   };
-
   const handleDownload = (file) => {
     window.location.assign(`${API}/files/download?path=${encodeURIComponent(file.path)}`);
   };
-
   const handleDelete = async (file) => {
     if (!confirm(`Delete "${file.name}"?`)) return;
     await fetch(`${API}/files?path=${encodeURIComponent(file.path)}`, { method: "DELETE" });
@@ -183,18 +236,22 @@ function FilesPage() {
         </button>
       </div>
 
-      {/* Upload button */}
+      {/* Upload button with progress */}
       <label className="block w-full mb-4">
         <div className="bg-blue-600 text-white text-center py-3 rounded-lg font-medium cursor-pointer hover:bg-blue-700 active:bg-blue-800">
-          {uploading ? "Uploading..." : "Upload File"}
+          {uploading ? (uploadProgress !== null ? `Uploading... ${uploadProgress}%` : "Uploading...") : "Upload File"}
         </div>
+        {uploading && uploadProgress !== null && (
+          <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+            <div className="bg-blue-600 h-1.5 rounded-full transition-all" style={{ width: `${uploadProgress}%` }}></div>
+          </div>
+        )}
         <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
       </label>
-
       {/* File list */}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {files.map((f) => (
-          <FileCard key={f.file_id || f.path} file={f} onDownload={handleDownload} onDelete={handleDelete} onRename={handleRename} />
+          <FileCard key={f.file_id || f.path} file={f} onDownload={handleDownload} onDelete={handleDelete} onRename={handleRename} onPreview={setPreviewFile} />
         ))}
         {files.length === 0 && (
           <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400 text-sm">
@@ -202,6 +259,8 @@ function FilesPage() {
           </div>
         )}
       </div>
+      {/* Preview modal */}
+      {previewFile && <FilePreview file={previewFile} onClose={() => setPreviewFile(null)} />}
     </div>
   );
 }
