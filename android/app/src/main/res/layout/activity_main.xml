@@ -29,7 +29,7 @@
         android:layout_marginTop="16dp"
         android:textColor="#888888" />
 
-    <!-- Battery optimization prompt (shown when needed) -->
+    <!-- Battery optimization prompt -->
     <LinearLayout
         android:id="@+id/batteryCard"
         android:layout_width="match_parent"
@@ -66,7 +66,7 @@
             style="?android:attr/borderlessButtonStyle" />
     </LinearLayout>
 
-    <!-- Address card (shown when running) -->
+    <!-- Address card -->
     <LinearLayout
         android:id="@+id/addressCard"
         android:layout_width="match_parent"
@@ -89,7 +89,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textSize="18sp"
-            android:textStyle="monospace"
+            android:typeface="monospace"
             android:layout_marginTop="4dp"
             android:textColor="#333333" />
 
@@ -121,7 +121,7 @@
         android:layout_marginTop="8dp"
         android:visibility="gone" />
 
-    <!-- Status cards container -->
+    <!-- Status cards -->
     <LinearLayout
         android:id="@+id/statusContainer"
         android:layout_width="match_parent"
