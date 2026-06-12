@@ -112,6 +112,13 @@ func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) 
 	defer f.Close()
 
 	var chunkIDs []string
+	var stagedChunkIDs []string
+	committed := false
+	defer func() {
+		if !committed {
+			s.cleanupUnreferencedChunks(stagedChunkIDs)
+		}
+	}()
 	totalSize := int64(0)
 	var first [1]byte
 	for {
@@ -127,6 +134,7 @@ func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", storeErr.Error())
 			return
 		}
+		stagedChunkIDs = append(stagedChunkIDs, hash)
 		if _, _, err := s.recordLocalChunkReplica(hash, size, time.Now()); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
@@ -160,18 +168,11 @@ func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) 
 		ModifiedAt: now,
 		ModifiedBy: s.cfg.NodeID,
 	}
-	if err := s.prepareFilePut(poolFile); err != nil {
+	if err := s.commitFilePut(poolFile, filePutOptions{ConflictOnExisting: true}); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	if err := s.store.UpsertFile(poolFile); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	if _, err := s.appendEvent(types.EventFilePut, poolFile); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
+	committed = true
 	var repairErr error
 	nodes, err := s.store.ListNodes()
 	if err != nil {

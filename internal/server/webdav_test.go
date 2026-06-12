@@ -2,7 +2,9 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -65,6 +67,88 @@ func TestWebDAVUploadAndDownload(t *testing.T) {
 	}
 	if res.Body.String() != string(content) {
 		t.Fatalf("content mismatch: got %q, want %q", res.Body.String(), string(content))
+	}
+}
+
+func TestWebDAVOverwriteRemovesUnreferencedOldChunk(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "local")
+	defer st.Close()
+	handler := srv.Handler()
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/dav/overwrite.txt", bytes.NewReader([]byte("first")))
+	req.Header.Set("Authorization", basicAuth())
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusCreated && res.Code != http.StatusOK {
+		t.Fatalf("first PUT status = %d, want 200/201: %s", res.Code, res.Body.String())
+	}
+	first, err := st.GetFile("/overwrite.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.ChunkIDs) != 1 {
+		t.Fatalf("first chunk count = %d, want 1", len(first.ChunkIDs))
+	}
+	oldChunkID := first.ChunkIDs[0]
+
+	res = httptest.NewRecorder()
+	req = httptest.NewRequest("PUT", "/dav/overwrite.txt", bytes.NewReader([]byte("second")))
+	req.Header.Set("Authorization", basicAuth())
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusCreated && res.Code != http.StatusOK {
+		t.Fatalf("second PUT status = %d, want 200/201: %s", res.Code, res.Body.String())
+	}
+	if srv.chunks.Exists(oldChunkID) {
+		t.Fatalf("old chunk %s still exists after overwrite", oldChunkID)
+	}
+
+	res = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/dav/overwrite.txt", nil)
+	req.Header.Set("Authorization", basicAuth())
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if res.Body.String() != "second" {
+		t.Fatalf("content = %q, want %q", res.Body.String(), "second")
+	}
+}
+
+func TestDavWriteFileCloseCleansStagedChunksOnError(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "local")
+	defer st.Close()
+
+	writer := &davWriteFile{
+		name:   "/failed.txt",
+		store:  st,
+		chunks: srv.chunks,
+		nodeID: srv.cfg.NodeID,
+		srv:    srv,
+		ctx:    context.Background(),
+	}
+	if _, err := writer.Write([]byte("partial")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.flushChunk(); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.chunkIDs) != 1 {
+		t.Fatalf("chunk count = %d, want 1", len(writer.chunkIDs))
+	}
+	chunkID := writer.chunkIDs[0]
+	if !srv.chunks.Exists(chunkID) {
+		t.Fatalf("chunk %s missing before failed close", chunkID)
+	}
+
+	writer.writeErr = errors.New("write failed")
+	if err := writer.Close(); err == nil {
+		t.Fatal("Close succeeded after write error")
+	}
+	if srv.chunks.Exists(chunkID) {
+		t.Fatalf("chunk %s still exists after failed close", chunkID)
+	}
+	if f, err := st.GetFile("/failed.txt"); err == nil && !f.Deleted {
+		t.Fatalf("file committed despite failed close: %+v", f)
 	}
 }
 

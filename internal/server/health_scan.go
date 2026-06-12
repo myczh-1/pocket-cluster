@@ -242,13 +242,7 @@ func (s *Server) CleanupTombstones() error {
 			continue
 		}
 		// Clean up unreferenced chunks
-		for _, chunkID := range f.ChunkIDs {
-			ref, _ := s.store.IsChunkReferenced(chunkID)
-			if !ref {
-				s.chunks.Remove(chunkID)
-				s.store.MarkReplicaRemoved(chunkID, s.cfg.NodeID, time.Now())
-			}
-		}
+		s.cleanupUnreferencedChunks(f.ChunkIDs)
 	}
 	return nil
 }

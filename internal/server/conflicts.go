@@ -39,6 +39,49 @@ func (s *Server) prepareFilePut(f *types.File) error {
 	return nil
 }
 
+type filePutOptions struct {
+	ConflictOnExisting bool
+}
+
+func (s *Server) commitFilePut(f *types.File, opts filePutOptions) error {
+	var overwrittenChunkIDs []string
+	if opts.ConflictOnExisting {
+		if err := s.prepareFilePut(f); err != nil {
+			return err
+		}
+	} else {
+		existing, err := s.store.GetFile(f.Path)
+		if err != nil {
+			if err != sql.ErrNoRows {
+				return err
+			}
+		} else if !existing.Deleted && existing.FileID != f.FileID && existing.VersionID != f.VersionID {
+			overwrittenChunkIDs = append([]string(nil), existing.ChunkIDs...)
+		}
+	}
+	if err := s.store.UpsertFile(f); err != nil {
+		return err
+	}
+	if _, err := s.appendEvent(types.EventFilePut, f); err != nil {
+		return err
+	}
+	if len(overwrittenChunkIDs) > 0 {
+		s.cleanupUnreferencedChunks(overwrittenChunkIDs)
+	}
+	return nil
+}
+
+func (s *Server) cleanupUnreferencedChunks(chunkIDs []string) {
+	for _, chunkID := range chunkIDs {
+		ref, err := s.store.IsChunkReferenced(chunkID)
+		if err != nil || ref {
+			continue
+		}
+		_ = s.chunks.Remove(chunkID)
+		_ = s.store.MarkReplicaRemoved(chunkID, s.cfg.NodeID, time.Now())
+	}
+}
+
 func (s *Server) nextConflictPath(originalPath, nodeID string, modifiedAt time.Time) (string, error) {
 	if modifiedAt.IsZero() {
 		modifiedAt = time.Now()

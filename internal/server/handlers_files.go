@@ -43,6 +43,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	var chunkIDs []string
+	var stagedChunkIDs []string
+	committed := false
+	defer func() {
+		if !committed {
+			s.cleanupUnreferencedChunks(stagedChunkIDs)
+		}
+	}()
 	totalSize := int64(0)
 	for {
 		hash, size, err := s.chunks.StoreSized(file, chunk.ChunkSize)
@@ -53,6 +60,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
+		stagedChunkIDs = append(stagedChunkIDs, hash)
 		if _, _, err := s.recordLocalChunkReplica(hash, size, time.Now()); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
@@ -84,18 +92,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		ModifiedAt: now,
 		ModifiedBy: s.cfg.NodeID,
 	}
-	if err := s.prepareFilePut(f); err != nil {
+	if err := s.commitFilePut(f, filePutOptions{ConflictOnExisting: true}); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	if err := s.store.UpsertFile(f); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	if _, err := s.appendEvent(types.EventFilePut, f); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
+	committed = true
 	repairChunkIDs := append([]string(nil), chunkIDs...)
 	go s.repairChunksAsync(repairChunkIDs)
 	s.uploadProgress.set(uploadID, "done", "", totalSize)

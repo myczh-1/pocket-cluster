@@ -63,10 +63,10 @@ func (d *davFS) Mkdir(_ context.Context, name string, _ os.FileMode) error {
 	return nil
 }
 
-func (d *davFS) OpenFile(_ context.Context, name string, flag int, _ os.FileMode) (webdav.File, error) {
+func (d *davFS) OpenFile(ctx context.Context, name string, flag int, _ os.FileMode) (webdav.File, error) {
 	name = normPath(name)
 	if flag&os.O_CREATE != 0 {
-		return &davWriteFile{name: name, store: d.store, chunks: d.chunks, nodeID: d.nodeID, srv: d.srv}, nil
+		return &davWriteFile{name: name, store: d.store, chunks: d.chunks, nodeID: d.nodeID, srv: d.srv, ctx: ctx}, nil
 	}
 	if name == "/" {
 		return d.openDir("/")
@@ -345,39 +345,45 @@ type davWriteFile struct {
 	chunks *chunk.Storage
 	nodeID string
 	srv    *Server
+	ctx    context.Context
 	buf    bytes.Buffer
 
-	chunkIDs  []string
-	totalSize int64
-	writeErr  error
+	chunkIDs       []string
+	stagedChunkIDs []string
+	totalSize      int64
+	writeErr       error
+	closeErr       error
+	closed         bool
 }
 
 func (f *davWriteFile) Close() error {
+	if f.closed {
+		return f.closeErr
+	}
+	f.closed = true
 	if f.writeErr != nil {
-		return f.writeErr
+		f.cleanupStagedChunks()
+		f.closeErr = f.writeErr
+		return f.closeErr
+	}
+	if f.ctx != nil {
+		if err := f.ctx.Err(); err != nil {
+			f.cleanupStagedChunks()
+			f.closeErr = err
+			return err
+		}
 	}
 	// Flush remaining buffered data as the final chunk.
 	if f.buf.Len() > 0 {
 		if err := f.flushChunk(); err != nil {
+			f.cleanupStagedChunks()
+			f.closeErr = err
 			return err
 		}
-	}
-	if len(f.chunkIDs) == 0 {
-		return nil
 	}
 	mimeType := "application/octet-stream"
 	if detected := mime.TypeByExtension(path.Ext(f.name)); detected != "" {
 		mimeType = detected
-	}
-	// Clean up old chunks if overwriting.
-	if old, err := f.store.GetFile(f.name); err == nil && !old.Deleted {
-		for _, cid := range old.ChunkIDs {
-			ref, _ := f.store.IsChunkReferenced(cid)
-			if !ref {
-				f.chunks.Remove(cid)
-				f.store.MarkReplicaRemoved(cid, f.nodeID, time.Now())
-			}
-		}
 	}
 	now := time.Now()
 	file := &types.File{
@@ -392,13 +398,16 @@ func (f *davWriteFile) Close() error {
 		ModifiedAt: now,
 		ModifiedBy: f.nodeID,
 	}
-	if err := f.store.UpsertFile(file); err != nil {
-		return err
-	}
 	if f.srv != nil {
-		if _, err := f.srv.appendEvent(types.EventFilePut, file); err != nil {
+		if err := f.srv.commitFilePut(file, filePutOptions{}); err != nil {
+			f.cleanupStagedChunks()
+			f.closeErr = err
 			return err
 		}
+	} else if err := f.store.UpsertFile(file); err != nil {
+		f.cleanupStagedChunks()
+		f.closeErr = err
+		return err
 	}
 	return nil
 }
@@ -408,6 +417,7 @@ func (f *davWriteFile) flushChunk() error {
 	if err != nil {
 		return err
 	}
+	f.stagedChunkIDs = append(f.stagedChunkIDs, hash)
 	f.buf.Reset()
 	now := time.Now()
 	if f.srv != nil && f.nodeID == f.srv.cfg.NodeID {
@@ -431,6 +441,39 @@ func (f *davWriteFile) flushChunk() error {
 	f.chunkIDs = append(f.chunkIDs, hash)
 	f.totalSize += size
 	return nil
+}
+
+func (f *davWriteFile) cleanupStagedChunks() {
+	if f.srv == nil {
+		return
+	}
+	f.srv.cleanupUnreferencedChunks(f.stagedChunkIDs)
+}
+
+func (f *davWriteFile) ReadFrom(r io.Reader) (int64, error) {
+	var total int64
+	buf := make([]byte, 32*1024)
+	for {
+		n, readErr := r.Read(buf)
+		if n > 0 {
+			written, writeErr := f.Write(buf[:n])
+			total += int64(written)
+			if writeErr != nil {
+				return total, writeErr
+			}
+			if written != n {
+				f.writeErr = io.ErrShortWrite
+				return total, io.ErrShortWrite
+			}
+		}
+		if readErr == io.EOF {
+			return total, nil
+		}
+		if readErr != nil {
+			f.writeErr = readErr
+			return total, readErr
+		}
+	}
 }
 
 func (f *davWriteFile) Read([]byte) (int, error)           { return 0, os.ErrPermission }
