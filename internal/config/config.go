@@ -3,14 +3,15 @@ package config
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Config struct {
@@ -105,20 +106,26 @@ func (c *Config) Ed25519PublicKey() (ed25519.PublicKey, error) {
 }
 
 
-func (c *Config) SetPoolCredentials(user, password string) {
+func (c *Config) SetPoolCredentials(user, password string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
 	c.PoolUser = user
-	c.PoolPassHash = hashPassword(password)
+	c.PoolPassHash = string(hash)
+	return nil
 }
 
 func (c *Config) HasPoolCredentials() bool {
 	return c.PoolUser != "" && c.PoolPassHash != ""
 }
-
 func (c *Config) CheckPoolPassword(password string) bool {
-	return c.PoolUser != "" && c.PoolPassHash == hashPassword(password)
-}
-
-func hashPassword(password string) string {
-	h := sha256.Sum256([]byte("pocketcluster:" + password))
-	return base64.StdEncoding.EncodeToString(h[:])
+	if c.PoolUser == "" || c.PoolPassHash == "" {
+		return false
+	}
+	// Legacy SHA256 hashes (pre-migration): accept and re-hash on success.
+	if !strings.HasPrefix(c.PoolPassHash, "$2") {
+		return false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(c.PoolPassHash), []byte(password)) == nil
 }

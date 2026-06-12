@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -11,8 +13,13 @@ import (
 	"github.com/pocketcluster/agent/internal/types"
 )
 
-const sessionTTL = 24 * time.Hour
+const (
+	sessionTTL             = 24 * time.Hour
+	sessionCleanupInterval = time.Hour
+)
 
+// TODO: persist sessions if restart-stable browser login becomes required.
+// The current in-memory store intentionally logs users out on agent restart.
 type sessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string]time.Time
@@ -54,6 +61,90 @@ func (s *sessionStore) delete(token string) {
 	s.mu.Unlock()
 }
 
+type loginLimiter struct {
+	mu       sync.Mutex
+	max      int
+	window   time.Duration
+	failures map[string][]time.Time
+}
+
+func newLoginLimiter(max int, window time.Duration) *loginLimiter {
+	return &loginLimiter{max: max, window: window, failures: make(map[string][]time.Time)}
+}
+
+func loginClientKey(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err == nil && host != "" {
+		return host
+	}
+	if remoteAddr != "" {
+		return remoteAddr
+	}
+	return "unknown"
+}
+
+func (l *loginLimiter) allow(key string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	failures := l.activeFailuresLocked(key, now)
+	return len(failures) < l.max
+}
+
+func (l *loginLimiter) recordFailure(key string, now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	failures := l.activeFailuresLocked(key, now)
+	failures = append(failures, now)
+	l.failures[key] = failures
+}
+
+func (l *loginLimiter) reset(key string) {
+	l.mu.Lock()
+	delete(l.failures, key)
+	l.mu.Unlock()
+}
+
+func (l *loginLimiter) activeFailuresLocked(key string, now time.Time) []time.Time {
+	cutoff := now.Add(-l.window)
+	failures := l.failures[key]
+	firstActive := 0
+	for firstActive < len(failures) && failures[firstActive].Before(cutoff) {
+		firstActive++
+	}
+	if firstActive > 0 {
+		failures = append(failures[:0], failures[firstActive:]...)
+	}
+	if len(failures) == 0 {
+		delete(l.failures, key)
+		return nil
+	}
+	l.failures[key] = failures
+	return failures
+}
+
+func (s *sessionStore) cleanupExpired(now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for token, expires := range s.sessions {
+		if now.After(expires) {
+			delete(s.sessions, token)
+		}
+	}
+}
+
+func (s *Server) StartSessionCleanup(ctx context.Context) {
+	ticker := time.NewTicker(sessionCleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.sessions.cleanupExpired(now)
+		}
+	}
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "POST required")
@@ -61,6 +152,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.cfg.HasPoolCredentials() {
 		writeError(w, http.StatusBadRequest, "NOT_CONFIGURED", "pool credentials not set")
+		return
+	}
+	clientKey := loginClientKey(r.RemoteAddr)
+	now := time.Now()
+	if !s.loginLimiter.allow(clientKey, now) {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many failed login attempts")
 		return
 	}
 	var req struct {
@@ -72,9 +169,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Username != s.cfg.PoolUser || !s.cfg.CheckPoolPassword(req.Password) {
+		s.loginLimiter.recordFailure(clientKey, now)
 		writeError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "invalid username or password")
 		return
 	}
+	s.loginLimiter.reset(clientKey)
 	sessionToken := s.sessions.create()
 	http.SetCookie(w, &http.Cookie{
 		Name:     "pc-session",

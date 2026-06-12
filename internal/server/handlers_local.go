@@ -127,17 +127,7 @@ func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", storeErr.Error())
 			return
 		}
-		now := time.Now()
-		if err := s.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: size, StoredAt: now}); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
-		}
-		replica := &types.Replica{ChunkID: hash, NodeID: s.cfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}
-		if err := s.store.UpsertReplica(replica); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
-		}
-		if _, err := s.appendEvent(types.EventChunkReplicaAdd, replica); err != nil {
+		if _, _, err := s.recordLocalChunkReplica(hash, size, time.Now()); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}

@@ -125,7 +125,9 @@ func main() {
 		log.Printf("joined cluster %s via %s", cfg.ClusterID, bootstrap)
 	}
 	go srv.StartSync(ctx, 2*time.Second)
+	go srv.StartSessionCleanup(ctx)
 	go srv.StartHealthScan(ctx)
+	go srv.StartSnapshotScheduler(ctx)
 	go refreshSelfNode(ctx, cfg, s, srv, *dataDir, *port, *localIP)
 
 	sigCh := make(chan os.Signal, 1)
@@ -161,7 +163,6 @@ func syncDiscoveredNodes(ctx context.Context, s *store.Store, srv *server.Server
 			now := time.Now()
 			discovered := disc.Nodes()
 
-
 			for _, n := range discovered {
 				if n.NodeID == cfg.NodeID {
 					continue
@@ -170,7 +171,7 @@ func syncDiscoveredNodes(ctx context.Context, s *store.Store, srv *server.Server
 					continue
 				}
 				if cfg.DiscoveryMode == "auto" && cfg.ClusterID == "" {
-				if err := srv.JoinViaBootstrap("http://"+n.Address, "", "", ""); err != nil {
+					if err := srv.JoinViaBootstrap("http://"+n.Address, "", "", ""); err != nil {
 						log.Printf("auto-join %s (%s): %v", n.Name, n.Address, err)
 					} else {
 						log.Printf("auto-join request sent to %s (%s)", n.Name, n.Address)

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -72,7 +73,7 @@ func (d *davFS) OpenFile(_ context.Context, name string, flag int, _ os.FileMode
 	}
 	f, err := d.store.GetFile(name)
 	if err == nil && !f.Deleted {
-		return &davReadFile{file: f, chunks: d.chunks}, nil
+		return newDavReadFile(f, d.store, d.chunks)
 	}
 	children, cerr := d.store.ListFiles(name)
 	if cerr == nil && len(children) > 0 {
@@ -169,11 +170,11 @@ type davDir struct {
 	pos     int
 }
 
-func (d *davDir) Close() error                                   { return nil }
-func (d *davDir) Read([]byte) (int, error)                       { return 0, io.EOF }
-func (d *davDir) Seek(int64, int) (int64, error)                 { return 0, nil }
-func (d *davDir) Write([]byte) (int, error)                      { return 0, os.ErrPermission }
-func (d *davDir) Stat() (os.FileInfo, error)                     { return &davInfo{name: d.name, isDir: true}, nil }
+func (d *davDir) Close() error                   { return nil }
+func (d *davDir) Read([]byte) (int, error)       { return 0, io.EOF }
+func (d *davDir) Seek(int64, int) (int64, error) { return 0, nil }
+func (d *davDir) Write([]byte) (int, error)      { return 0, os.ErrPermission }
+func (d *davDir) Stat() (os.FileInfo, error)     { return &davInfo{name: d.name, isDir: true}, nil }
 func (d *davDir) Readdir(count int) ([]os.FileInfo, error) {
 	if count <= 0 {
 		out := d.entries[d.pos:]
@@ -192,64 +193,147 @@ func (d *davDir) Readdir(count int) ([]os.FileInfo, error) {
 // ---------- read file ----------
 
 type davReadFile struct {
-	file    *types.File
-	chunks  *chunk.Storage
-	data    []byte
-	readPos int
+	file         *types.File
+	chunks       *chunk.Storage
+	chunkOffsets []int64
+	readPos      int64
+	chunkIndex   int
+	chunkFile    *os.File
 }
 
-func (f *davReadFile) Close() error                       { return nil }
+func newDavReadFile(file *types.File, st *store.Store, chunks *chunk.Storage) (*davReadFile, error) {
+	offsets := make([]int64, len(file.ChunkIDs)+1)
+	for i, cid := range file.ChunkIDs {
+		chunkMeta, err := st.GetChunk(cid)
+		if err != nil {
+			return nil, err
+		}
+		offsets[i+1] = offsets[i] + chunkMeta.SizeBytes
+	}
+	return &davReadFile{file: file, chunks: chunks, chunkOffsets: offsets}, nil
+}
+
+func (f *davReadFile) Close() error {
+	if f.chunkFile == nil {
+		return nil
+	}
+	err := f.chunkFile.Close()
+	f.chunkFile = nil
+	return err
+}
 func (f *davReadFile) Write([]byte) (int, error)          { return 0, os.ErrPermission }
 func (f *davReadFile) Readdir(int) ([]os.FileInfo, error) { return nil, os.ErrInvalid }
 func (f *davReadFile) Stat() (os.FileInfo, error)         { return fileToInfo(f.file), nil }
 
-func (f *davReadFile) ensureLoaded() error {
-	if f.data == nil {
-		var buf bytes.Buffer
-		for _, cid := range f.file.ChunkIDs {
-			r, _, err := f.chunks.Open(cid)
-			if err != nil {
-				return err
-			}
-			io.Copy(&buf, r)
-			r.Close()
-		}
-		f.data = buf.Bytes()
+func (f *davReadFile) openCurrentChunk() error {
+	if f.chunkIndex >= len(f.file.ChunkIDs) {
+		return io.ErrUnexpectedEOF
 	}
+	r, _, err := f.chunks.Open(f.file.ChunkIDs[f.chunkIndex])
+	if err != nil {
+		return err
+	}
+	f.chunkFile = r
 	return nil
 }
 
-func (f *davReadFile) Read(p []byte) (int, error) {
-	if err := f.ensureLoaded(); err != nil {
-		return 0, err
+func (f *davReadFile) closeCurrentChunk() error {
+	if f.chunkFile == nil {
+		return nil
 	}
-	if f.readPos >= len(f.data) {
+	err := f.chunkFile.Close()
+	f.chunkFile = nil
+	return err
+}
+
+func (f *davReadFile) locateChunk(offset int64) (int, int64) {
+	chunkIndex := sort.Search(len(f.chunkOffsets)-1, func(i int) bool {
+		return f.chunkOffsets[i+1] > offset
+	})
+	return chunkIndex, offset - f.chunkOffsets[chunkIndex]
+}
+
+func (f *davReadFile) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if f.readPos >= f.file.SizeBytes {
 		return 0, io.EOF
 	}
-	n := copy(p, f.data[f.readPos:])
-	f.readPos += n
-	return n, nil
+	if remaining := f.file.SizeBytes - f.readPos; int64(len(p)) > remaining {
+		p = p[:int(remaining)]
+	}
+	total := 0
+	for len(p) > 0 && f.readPos < f.file.SizeBytes {
+		if f.chunkFile == nil {
+			if err := f.openCurrentChunk(); err != nil {
+				if total > 0 {
+					return total, nil
+				}
+				return 0, err
+			}
+		}
+		n, err := f.chunkFile.Read(p)
+		if n > 0 {
+			f.readPos += int64(n)
+			total += n
+			p = p[n:]
+		}
+		if err == io.EOF {
+			if cerr := f.closeCurrentChunk(); cerr != nil && total == 0 {
+				return 0, cerr
+			}
+			f.chunkIndex++
+			continue
+		}
+		if err != nil {
+			if total > 0 {
+				return total, nil
+			}
+			return 0, err
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if total == 0 {
+		return 0, io.EOF
+	}
+	return total, nil
 }
 
 func (f *davReadFile) Seek(offset int64, whence int) (int64, error) {
-	if err := f.ensureLoaded(); err != nil {
-		return 0, err
-	}
 	var abs int64
 	switch whence {
 	case io.SeekStart:
 		abs = offset
 	case io.SeekCurrent:
-		abs = int64(f.readPos) + offset
+		abs = f.readPos + offset
 	case io.SeekEnd:
-		abs = int64(len(f.data)) + offset
+		abs = f.file.SizeBytes + offset
 	default:
 		return 0, os.ErrInvalid
 	}
-	if abs < 0 {
+	if abs < 0 || abs > f.file.SizeBytes {
 		return 0, os.ErrInvalid
 	}
-	f.readPos = int(abs)
+	if err := f.closeCurrentChunk(); err != nil {
+		return 0, err
+	}
+	f.readPos = abs
+	if abs == f.file.SizeBytes {
+		f.chunkIndex = len(f.file.ChunkIDs)
+		return abs, nil
+	}
+	chunkIndex, chunkOffset := f.locateChunk(abs)
+	f.chunkIndex = chunkIndex
+	if err := f.openCurrentChunk(); err != nil {
+		return 0, err
+	}
+	if _, err := f.chunkFile.Seek(chunkOffset, io.SeekStart); err != nil {
+		f.closeCurrentChunk()
+		return 0, err
+	}
 	return abs, nil
 }
 
@@ -262,42 +346,30 @@ type davWriteFile struct {
 	nodeID string
 	srv    *Server
 	buf    bytes.Buffer
+
+	chunkIDs  []string
+	totalSize int64
+	writeErr  error
 }
+
 func (f *davWriteFile) Close() error {
-	data := f.buf.Bytes()
-	if len(data) == 0 {
-		return nil
+	if f.writeErr != nil {
+		return f.writeErr
 	}
-	var chunkIDs []string
-	totalSize := int64(0)
-	r := bytes.NewReader(data)
-	buf := make([]byte, chunk.ChunkSize)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			hash, size, storeErr := f.chunks.Store(bytes.NewReader(buf[:n]))
-			if storeErr != nil {
-				return storeErr
-			}
-			now := time.Now()
-			f.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: size, StoredAt: now})
-			replica := &types.Replica{ChunkID: hash, NodeID: f.nodeID, Status: "available", StoredAt: now, VerifiedAt: now}
-			f.store.UpsertReplica(replica)
-			if f.srv != nil {
-				f.srv.appendEvent(types.EventChunkReplicaAdd, replica)
-			}
-			chunkIDs = append(chunkIDs, hash)
-			totalSize += size
+	// Flush remaining buffered data as the final chunk.
+	if f.buf.Len() > 0 {
+		if err := f.flushChunk(); err != nil {
+			return err
 		}
-		if err != nil {
-			break
-		}
+	}
+	if len(f.chunkIDs) == 0 {
+		return nil
 	}
 	mimeType := "application/octet-stream"
 	if detected := mime.TypeByExtension(path.Ext(f.name)); detected != "" {
 		mimeType = detected
 	}
-	// Clean up old chunks if overwriting
+	// Clean up old chunks if overwriting.
 	if old, err := f.store.GetFile(f.name); err == nil && !old.Deleted {
 		for _, cid := range old.ChunkIDs {
 			ref, _ := f.store.IsChunkReferenced(cid)
@@ -307,33 +379,83 @@ func (f *davWriteFile) Close() error {
 			}
 		}
 	}
-	now2 := time.Now()
+	now := time.Now()
 	file := &types.File{
 		FileID:     uuid.New().String(),
 		Name:       path.Base(f.name),
 		Path:       f.name,
-		SizeBytes:  totalSize,
+		SizeBytes:  f.totalSize,
 		MimeType:   mimeType,
 		VersionID:  uuid.NewString(),
-		ChunkIDs:   chunkIDs,
-		CreatedAt:  now2,
-		ModifiedAt: now2,
+		ChunkIDs:   f.chunkIDs,
+		CreatedAt:  now,
+		ModifiedAt: now,
 		ModifiedBy: f.nodeID,
 	}
 	if err := f.store.UpsertFile(file); err != nil {
 		return err
 	}
 	if f.srv != nil {
-		f.srv.appendEvent(types.EventFilePut, file)
+		if _, err := f.srv.appendEvent(types.EventFilePut, file); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (f *davWriteFile) Read([]byte) (int, error)          { return 0, os.ErrPermission }
+func (f *davWriteFile) flushChunk() error {
+	hash, size, err := f.chunks.Store(bytes.NewReader(f.buf.Bytes()))
+	if err != nil {
+		return err
+	}
+	f.buf.Reset()
+	now := time.Now()
+	if f.srv != nil && f.nodeID == f.srv.cfg.NodeID {
+		if _, _, err := f.srv.recordLocalChunkReplica(hash, size, now); err != nil {
+			return err
+		}
+	} else {
+		if err := f.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: size, StoredAt: now}); err != nil {
+			return err
+		}
+		replica := &types.Replica{ChunkID: hash, NodeID: f.nodeID, Status: "available", StoredAt: now, VerifiedAt: now}
+		if err := f.store.UpsertReplica(replica); err != nil {
+			return err
+		}
+		if f.srv != nil {
+			if _, err := f.srv.appendEvent(types.EventChunkReplicaAdd, replica); err != nil {
+				return err
+			}
+		}
+	}
+	f.chunkIDs = append(f.chunkIDs, hash)
+	f.totalSize += size
+	return nil
+}
+
+func (f *davWriteFile) Read([]byte) (int, error)           { return 0, os.ErrPermission }
 func (f *davWriteFile) Readdir(int) ([]os.FileInfo, error) { return nil, os.ErrInvalid }
 func (f *davWriteFile) Seek(int64, int) (int64, error)     { return 0, nil }
 func (f *davWriteFile) Stat() (os.FileInfo, error)         { return &davInfo{name: path.Base(f.name)}, nil }
-func (f *davWriteFile) Write(p []byte) (int, error)        { return f.buf.Write(p) }
+
+func (f *davWriteFile) Write(p []byte) (int, error) {
+	if f.writeErr != nil {
+		return 0, f.writeErr
+	}
+	written, err := f.buf.Write(p)
+	if err != nil {
+		f.writeErr = err
+		return written, err
+	}
+	// Flush complete chunks as data arrives to avoid buffering the entire file.
+	for f.buf.Len() >= chunk.ChunkSize {
+		if err := f.flushChunk(); err != nil {
+			f.writeErr = err
+			return written, err
+		}
+	}
+	return written, nil
+}
 
 // ---------- FileInfo ----------
 
@@ -344,9 +466,14 @@ type davInfo struct {
 	modTime time.Time
 }
 
-func (i *davInfo) Name() string       { return i.name }
-func (i *davInfo) Size() int64        { return i.size }
-func (i *davInfo) Mode() os.FileMode  { if i.isDir { return os.ModeDir | 0o755 }; return 0o644 }
+func (i *davInfo) Name() string { return i.name }
+func (i *davInfo) Size() int64  { return i.size }
+func (i *davInfo) Mode() os.FileMode {
+	if i.isDir {
+		return os.ModeDir | 0o755
+	}
+	return 0o644
+}
 func (i *davInfo) ModTime() time.Time { return i.modTime }
 func (i *davInfo) IsDir() bool        { return i.isDir }
 func (i *davInfo) Sys() interface{}   { return nil }
@@ -361,6 +488,7 @@ type etagResponseWriter struct {
 	etag   string
 	status int
 }
+
 func (w *etagResponseWriter) WriteHeader(code int) {
 	w.status = code
 	if w.etag != "" && code == http.StatusOK {
@@ -374,6 +502,7 @@ func (w *etagResponseWriter) Write(b []byte) (int, error) {
 	}
 	return w.ResponseWriter.Write(b)
 }
+
 // ---------- mount ----------
 func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 	// Set ETag for GET/HEAD based on file version
@@ -402,9 +531,11 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// TODO: replace MemLS with cluster-wide locking before advertising WebDAV
+	// as safe for concurrent writes from multiple mounted clients.
 	(&webdav.Handler{
 		FileSystem: &davFS{store: s.store, chunks: s.chunks, nodeID: s.cfg.NodeID, srv: s},
-		LockSystem: webdav.NewMemLS(),
+		LockSystem: s.webDAVLocks,
 		Prefix:     "/dav",
 	}).ServeHTTP(w, r)
 }

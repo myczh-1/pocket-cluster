@@ -18,9 +18,21 @@ const (
 	emptyBodySHA256      = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 )
 
+// publicPaths are accessible without any authentication.
+var publicPaths = map[string]bool{
+	"/api/health":       true,
+	"/api/join/request": true,
+}
+
+// loginPaths are accessible without a session (used during login flow).
+var loginPaths = map[string]bool{
+	"/api/auth/login":  true,
+	"/api/auth/status": true,
+}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/health" || r.URL.Path == "/api/join/request" {
+		if publicPaths[r.URL.Path] {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -48,7 +60,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.URL.Path == "/api/auth/login" || r.URL.Path == "/api/auth/status" {
+		if loginPaths[r.URL.Path] {
 			next.ServeHTTP(w, r)
 			return
 		}

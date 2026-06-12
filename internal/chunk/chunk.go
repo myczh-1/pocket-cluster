@@ -60,6 +60,13 @@ func (s *Storage) Store(r io.Reader) (hash string, size int64, err error) {
 	return hash, size, nil
 }
 
+// StoreSized reads at most maxSize bytes from r, stores them as a chunk,
+// and returns the hash and actual size. This avoids callers needing to
+// manually construct io.LimitReader wrappers.
+func (s *Storage) StoreSized(r io.Reader, maxSize int64) (hash string, size int64, err error) {
+	return s.Store(io.LimitReader(r, maxSize))
+}
+
 func (s *Storage) Open(hash string) (*os.File, int64, error) {
 	p := s.Path(hash)
 	f, err := os.Open(p)

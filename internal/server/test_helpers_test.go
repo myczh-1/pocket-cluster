@@ -19,7 +19,9 @@ func newTestConfig(t *testing.T, nodeID string) *config.Config {
 	cfg.ClusterID = "cluster"
 	cfg.Name = nodeID
 	cfg.Platform = "test"
-	cfg.SetPoolCredentials("admin", "testpass")
+	if err := cfg.SetPoolCredentials("admin", "testpass"); err != nil {
+		t.Fatal(err)
+	}
 	return cfg
 }
 

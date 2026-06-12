@@ -4,23 +4,122 @@ const API = "/api";
 
 async function api(path, opts) {
   const res = await fetch(`${API}${path}`, { ...opts, credentials: "same-origin" });
-  const data = await res.json();
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { ok: false, error: { message: `Unexpected response from ${path}` } };
+  }
   data.status = res.status;
   return data;
 }
 
+function cx(...parts) {
+  return parts.filter(Boolean).join(" ");
+}
+
 function StatusBadge({ status }) {
   const colors = {
-    healthy: "bg-green-100 text-green-800",
-    under_replicated: "bg-yellow-100 text-yellow-800",
-    unavailable: "bg-red-100 text-red-800",
-    online: "bg-green-100 text-green-800",
-    offline: "bg-gray-100 text-gray-600",
+    healthy: "border-green-200 bg-green-50 text-green-700",
+    under_replicated: "border-amber-200 bg-amber-50 text-amber-700",
+    unavailable: "border-red-200 bg-red-50 text-red-700",
+    repairing: "border-blue-200 bg-blue-50 text-blue-700",
+    online: "border-green-200 bg-green-50 text-green-700",
+    offline: "border-slate-200 bg-slate-100 text-slate-600",
   };
   return (
-    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${colors[status] || "bg-gray-100"}`}>
+    <span className={cx(
+      "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold capitalize",
+      colors[status] || "border-slate-200 bg-slate-100 text-slate-600"
+    )}>
       {status}
     </span>
+  );
+}
+
+function PageHeader({ title, description, eyebrow, action }) {
+  return (
+    <div className="mb-5 flex flex-col gap-3 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0">
+        {eyebrow && <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">{eyebrow}</p>}
+        <h2 className="mt-1 text-2xl font-semibold text-slate-950">{title}</h2>
+        {description && <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">{description}</p>}
+      </div>
+      {action && <div className="shrink-0">{action}</div>}
+    </div>
+  );
+}
+
+function Section({ title, description, action, children, className = "" }) {
+  return (
+    <section className={cx("rounded-lg border border-slate-200 bg-white shadow-sm", className)}>
+      {(title || action) && (
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            {title && <h3 className="text-sm font-semibold text-slate-950">{title}</h3>}
+            {description && <p className="mt-0.5 text-xs leading-5 text-slate-500">{description}</p>}
+          </div>
+          {action}
+        </div>
+      )}
+      <div className="p-4">{children}</div>
+    </section>
+  );
+}
+
+function InlineMessage({ tone = "info", children }) {
+  const styles = {
+    info: "border-blue-200 bg-blue-50 text-blue-800",
+    success: "border-green-200 bg-green-50 text-green-800",
+    warning: "border-amber-200 bg-amber-50 text-amber-800",
+    error: "border-red-200 bg-red-50 text-red-800",
+  };
+  return (
+    <div className={cx("rounded-lg border px-3 py-2 text-sm", styles[tone] || styles.info)}>
+      {children}
+    </div>
+  );
+}
+
+function EmptyState({ title, description, action }) {
+  return (
+    <div className="col-span-full rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center">
+      <p className="text-sm font-semibold text-slate-700">{title}</p>
+      {description && <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">{description}</p>}
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  );
+}
+
+function ProgressBar({ value, tone = "blue" }) {
+  const color = tone === "green" ? "bg-green-600" : tone === "amber" ? "bg-amber-500" : "bg-blue-600";
+  return (
+    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+      <div className={cx("h-full rounded-full transition-all", color)} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
+    </div>
+  );
+}
+
+function ConfirmDialog({ title, message, confirmLabel = "Confirm", tone = "danger", busy, onConfirm, onCancel }) {
+  const confirmClass = tone === "danger"
+    ? "bg-red-600 text-white hover:bg-red-700"
+    : "bg-blue-600 text-white hover:bg-blue-700";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={onCancel}>
+      <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+        <h3 className="text-base font-semibold text-slate-950">{title}</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-600">{message}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100">
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={busy} className={cx("rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50", confirmClass)}>
+            {busy ? "Working..." : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -42,18 +141,25 @@ function formatLastSeen(value) {
 function NodeCard({ node }) {
   const usedPct = node.total_bytes > 0 ? Math.round((node.used_bytes / node.total_bytes) * 100) : 0;
   return (
-    <div className="bg-white rounded-lg shadow p-4">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="font-semibold text-sm truncate">{node.name}</h3>
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold text-slate-950">{node.name || node.node_id.slice(0, 8)}</h3>
+          <p className="mt-1 truncate text-xs text-slate-500">{node.platform} · {node.node_id.slice(0, 8)}</p>
+        </div>
         <StatusBadge status={node.status} />
       </div>
-      <p className="text-xs text-gray-500 mb-1">{node.platform} · {node.node_id.slice(0, 8)}…</p>
-      <p className="text-xs text-gray-500 mb-2">{node.address}</p>
-      <p className="text-xs text-gray-500 mb-2">Last seen {formatLastSeen(node.last_seen)}</p>
-      <div className="w-full bg-gray-200 rounded-full h-2">
-        <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${usedPct}%` }} />
+      <div className="space-y-2 text-xs text-slate-500">
+        <div className="flex items-center justify-between gap-3">
+          <span className="truncate">{node.address}</span>
+          <span className="shrink-0">Seen {formatLastSeen(node.last_seen)}</span>
+        </div>
+        <ProgressBar value={usedPct} />
+        <div className="flex items-center justify-between">
+          <span>{formatBytes(node.used_bytes)} used</span>
+          <span>{formatBytes(node.total_bytes)} total</span>
+        </div>
       </div>
-      <p className="text-xs text-gray-400 mt-1">{formatBytes(node.used_bytes)} / {formatBytes(node.total_bytes)}</p>
     </div>
   );
 }
@@ -63,46 +169,58 @@ function FileCard({ file, onDownload, onDelete, onRename, onPreview }) {
     file.mime_type.startsWith("image/") || file.mime_type.startsWith("text/") || file.mime_type === "application/json"
   );
   return (
-    <div className={`bg-white rounded-lg shadow p-3 flex items-center gap-2 min-w-0 ${file.conflict_of ? "border-l-4 border-yellow-400" : ""}`}>
-      <div className="w-7 h-7 rounded bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-500 shrink-0">{file.is_dir ? "D" : "F"}</div>
-      <div className="flex-1 min-w-0">
-        <p className="font-medium text-sm truncate">{file.name}</p>
-        <p className="text-xs text-gray-500 truncate">
-          {file.is_dir ? "Directory" : formatBytes(file.size_bytes)}
-          {file.modified_at && ` · ${new Date(file.modified_at).toLocaleDateString()}`}
-        </p>
+    <div className={cx(
+      "flex min-w-0 flex-col gap-3 rounded-lg border bg-white p-3 shadow-sm transition hover:border-slate-300 hover:shadow-md sm:flex-row sm:items-center",
+      file.conflict_of ? "border-amber-300" : "border-slate-200"
+    )}>
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className={cx(
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-bold",
+          file.is_dir ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"
+        )}>
+          {file.is_dir ? "DIR" : "FILE"}
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-950">{file.name}</p>
+          <p className="truncate text-xs text-slate-500">
+            {file.is_dir ? "Directory" : formatBytes(file.size_bytes)}
+            {file.modified_at && ` · Modified ${new Date(file.modified_at).toLocaleDateString()}`}
+          </p>
+        </div>
+      </div>
+      <div className="min-w-0">
         {file.conflict_of && (
-          <p className="text-xs text-yellow-600 mt-0.5">⚠ Conflict — original: {file.conflict_of}</p>
+          <p className="mb-2 truncate rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">Conflict with {file.conflict_of}</p>
         )}
       </div>
-      <div className="flex gap-1 shrink-0">
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0">
         {canPreview && (
           <button
             onClick={() => onPreview(file)}
-            className="px-2 py-1.5 bg-green-50 text-green-600 rounded text-xs font-medium hover:bg-green-100 active:bg-green-200"
+            className="rounded-lg bg-green-50 px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-100 active:bg-green-200"
           >
-            View
+            Preview
           </button>
         )}
         {!file.is_dir && (
           <button
             onClick={() => onDownload(file)}
-            className="px-2 py-1.5 bg-blue-50 text-blue-600 rounded text-xs font-medium hover:bg-blue-100 active:bg-blue-200"
+            className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 active:bg-blue-200"
           >
-            Get
+            Download
           </button>
         )}
         <button
           onClick={() => onRename(file)}
-          className="px-2 py-1.5 bg-gray-50 text-gray-600 rounded text-xs font-medium hover:bg-gray-100 active:bg-gray-200"
+          className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 active:bg-slate-300"
         >
           Rename
         </button>
         <button
           onClick={() => onDelete(file)}
-          className="px-2 py-1.5 bg-red-50 text-red-600 rounded text-xs font-medium hover:bg-red-100 active:bg-red-200"
+          className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 active:bg-red-200"
         >
-          Del
+          Delete
         </button>
       </div>
     </div>
@@ -123,28 +241,61 @@ function FilePreview({ file, onClose }) {
       .catch(() => { setContent("Failed to load"); setLoading(false); });
   }, [file.path]);
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl max-w-4xl max-h-[90vh] w-full overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onClick={onClose}>
+      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div className="min-w-0">
-            <p className="font-medium text-sm truncate">{file.name}</p>
-            <p className="text-xs text-gray-500">{formatBytes(file.size_bytes)} · {file.mime_type}</p>
+            <p className="truncate text-sm font-semibold text-slate-950">{file.name}</p>
+            <p className="text-xs text-slate-500">{formatBytes(file.size_bytes)} · {file.mime_type}</p>
           </div>
-          <div className="flex gap-2 shrink-0 ml-4">
-            <a href={url} download className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded text-xs font-medium hover:bg-blue-100">Download</a>
-            <button onClick={onClose} className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded text-xs font-medium hover:bg-gray-200">Close</button>
+          <div className="ml-4 flex shrink-0 gap-2">
+            <a href={url} download className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100">Download</a>
+            <button onClick={onClose} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200">Close</button>
           </div>
         </div>
-        <div className="flex-1 overflow-auto p-4">
+        <div className="flex-1 overflow-auto bg-slate-50 p-4">
           {loading ? (
-            <div className="text-center text-gray-400 py-8">Loading...</div>
+            <div className="py-8 text-center text-sm text-slate-400">Loading preview...</div>
           ) : file.mime_type?.startsWith("image/") ? (
             <img src={url} alt={file.name} className="max-w-full max-h-[70vh] mx-auto object-contain" />
           ) : (
-            <pre className="text-sm font-mono whitespace-pre-wrap break-words bg-gray-50 rounded p-4">{content}</pre>
+            <pre className="rounded-lg border border-slate-200 bg-white p-4 font-mono text-sm whitespace-pre-wrap break-words text-slate-700">{content}</pre>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function RenameDialog({ file, busy, error, onSubmit, onCancel }) {
+  const [newPath, setNewPath] = useState(file.path);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={onCancel}>
+      <form
+        onSubmit={(e) => { e.preventDefault(); onSubmit(newPath); }}
+        className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-semibold text-slate-950">Rename item</h3>
+        <p className="mt-1 truncate text-sm text-slate-500">{file.name}</p>
+        <label className="mt-4 block">
+          <span className="mb-1 block text-xs font-semibold text-slate-500">New pool path</span>
+          <input
+            autoFocus
+            type="text"
+            value={newPath}
+            onChange={(e) => setNewPath(e.target.value)}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          />
+        </label>
+        {error && <div className="mt-3"><InlineMessage tone="error">{error}</InlineMessage></div>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100">Cancel</button>
+          <button type="submit" disabled={busy || !newPath || newPath === file.path} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+            {busy ? "Renaming..." : "Rename"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -157,10 +308,27 @@ function FilesPage() {
   const [uploadProgress, setUploadProgress] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState(null);
+  const [renameFile, setRenameFile] = useState(null);
+  const [deleteFile, setDeleteFile] = useState(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState(null);
   const loadFiles = useCallback(async () => {
+    setLoading(true);
     const q = search ? `?q=${encodeURIComponent(search)}` : `?path=${encodeURIComponent(path)}`;
-    const res = await api(`/files${q}`);
-    if (res.ok) setFiles(res.data.entries || []);
+    try {
+      const res = await api(`/files${q}`);
+      if (res.ok) {
+        setFiles(res.data.entries || []);
+      } else {
+        setMessage({ tone: "error", text: res.error?.message || "Failed to load files" });
+      }
+    } catch (err) {
+      setMessage({ tone: "error", text: err.message || "Failed to load files" });
+    } finally {
+      setLoading(false);
+    }
   }, [path, search]);
   useEffect(() => { loadFiles(); }, [loadFiles]);
   const handleRefresh = async () => {
@@ -171,6 +339,7 @@ function FilesPage() {
   const handleUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    setMessage(null);
     setUploading(true);
     setUploadProgress(0);
     const formData = new FormData();
@@ -185,82 +354,178 @@ function FilesPage() {
       setUploadProgress(null);
       try {
         const data = JSON.parse(xhr.responseText);
-        if (!data.ok) alert(`Upload failed: ${data.error?.message || "Unknown error"}`);
+        if (!data.ok) setMessage({ tone: "error", text: `Upload failed: ${data.error?.message || "Unknown error"}` });
+        else setMessage({ tone: "success", text: `Uploaded ${file.name}` });
       } catch { /* ignore */ }
       loadFiles();
     };
-    xhr.onerror = () => { setUploading(false); setUploadProgress(null); alert("Upload error"); };
+    xhr.onerror = () => {
+      setUploading(false);
+      setUploadProgress(null);
+      setMessage({ tone: "error", text: "Upload failed. Check the agent connection and try again." });
+    };
     xhr.open("POST", `${API}/files/upload`);
     xhr.withCredentials = true;
     xhr.send(formData);
+    e.target.value = "";
   };
   const handleDownload = (file) => {
     window.location.assign(`${API}/files/download?path=${encodeURIComponent(file.path)}`);
   };
-  const handleDelete = async (file) => {
-    if (!confirm(`Delete "${file.name}"?`)) return;
-    await fetch(`${API}/files?path=${encodeURIComponent(file.path)}`, { method: "DELETE" });
-    loadFiles();
-  };
-  const handleRename = async (file) => {
-    const newPath = prompt(`Rename "${file.name}" to:`, file.path);
-    if (!newPath || newPath === file.path) return;
-    const res = await fetch(`${API}/files/rename`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: file.path, new_path: newPath }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      alert(`Rename failed: ${err.error?.message || res.statusText}`);
+  const handleDelete = async () => {
+    if (!deleteFile) return;
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`${API}/files?path=${encodeURIComponent(deleteFile.path)}`, { method: "DELETE", credentials: "same-origin" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || res.statusText);
+      }
+      setMessage({ tone: "success", text: `Deleted ${deleteFile.name}` });
+      setDeleteFile(null);
+      loadFiles();
+    } catch (err) {
+      setActionError(err.message || "Delete failed");
+    } finally {
+      setActionBusy(false);
     }
-    loadFiles();
   };
+  const handleRename = async (newPath) => {
+    if (!renameFile) return;
+    if (!newPath || newPath === renameFile.path) return;
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`${API}/files/rename`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ path: renameFile.path, new_path: newPath }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || res.statusText);
+      }
+      setMessage({ tone: "success", text: `Renamed ${renameFile.name}` });
+      setRenameFile(null);
+      loadFiles();
+    } catch (err) {
+      setActionError(err.message || "Rename failed");
+    } finally {
+      setActionBusy(false);
+    }
+  };
+  const totalSize = files.reduce((sum, f) => sum + (f.is_dir ? 0 : (f.size_bytes || 0)), 0);
+  const folders = files.filter((f) => f.is_dir).length;
   return (
     <div className="space-y-4">
-      {/* Search and actions */}
-      <div className="flex gap-2 mb-4">
-        <input
-          type="text"
-          placeholder="Search files…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="border rounded-lg px-4 py-3 text-sm flex-1"
-        />
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="px-4 py-3 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200 active:bg-gray-300 disabled:opacity-50"
-        >
-          {refreshing ? "..." : "Refresh"}
-        </button>
+      <PageHeader
+        eyebrow="Storage pool"
+        title="Files"
+        description="Upload, preview, rename, and download files stored across the pool."
+        action={
+          <label className="block">
+            <span className="inline-flex cursor-pointer items-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 active:bg-blue-800">
+              {uploading ? `Uploading ${uploadProgress ?? 0}%` : "Upload file"}
+            </span>
+            <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
+          </label>
+        }
+      />
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase text-slate-500">Visible items</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-950">{files.length}</p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase text-slate-500">Folders</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-950">{folders}</p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase text-slate-500">Visible file size</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-950">{formatBytes(totalSize)}</p>
+        </div>
       </div>
-
-      {/* Upload button with progress */}
-      <label className="block w-full mb-4">
-        <div className="bg-blue-600 text-white text-center py-3 rounded-lg font-medium cursor-pointer hover:bg-blue-700 active:bg-blue-800">
-          {uploading ? (uploadProgress !== null ? `Uploading... ${uploadProgress}%` : "Uploading...") : "Upload File"}
+      <Section>
+        <div className="flex flex-col gap-3 lg:flex-row">
+          <div className="flex flex-1 items-center rounded-lg border border-slate-300 bg-white px-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+            <span className="text-sm text-slate-400">Search</span>
+            <input
+              type="text"
+              placeholder="name, type, or path"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="min-w-0 flex-1 border-0 bg-transparent px-3 py-3 text-sm outline-none"
+            />
+            {search && (
+              <button onClick={() => setSearch("")} className="rounded-md px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100">
+                Clear
+              </button>
+            )}
+          </div>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="rounded-lg bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-200 active:bg-slate-300 disabled:opacity-50"
+          >
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </button>
         </div>
         {uploading && uploadProgress !== null && (
-          <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
-            <div className="bg-blue-600 h-1.5 rounded-full transition-all" style={{ width: `${uploadProgress}%` }}></div>
+          <div className="mt-4 space-y-2">
+            <ProgressBar value={uploadProgress} />
+            <p className="text-xs font-medium text-slate-500">Uploading into {path}</p>
           </div>
         )}
-        <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
-      </label>
-      {/* File list */}
+      </Section>
+      {message && <InlineMessage tone={message.tone}>{message.text}</InlineMessage>}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {files.map((f) => (
-          <FileCard key={f.file_id || f.path} file={f} onDownload={handleDownload} onDelete={handleDelete} onRename={handleRename} onPreview={setPreviewFile} />
-        ))}
-        {files.length === 0 && (
-          <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400 text-sm">
-            No files
-          </div>
+        {loading ? (
+          <EmptyState title="Loading files..." description="Checking the current pool path." />
+        ) : files.length > 0 ? (
+          files.map((f) => (
+            <FileCard
+              key={f.file_id || f.path}
+              file={f}
+              onDownload={handleDownload}
+              onDelete={(file) => { setActionError(null); setDeleteFile(file); }}
+              onRename={(file) => { setActionError(null); setRenameFile(file); }}
+              onPreview={setPreviewFile}
+            />
+          ))
+        ) : (
+          <EmptyState
+            title={search ? "No matching files" : "No files yet"}
+            description={search ? "Try a shorter search term or clear the search." : "Upload a file to start filling this pool."}
+          />
         )}
       </div>
-      {/* Preview modal */}
       {previewFile && <FilePreview file={previewFile} onClose={() => setPreviewFile(null)} />}
+      {renameFile && (
+        <RenameDialog
+          file={renameFile}
+          busy={actionBusy}
+          error={actionError}
+          onCancel={() => { setRenameFile(null); setActionError(null); }}
+          onSubmit={handleRename}
+        />
+      )}
+      {deleteFile && (
+        <ConfirmDialog
+          title="Delete file?"
+          message={`This removes "${deleteFile.name}" from the pool. This action cannot be undone.`}
+          confirmLabel="Delete"
+          busy={actionBusy}
+          onCancel={() => { setDeleteFile(null); setActionError(null); }}
+          onConfirm={handleDelete}
+        />
+      )}
+      {deleteFile && actionError && (
+        <div className="fixed bottom-24 left-4 right-4 z-50 mx-auto max-w-md lg:bottom-6">
+          <InlineMessage tone="error">{actionError}</InlineMessage>
+        </div>
+      )}
     </div>
   );
 }
@@ -269,6 +534,7 @@ function NodesPage() {
   const [nodes, setNodes] = useState([]);
   const [pendingJoins, setPendingJoins] = useState([]);
   const [invite, setInvite] = useState(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [showSwitch, setShowSwitch] = useState(false);
   const [switchAddr, setSwitchAddr] = useState("");
@@ -278,6 +544,7 @@ function NodesPage() {
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState(null);
   const [scanning, setScanning] = useState(false);
+  const [scanMessage, setScanMessage] = useState(null);
 
   const handleSwitch = async (e) => {
     e.preventDefault();
@@ -322,9 +589,11 @@ function NodesPage() {
   const totalBytes = nodes.reduce((s, n) => s + (n.total_bytes || 0), 0);
   const usedBytes = nodes.reduce((s, n) => s + (n.used_bytes || 0), 0);
   const onlineCount = nodes.filter((n) => n.status === "online").length;
+  const usedPct = totalBytes > 0 ? Math.round((usedBytes / totalBytes) * 100) : 0;
 
   const createInvite = async () => {
     setCreatingInvite(true);
+    setInviteCopied(false);
     try {
       const res = await api("/invites", { method: "POST" });
       if (res.ok) setInvite(res.data);
@@ -333,119 +602,149 @@ function NodesPage() {
     }
   };
 
+  const copyInvite = async () => {
+    if (!invite?.join_token) return;
+    try {
+      await navigator.clipboard.writeText(invite.join_token);
+      setInviteCopied(true);
+      setTimeout(() => setInviteCopied(false), 1800);
+    } catch {
+      setInviteCopied(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-3 mb-4">
-        <div className="bg-white rounded-lg shadow p-3 text-center">
-          <p className="text-xl font-bold text-blue-600">{nodes.length}</p>
-          <p className="text-xs text-gray-500">Nodes</p>
+      <PageHeader
+        eyebrow="Cluster"
+        title="Nodes"
+        description="Monitor capacity, approve new devices, and connect this agent to another pool."
+        action={
+          <button
+            onClick={createInvite}
+            disabled={creatingInvite}
+            className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
+          >
+            {creatingInvite ? "Creating..." : "Create invite"}
+          </button>
+        }
+      />
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase text-slate-500">Nodes</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-950">{nodes.length}</p>
         </div>
-        <div className="bg-white rounded-lg shadow p-3 text-center">
-          <p className="text-xl font-bold text-green-600">{onlineCount}</p>
-          <p className="text-xs text-gray-500">Online</p>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase text-slate-500">Online</p>
+          <p className="mt-1 text-2xl font-semibold text-green-700">{onlineCount}</p>
         </div>
-        <div className="bg-white rounded-lg shadow p-3 text-center">
-          <p className="text-xl font-bold">{formatBytes(totalBytes)}</p>
-          <p className="text-xs text-gray-500">Total</p>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase text-slate-500">Used</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-950">{formatBytes(usedBytes)}</p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase text-slate-500">Capacity</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-950">{formatBytes(totalBytes)}</p>
         </div>
       </div>
+      <Section title="Pool capacity" description={`${usedPct}% used across online and known nodes`}>
+        <ProgressBar value={usedPct} tone={usedPct > 80 ? "amber" : "blue"} />
+        <div className="mt-2 flex justify-between text-xs text-slate-500">
+          <span>{formatBytes(usedBytes)} used</span>
+          <span>{formatBytes(Math.max(0, totalBytes - usedBytes))} free</span>
+        </div>
+      </Section>
 
-      {/* Pending joins */}
       {pendingJoins.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-4 mb-4">
-          <h2 className="font-semibold text-sm mb-3">Pending join requests</h2>
+        <Section title="Pending join requests" description="Review new devices before they join this pool." className="border-amber-200">
           <div className="space-y-2">
             {pendingJoins.map((pj) => (
-              <div key={pj.node_id} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
-                <div>
-                  <p className="font-medium text-sm">{pj.name || pj.node_id.slice(0, 8)}</p>
-                  <p className="text-xs text-gray-500">{pj.platform} / {pj.address}</p>
+              <div key={pj.node_id} className="flex flex-col gap-3 rounded-lg bg-amber-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-slate-950">{pj.name || pj.node_id.slice(0, 8)}</p>
+                  <p className="truncate text-xs text-slate-500">{pj.platform} / {pj.address}</p>
                 </div>
                 <button
                   onClick={() => approveJoin(pj.node_id)}
-                  className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700"
+                  className="rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700"
                 >
                   Approve
                 </button>
               </div>
             ))}
           </div>
-        </div>
+        </Section>
       )}
 
-      {/* Invite */}
-      <div className="bg-white rounded-lg shadow p-4 mb-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="font-semibold text-sm">Invite a node</h2>
-            <p className="text-xs text-gray-500">One-time token, expires in 15 min</p>
-          </div>
-          <button
-            onClick={createInvite}
-            disabled={creatingInvite}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-          >
-            {creatingInvite ? "…" : "Create"}
-          </button>
-        </div>
+      <Section title="Invite token" description="Create a one-time token for a nearby device. Tokens expire in 15 minutes.">
         {invite && (
-          <div className="mt-3 bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-gray-500 mb-1">Join token</p>
-            <code className="block text-sm break-all font-mono">{invite.join_token}</code>
-            <p className="text-xs text-gray-400 mt-2">Expires {new Date(invite.expires_at).toLocaleString()}</p>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <p className="mb-1 text-xs font-semibold uppercase text-slate-500">Join token</p>
+                <code className="block break-all font-mono text-sm text-slate-800">{invite.join_token}</code>
+                <p className="mt-2 text-xs text-slate-400">Expires {new Date(invite.expires_at).toLocaleString()}</p>
+              </div>
+              <button onClick={copyInvite} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-100">
+                {inviteCopied ? "Copied" : "Copy"}
+              </button>
+            </div>
           </div>
         )}
-      </div>
+        {!invite && <EmptyState title="No active invite" description="Create an invite when you are ready to add another device." />}
+      </Section>
 
-      {/* Network scan */}
-      <div className="bg-white rounded-lg shadow p-4 mb-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="font-semibold text-sm">Scan local network</h2>
-            <p className="text-xs text-gray-500">Find PocketCluster nodes on your network</p>
-          </div>
+      <Section
+        title="Find nearby pools"
+        description="Scan the local network, then use the discovered address to join another pool."
+        action={
           <button
             onClick={async () => {
               setScanning(true);
+              setScanMessage(null);
               try {
                 const r = await api("/network/scan");
                 if (r.ok && r.data?.nodes?.length > 0) {
                   const firstNode = r.data.nodes[0];
                   setSwitchAddr(`http://${firstNode.address}`);
                   setShowSwitch(true);
+                  setScanMessage({ tone: "success", text: `Found ${r.data.nodes.length} node(s). Filled the first address below.` });
+                } else {
+                  setScanMessage({ tone: "warning", text: "No PocketCluster nodes were found on this network." });
                 }
               } catch (e) {
-                console.error("Scan failed:", e);
+                setScanMessage({ tone: "error", text: e.message || "Scan failed" });
               } finally {
                 setScanning(false);
               }
             }}
             disabled={scanning}
-            className="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50"
+            className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50"
           >
-            {scanning ? "Scanning..." : "Scan"}
+            {scanning ? "Scanning..." : "Scan network"}
           </button>
-        </div>
-      </div>
+        }
+      >
+        {scanMessage ? <InlineMessage tone={scanMessage.tone}>{scanMessage.text}</InlineMessage> : <p className="text-sm text-slate-500">Scan uses local discovery and may take a moment on busy Wi-Fi networks.</p>}
+      </Section>
 
-      {/* Switch pool */}
-      <div className="bg-white rounded-lg shadow p-4 mb-4">
+      <Section title="Join another pool">
         <button
           onClick={() => setShowSwitch(!showSwitch)}
-          className="text-sm text-gray-500 hover:text-gray-700 w-full text-left"
+          className="w-full rounded-lg bg-slate-100 px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-200"
         >
-          {showSwitch ? "Hide" : "Join another pool"}...
+          {showSwitch ? "Hide join form" : "Show join form"}
         </button>
         {showSwitch && (
-          <form onSubmit={handleSwitch} className="mt-3 space-y-3">
+          <form onSubmit={handleSwitch} className="mt-4 grid gap-3 md:grid-cols-2">
             <input
               type="text"
               value={switchAddr}
               onChange={(e) => setSwitchAddr(e.target.value)}
               placeholder="Pool address (e.g. http://192.168.1.10:7788)"
               required
-              className="w-full border rounded-lg px-4 py-3 text-sm"
+              className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 md:col-span-2"
             />
             <input
               type="text"
@@ -453,7 +752,7 @@ function NodesPage() {
               onChange={(e) => setSwitchUser(e.target.value)}
               placeholder="Pool username"
               required
-              className="w-full border rounded-lg px-4 py-3 text-sm"
+              className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
             <input
               type="password"
@@ -461,30 +760,31 @@ function NodesPage() {
               onChange={(e) => setSwitchPass(e.target.value)}
               placeholder="Pool password"
               required
-              className="w-full border rounded-lg px-4 py-3 text-sm"
+              className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
             <input
               type="text"
               value={switchToken}
               onChange={(e) => setSwitchToken(e.target.value)}
               placeholder="Invite token (optional)"
-              className="w-full border rounded-lg px-4 py-3 text-sm"
+              className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 md:col-span-2"
             />
-            {switchError && <p className="text-sm text-red-600">{switchError}</p>}
+            {switchError && <div className="md:col-span-2"><InlineMessage tone="error">{switchError}</InlineMessage></div>}
             <button
               type="submit"
               disabled={switching || !switchAddr}
-              className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              className="rounded-lg bg-blue-600 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 md:col-span-2"
             >
               {switching ? "Joining…" : "Switch pool"}
             </button>
           </form>
         )}
-      </div>
+      </Section>
 
-      {/* Node list */}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {nodes.map((n) => <NodeCard key={n.node_id} node={n} />)}
+        {nodes.length > 0 ? nodes.map((n) => <NodeCard key={n.node_id} node={n} />) : (
+          <EmptyState title="No nodes yet" description="Create a pool or join an existing pool to see devices here." />
+        )}
       </div>
     </div>
   );
@@ -522,41 +822,47 @@ function LogsPage() {
   };
 
   return (
-    <div>
-      {/* View toggle */}
-      <div className="flex gap-2 mb-4">
-        <button
-          onClick={() => setView("agent")}
-          className={`flex-1 py-2 rounded-lg text-sm font-medium ${
-            view === "agent" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"
-          }`}
-        >
-          Agent Logs
-        </button>
-        <button
-          onClick={() => setView("events")}
-          className={`flex-1 py-2 rounded-lg text-sm font-medium ${
-            view === "events" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"
-          }`}
-        >
-          Events
-        </button>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="px-3 py-2 bg-gray-100 rounded-lg text-sm hover:bg-gray-200 disabled:opacity-50"
-        >
-          Refresh
-        </button>
+    <div className="space-y-4">
+      <PageHeader
+        eyebrow="Diagnostics"
+        title="Logs"
+        description="Switch between raw agent output and pool events without losing your place."
+        action={
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="rounded-lg bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50"
+          >
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </button>
+        }
+      />
+
+      <div className="inline-flex w-full rounded-lg bg-slate-200 p-1 sm:w-auto">
+        {[
+          ["agent", "Agent logs"],
+          ["events", "Events"],
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setView(id)}
+            className={cx(
+              "flex-1 rounded-md px-4 py-2 text-sm font-semibold sm:flex-none",
+              view === id ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
+            )}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {view === "agent" && (
-        <div className="bg-gray-900 rounded-lg p-3 max-h-[60vh] overflow-y-auto">
+        <div className="max-h-[65vh] overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-3 shadow-sm">
           {agentLogs.length === 0 ? (
-            <p className="text-gray-400 text-xs text-center py-4">No agent logs yet</p>
+            <p className="py-8 text-center text-xs text-slate-400">No agent logs yet</p>
           ) : (
             agentLogs.map((line, i) => (
-              <p key={i} className="text-green-400 text-xs font-mono leading-relaxed whitespace-pre-wrap break-all">
+              <p key={i} className="font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-emerald-300">
                 {line}
               </p>
             ))
@@ -567,20 +873,18 @@ function LogsPage() {
       {view === "events" && (
         <div className="space-y-2">
           {logs.map((log, i) => (
-            <div key={i} className="bg-white rounded-lg shadow p-3">
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-xs font-medium ${typeColor[log.type] || "text-gray-600"}`}>
+            <div key={i} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <span className={`text-xs font-semibold ${typeColor[log.type] || "text-slate-600"}`}>
                   {log.type}
                 </span>
-                <span className="text-xs text-gray-400">{log.timestamp}</span>
+                <span className="shrink-0 text-xs text-slate-400">{log.timestamp}</span>
               </div>
-              <p className="text-xs text-gray-500 font-mono truncate">Node: {log.node_id?.slice(0, 8)}…</p>
+              <p className="truncate font-mono text-xs text-slate-500">Node: {log.node_id?.slice(0, 8)}...</p>
             </div>
           ))}
           {logs.length === 0 && (
-            <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400 text-sm">
-              No events yet
-            </div>
+            <EmptyState title="No events yet" description="Pool activity will appear here after file and node changes." />
           )}
         </div>
       )}
@@ -733,8 +1037,10 @@ function LocalFilesPage() {
 function JoinPage({ mode }) {
   const [bootstrap, setBootstrap] = useState("");
   const [token, setToken] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const [joinUser, setJoinUser] = useState("");
+  const [joinPass, setJoinPass] = useState("");
+  const [createUser, setCreateUser] = useState("");
+  const [createPass, setCreatePass] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [discovered, setDiscovered] = useState([]);
@@ -769,14 +1075,14 @@ function JoinPage({ mode }) {
   };
   const handleCreateCluster = async (e) => {
     e.preventDefault();
-    if (!username || !password) { setError("Username and password are required"); return; }
+    if (!createUser || !createPass) { setError("Username and password are required"); return; }
     setLoading(true);
     setError(null);
     try {
       const r = await api("/cluster", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username: createUser, password: createPass }),
       });
       if (r.ok) window.location.reload();
       else setError(r.error?.message || "Failed to create cluster");
@@ -789,7 +1095,7 @@ function JoinPage({ mode }) {
 
   const handleJoin = async (e) => {
     e.preventDefault();
-    if (!username || !password) { setError("Pool username and password are required"); return; }
+    if (!joinUser || !joinPass) { setError("Pool username and password are required"); return; }
     setLoading(true);
     setError(null);
     try {
@@ -797,7 +1103,7 @@ function JoinPage({ mode }) {
       const r = await api("/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bootstrap: addr, join_token: token, pool_user: username, pool_password: password }),
+        body: JSON.stringify({ bootstrap: addr, join_token: token, pool_user: joinUser, pool_password: joinPass }),
       });
       if (r.ok) window.location.reload();
       else setError(r.error?.message || "Join failed");
@@ -883,16 +1189,16 @@ function JoinPage({ mode }) {
           />
           <input
             type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            value={joinUser}
+            onChange={(e) => setJoinUser(e.target.value)}
             placeholder="Pool username"
             required
             className="w-full border rounded-lg px-4 py-3 text-sm"
           />
           <input
             type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            value={joinPass}
+            onChange={(e) => setJoinPass(e.target.value)}
             placeholder="Pool password"
             required
             className="w-full border rounded-lg px-4 py-3 text-sm"
@@ -924,16 +1230,16 @@ function JoinPage({ mode }) {
             <form onSubmit={handleCreateCluster} className="mt-3 space-y-3">
               <input
                 type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                value={createUser}
+                onChange={(e) => setCreateUser(e.target.value)}
                 placeholder="Pool username"
                 required
                 className="w-full border rounded-lg px-4 py-3 text-sm"
               />
               <input
                 type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                value={createPass}
+                onChange={(e) => setCreatePass(e.target.value)}
                 placeholder="Pool password"
                 required
                 className="w-full border rounded-lg px-4 py-3 text-sm"
@@ -941,7 +1247,7 @@ function JoinPage({ mode }) {
               {error && <p className="text-sm text-red-600">{error}</p>}
               <button
                 type="submit"
-                disabled={loading || !username || !password}
+                disabled={loading || !createUser || !createPass}
                 className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
               >
                 {loading ? "Creating..." : "Create Pool"}
@@ -1039,83 +1345,89 @@ function HealthPage() {
     setLoading(false);
   }, [page]);
   useEffect(() => { load(); }, [load]);
-  if (loading) return <div className="text-center text-gray-400 py-8">Loading health data...</div>;
-  if (!summary) return <div className="text-center text-gray-400 py-8">Health data unavailable</div>;
+  // Auto-refresh every 10 seconds
+  useEffect(() => {
+    const id = setInterval(load, 10_000);
+    return () => clearInterval(id);
+  }, [load]);
+  if (loading) return <div className="py-16 text-center text-sm text-slate-400">Loading health data...</div>;
+  if (!summary) return <div className="py-16 text-center text-sm text-slate-400">Health data unavailable</div>;
   const statusColor = {
-    healthy: "text-green-600 bg-green-50",
-    under_replicated: "text-yellow-600 bg-yellow-50",
-    unavailable: "text-red-600 bg-red-50",
-    repairing: "text-blue-600 bg-blue-50",
+    healthy: "border-green-200 bg-green-50 text-green-700",
+    under_replicated: "border-amber-200 bg-amber-50 text-amber-700",
+    unavailable: "border-red-200 bg-red-50 text-red-700",
+    repairing: "border-blue-200 bg-blue-50 text-blue-700",
   };
   return (
-    <div className="space-y-6">
-      {/* Summary cards */}
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow="Replication"
+        title="Health"
+        description="Track chunk availability, replica coverage, and repair activity across the pool."
+      />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className={`rounded-lg p-4 ${statusColor[summary.overall_status] || "bg-gray-50"}`}>
-          <div className="text-xs font-medium uppercase opacity-70">Overall</div>
-          <div className="text-lg font-bold mt-1">{summary.overall_status}</div>
+        <div className={`rounded-lg border p-4 shadow-sm ${statusColor[summary.overall_status] || "border-slate-200 bg-white text-slate-700"}`}>
+          <div className="text-xs font-semibold uppercase opacity-70">Overall</div>
+          <div className="mt-1 text-lg font-bold capitalize">{summary.overall_status}</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs font-medium text-gray-500 uppercase">Files</div>
-          <div className="text-lg font-bold mt-1">{summary.total_files}</div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-semibold uppercase text-slate-500">Files</div>
+          <div className="mt-1 text-lg font-bold text-slate-950">{summary.total_files}</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs font-medium text-gray-500 uppercase">Chunks</div>
-          <div className="text-lg font-bold mt-1">{summary.total_chunks}</div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-semibold uppercase text-slate-500">Chunks</div>
+          <div className="mt-1 text-lg font-bold text-slate-950">{summary.total_chunks}</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs font-medium text-gray-500 uppercase">Healthy</div>
-          <div className="text-lg font-bold mt-1 text-green-600">{summary.healthy_chunks}</div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-semibold uppercase text-slate-500">Healthy</div>
+          <div className="mt-1 text-lg font-bold text-green-700">{summary.healthy_chunks}</div>
         </div>
       </div>
-      {/* Detail stats */}
       <div className="grid grid-cols-3 gap-3">
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs font-medium text-gray-500 uppercase">Under-replicated</div>
-          <div className={`text-lg font-bold mt-1 ${summary.under_replicated_chunks > 0 ? "text-yellow-600" : "text-gray-400"}`}>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-semibold uppercase text-slate-500">Under-replicated</div>
+          <div className={`mt-1 text-lg font-bold ${summary.under_replicated_chunks > 0 ? "text-amber-600" : "text-slate-400"}`}>
             {summary.under_replicated_chunks}
           </div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs font-medium text-gray-500 uppercase">Unavailable</div>
-          <div className={`text-lg font-bold mt-1 ${summary.unavailable_chunks > 0 ? "text-red-600" : "text-gray-400"}`}>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-semibold uppercase text-slate-500">Unavailable</div>
+          <div className={`mt-1 text-lg font-bold ${summary.unavailable_chunks > 0 ? "text-red-600" : "text-slate-400"}`}>
             {summary.unavailable_chunks}
           </div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs font-medium text-gray-500 uppercase">Repairing</div>
-          <div className={`text-lg font-bold mt-1 ${summary.repairing_chunks > 0 ? "text-blue-600" : "text-gray-400"}`}>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-semibold uppercase text-slate-500">Repairing</div>
+          <div className={`mt-1 text-lg font-bold ${summary.repairing_chunks > 0 ? "text-blue-600" : "text-slate-400"}`}>
             {summary.repairing_chunks}
           </div>
         </div>
       </div>
-      {/* Scan info */}
-      <div className="text-xs text-gray-400">
-        Last scan: {summary.last_scan_at ? new Date(summary.last_scan_at).toLocaleString() : "never"}
-        {summary.last_repair_at && <> · Last repair: {new Date(summary.last_repair_at).toLocaleString()}</>}
+      <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 shadow-sm">
+        Last scan: <span className="font-medium text-slate-700">{summary.last_scan_at ? new Date(summary.last_scan_at).toLocaleString() : "never"}</span>
+        {summary.last_repair_at && <> · Last repair: <span className="font-medium text-slate-700">{new Date(summary.last_repair_at).toLocaleString()}</span></>}
       </div>
-      {/* Chunk detail */}
       {selectedChunk && (
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="flex justify-between items-center mb-3">
-            <h3 className="font-medium text-sm">Chunk Detail</h3>
-            <button onClick={() => setSelectedChunk(null)} className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
+        <div className="rounded-lg border border-blue-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-950">Chunk detail</h3>
+            <button onClick={() => setSelectedChunk(null)} className="rounded-md px-2 py-1 text-sm text-slate-400 hover:bg-slate-100 hover:text-slate-700">Close</button>
           </div>
-          <div className="text-xs font-mono text-gray-500 mb-2 break-all">{selectedChunk.chunk_id}</div>
-          <div className="grid grid-cols-2 gap-2 text-sm mb-3">
+          <div className="mb-2 break-all font-mono text-xs text-slate-500">{selectedChunk.chunk_id}</div>
+          <div className="mb-3 grid grid-cols-2 gap-2 text-sm text-slate-700">
             <div>Size: {formatBytes(selectedChunk.size_bytes)}</div>
             <div>Replicas: {selectedChunk.online_replicas}/{selectedChunk.target_replicas}</div>
             <div>Status: <span className={`font-medium ${selectedChunk.status === "healthy" ? "text-green-600" : selectedChunk.status === "unavailable" ? "text-red-600" : "text-yellow-600"}`}>{selectedChunk.status}</span></div>
           </div>
           {selectedChunk.replica_nodes && selectedChunk.replica_nodes.length > 0 && (
             <div>
-              <div className="text-xs font-medium text-gray-500 mb-1">Replica Nodes</div>
+              <div className="mb-1 text-xs font-semibold text-slate-500">Replica Nodes</div>
               <div className="space-y-1">
                 {selectedChunk.replica_nodes.map((r) => (
                   <div key={r.node_id} className="flex items-center gap-2 text-xs">
                     <span className={`w-2 h-2 rounded-full ${r.online ? "bg-green-500" : "bg-gray-300"}`}></span>
                     <span className="font-mono">{r.node_id}</span>
-                    <span className="text-gray-400">{r.online ? "online" : "offline"}</span>
+                    <span className="text-slate-400">{r.online ? "online" : "offline"}</span>
                   </div>
                 ))}
               </div>
@@ -1123,30 +1435,30 @@ function HealthPage() {
           )}
           {selectedChunk.referencing_files && selectedChunk.referencing_files.length > 0 && (
             <div className="mt-3">
-              <div className="text-xs font-medium text-gray-500 mb-1">Referencing Files</div>
+              <div className="mb-1 text-xs font-semibold text-slate-500">Referencing Files</div>
               <div className="space-y-1">
                 {selectedChunk.referencing_files.map((p) => (
-                  <div key={p} className="text-xs font-mono text-gray-600">{p}</div>
+                  <div key={p} className="font-mono text-xs text-slate-600">{p}</div>
                 ))}
               </div>
             </div>
           )}
         </div>
       )}
-      {/* Chunk list */}
       <div>
-        <h3 className="font-medium text-sm mb-3">All Chunks ({chunks.length})</h3>
+        <h3 className="mb-3 text-sm font-semibold text-slate-950">All Chunks ({chunks.length})</h3>
         <div className="space-y-2">
           {chunks.map((c) => (
             <button
               key={c.chunk_id}
               onClick={() => setSelectedChunk(c)}
-              className={`w-full text-left bg-white rounded-lg shadow p-3 hover:shadow-md transition-shadow ${
-                selectedChunk?.chunk_id === c.chunk_id ? "ring-2 ring-blue-500" : ""
-              }`}
+              className={cx(
+                "w-full rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-300 hover:shadow-md",
+                selectedChunk?.chunk_id === c.chunk_id && "ring-2 ring-blue-500"
+              )}
             >
               <div className="flex items-center justify-between">
-                <div className="font-mono text-xs text-gray-500 truncate max-w-[200px]">{c.chunk_id}</div>
+                <div className="max-w-[220px] truncate font-mono text-xs text-slate-500">{c.chunk_id}</div>
                 <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
                   c.status === "healthy" ? "bg-green-100 text-green-700" :
                   c.status === "unavailable" ? "bg-red-100 text-red-700" :
@@ -1156,7 +1468,7 @@ function HealthPage() {
                   {c.status}
                 </span>
               </div>
-              <div className="flex gap-4 mt-1 text-xs text-gray-400">
+              <div className="mt-1 flex gap-4 text-xs text-slate-400">
                 <span>{formatBytes(c.size_bytes)}</span>
                 <span>{c.online_replicas}/{c.target_replicas} replicas</span>
                 {c.referencing_files && <span>{c.referencing_files.length} file(s)</span>}
@@ -1164,9 +1476,7 @@ function HealthPage() {
             </button>
           ))}
           {chunks.length === 0 && (
-            <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400 text-sm">
-              No chunks found
-            </div>
+            <EmptyState title="No chunks found" description="Health data will populate after files are added to the pool." />
           )}
         </div>
       </div>
@@ -1174,10 +1484,10 @@ function HealthPage() {
   );
 }
 const navItems = [
-  { id: "files", label: "Files" },
-  { id: "nodes", label: "Nodes" },
-  { id: "health", label: "Health" },
-  { id: "logs", label: "Logs" },
+  { id: "files", label: "Files", hint: "Pool browser" },
+  { id: "nodes", label: "Nodes", hint: "Devices" },
+  { id: "health", label: "Health", hint: "Replication" },
+  { id: "logs", label: "Logs", hint: "Events" },
 ];
 
 
@@ -1188,6 +1498,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [needsLogin, setNeedsLogin] = useState(false);
   const [noCluster, setNoCluster] = useState(false);
+  const [startupError, setStartupError] = useState(null);
 
   useEffect(() => {
     api("/auth/status").then((r) => {
@@ -1207,28 +1518,52 @@ export default function App() {
         }
         setLoading(false);
       });
+    }).catch((err) => {
+      setStartupError(err.message || "Unable to reach the local agent");
+      setLoading(false);
     });
   }, []);
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Loading...</div>;
+  if (loading) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading...</div>;
+  if (startupError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+        <div className="w-full max-w-md rounded-lg border border-red-200 bg-white p-5 shadow-sm">
+          <h1 className="text-lg font-semibold text-slate-950">PocketCluster cannot reach the local agent</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{startupError}</p>
+        </div>
+      </div>
+    );
+  }
   if (needsLogin) return <LoginPage />;
   if (noCluster || !clusterId) return <JoinPage mode={discoveryMode} />;
 
   return (
-    <div className="min-h-screen lg:flex" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
-      <header className="bg-white border-b border-gray-200 px-4 py-3 lg:fixed lg:inset-y-0 lg:left-0 lg:w-64 lg:border-b-0 lg:border-r lg:px-6 lg:py-6">
-        <h1 className="text-lg font-bold text-center lg:text-left lg:text-2xl">PocketCluster</h1>
+    <div className="min-h-screen bg-slate-50 lg:flex" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+      <header className="border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:fixed lg:inset-y-0 lg:left-0 lg:w-64 lg:border-b-0 lg:border-r lg:px-5 lg:py-6">
+        <div className="flex items-center justify-between gap-3 lg:block">
+          <div>
+            <h1 className="text-lg font-bold text-slate-950 lg:text-2xl">PocketCluster</h1>
+            <p className="hidden text-xs text-slate-500 lg:mt-1 lg:block">LAN storage pool</p>
+          </div>
+          <div className="min-w-0 rounded-lg bg-slate-100 px-3 py-2 text-right lg:mt-5 lg:text-left">
+            <p className="text-[10px] font-semibold uppercase text-slate-500">Cluster</p>
+            <p className="max-w-[160px] truncate font-mono text-xs text-slate-700">{clusterId || "unknown"}</p>
+          </div>
+        </div>
         <nav className="mt-8 hidden lg:block">
           <div className="space-y-1">
             {navItems.map((item) => (
               <button
                 key={item.id}
                 onClick={() => setTab(item.id)}
-                className={`flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium ${
-                  tab === item.id ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                }`}
+                className={cx(
+                  "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition",
+                  tab === item.id ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                )}
               >
-                {item.label}
+                <span className="text-sm font-semibold">{item.label}</span>
+                <span className="text-xs opacity-70">{item.hint}</span>
               </button>
             ))}
           </div>
@@ -1245,19 +1580,20 @@ export default function App() {
       </main>
 
       <nav
-        className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 lg:hidden z-50"
+        className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white/95 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden"
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
-        <div className="flex">
+        <div className="grid grid-cols-4">
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setTab(item.id)}
-              className={`flex-1 py-3 text-center ${
-                tab === item.id ? "text-blue-600" : "text-gray-500"
-              }`}
+              className={cx(
+                "min-w-0 px-1 py-3 text-center",
+                tab === item.id ? "text-blue-700" : "text-slate-500"
+              )}
             >
-              <div className="text-xs font-medium">{item.label}</div>
+              <div className="truncate text-xs font-semibold">{item.label}</div>
             </button>
           ))}
         </div>

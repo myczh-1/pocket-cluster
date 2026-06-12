@@ -10,6 +10,8 @@ import (
 	"github.com/pocketcluster/agent/internal/types"
 )
 
+const maxConflictPathAttempts = 1000
+
 func (s *Server) prepareFilePut(f *types.File) error {
 	existing, err := s.store.GetFile(f.Path)
 	if err != nil {
@@ -25,7 +27,11 @@ func (s *Server) prepareFilePut(f *types.File) error {
 	if f.ConflictOf == "" {
 		f.ConflictOf = existing.FileID
 	}
-	f.Path = s.nextConflictPath(originalPath, f.ModifiedBy, f.ModifiedAt)
+	conflictPath, err := s.nextConflictPath(originalPath, f.ModifiedBy, f.ModifiedAt)
+	if err != nil {
+		return err
+	}
+	f.Path = conflictPath
 	f.Name = path.Base(f.Path)
 	if f.ParentVersionID == "" {
 		f.ParentVersionID = existing.VersionID
@@ -33,22 +39,29 @@ func (s *Server) prepareFilePut(f *types.File) error {
 	return nil
 }
 
-func (s *Server) nextConflictPath(originalPath, nodeID string, modifiedAt time.Time) string {
+func (s *Server) nextConflictPath(originalPath, nodeID string, modifiedAt time.Time) (string, error) {
 	if modifiedAt.IsZero() {
 		modifiedAt = time.Now()
 	}
 	base := conflictPath(originalPath, nodeID, modifiedAt)
-	if _, err := s.store.GetFile(base); err == sql.ErrNoRows {
-		return base
+	if _, err := s.store.GetFile(base); err != nil {
+		if err == sql.ErrNoRows {
+			return base, nil
+		}
+		return "", err
 	}
 	ext := path.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
-	for i := 2; ; i++ {
+	for i := 2; i <= maxConflictPathAttempts; i++ {
 		candidate := fmt.Sprintf("%s-%d%s", stem, i, ext)
-		if _, err := s.store.GetFile(candidate); err == sql.ErrNoRows {
-			return candidate
+		if _, err := s.store.GetFile(candidate); err != nil {
+			if err == sql.ErrNoRows {
+				return candidate, nil
+			}
+			return "", err
 		}
 	}
+	return "", fmt.Errorf("too many conflict files for %s", originalPath)
 }
 
 func conflictPath(originalPath, nodeID string, modifiedAt time.Time) string {

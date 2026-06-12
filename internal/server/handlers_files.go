@@ -1,7 +1,7 @@
 package server
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,8 +9,8 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
-	"sync"
 	"time"
+
 	"github.com/google/uuid"
 	"github.com/pocketcluster/agent/internal/chunk"
 	"github.com/pocketcluster/agent/internal/types"
@@ -20,37 +20,6 @@ const (
 	maxUploadBytes       = 16 * 1024 * 1024 * 1024
 	maxUploadMemoryBytes = 8 * 1024 * 1024
 )
-
-var uploadProgress = struct {
-	m map[string]*uploadStatus
-	sync.RWMutex
-}{m: make(map[string]*uploadStatus)}
-
-type uploadStatus struct {
-	ID         string `json:"id"`
-	FileName   string `json:"file_name"`
-	TotalBytes int64  `json:"total_bytes"`
-	Status     string `json:"status"`
-	Error      string `json:"error,omitempty"`
-}
-
-func setUploadProgress(uploadID, status, errMsg string, totalBytes int64) {
-	uploadProgress.Lock()
-	defer uploadProgress.Unlock()
-	progress, ok := uploadProgress.m[uploadID]
-	if !ok {
-		return
-	}
-	if status != "" {
-		progress.Status = status
-	}
-	if errMsg != "" {
-		progress.Error = errMsg
-	}
-	if totalBytes >= 0 {
-		progress.TotalBytes = totalBytes
-	}
-}
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
@@ -69,54 +38,22 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uploadID := uuid.New().String()
-	progress := &uploadStatus{ID: uploadID, FileName: header.Filename, Status: "uploading"}
-	uploadProgress.Lock()
-	uploadProgress.m[uploadID] = progress
-	uploadProgress.Unlock()
-	defer func() {
-		uploadProgress.Lock()
-		delete(uploadProgress.m, uploadID)
-		uploadProgress.Unlock()
-	}()
+	s.uploadProgress.add(&uploadStatus{ID: uploadID, FileName: header.Filename, Status: "uploading"})
+	defer s.uploadProgress.delete(uploadID)
 	defer file.Close()
 
 	var chunkIDs []string
 	totalSize := int64(0)
-	var first [1]byte
 	for {
-		n, readErr := file.Read(first[:])
-		if readErr == io.EOF {
+		hash, size, err := s.chunks.StoreSized(file, chunk.ChunkSize)
+		if err == io.EOF || (err == nil && size == 0) {
 			break
 		}
-		if readErr != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", readErr.Error())
-			return
-		}
-		if n != 1 {
-			continue
-		}
-		hash, size, err := s.chunks.Store(io.MultiReader(bytes.NewReader(first[:]), io.LimitReader(file, chunk.ChunkSize-1)))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
-		now := time.Now()
-		if err := s.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: size, StoredAt: now}); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
-		}
-		replica := &types.Replica{
-			ChunkID:    hash,
-			NodeID:     s.cfg.NodeID,
-			Status:     "available",
-			StoredAt:   now,
-			VerifiedAt: now,
-		}
-		if err := s.store.UpsertReplica(replica); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
-		}
-		if _, err := s.appendEvent(types.EventChunkReplicaAdd, replica); err != nil {
+		if _, _, err := s.recordLocalChunkReplica(hash, size, time.Now()); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
@@ -159,19 +96,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	nodes, err := s.store.ListNodes()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	for _, chunkID := range chunkIDs {
-		if err := s.repairChunkReplicas(r.Context(), chunkID, nodes); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			setUploadProgress(uploadID, "error", err.Error(), -1)
-			return
-		}
-	}
-	setUploadProgress(uploadID, "done", "", totalSize)
+	repairChunkIDs := append([]string(nil), chunkIDs...)
+	go s.repairChunksAsync(repairChunkIDs)
+	s.uploadProgress.set(uploadID, "done", "", totalSize)
 	replicaStatus := s.replicaStatusForChunks(chunkIDs)
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
 		"file_id":        f.FileID,
@@ -182,6 +109,21 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		"replica_status": string(replicaStatus),
 		"conflict_of":    f.ConflictOf,
 	})})
+	// Trigger immediate health scan so the UI reflects the new file.
+	go s.runHealthScan(context.Background())
+}
+func (s *Server) repairChunksAsync(chunkIDs []string) {
+	nodes, err := s.store.ListNodes()
+	if err != nil {
+		log.Printf("upload repair: list nodes: %v", err)
+		return
+	}
+	for _, chunkID := range chunkIDs {
+		if err := s.repairChunkReplicas(context.Background(), chunkID, nodes); err != nil {
+			log.Printf("upload repair: chunk %s: %v", chunkID, err)
+		}
+	}
+	s.runHealthScan(context.Background())
 }
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -253,6 +195,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]string{"path": path, "status": "deleted"})})
 }
+
 // PATCH /api/files/rename — rename or move a file
 func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	var req struct {

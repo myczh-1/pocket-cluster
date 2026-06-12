@@ -7,19 +7,19 @@ import (
 
 type Node struct {
 	NodeID             string    `json:"node_id"`
-	Name               string    `json:"name"`
-	Platform           string    `json:"platform"`
+	Name               string    `json:"name,omitempty"`
+	Platform           string    `json:"platform,omitempty"`
 	Address            string    `json:"address"`
 	AddressCandidates  []string  `json:"address_candidates,omitempty"`
 	LastWorkingAddress string    `json:"last_working_address,omitempty"`
 	PublicKey          string    `json:"public_key"`
-	TotalBytes         int64     `json:"total_bytes"`
-	UsedBytes          int64     `json:"used_bytes"`
-	AvailableBytes     int64     `json:"available_bytes"`
-	Status             string    `json:"status"`
+	TotalBytes         int64     `json:"total_bytes,omitempty"`
+	UsedBytes          int64     `json:"used_bytes,omitempty"`
+	AvailableBytes     int64     `json:"available_bytes,omitempty"`
+	Status             string    `json:"status,omitempty"`
 	Trusted            bool      `json:"trusted"`
-	LastSeen           time.Time `json:"last_seen"`
-	JoinedAt           time.Time `json:"joined_at"`
+	LastSeen           time.Time `json:"last_seen,omitempty"`
+	JoinedAt           time.Time `json:"joined_at,omitempty"`
 }
 
 type File struct {
@@ -101,6 +101,19 @@ type Invite struct {
 	CreatedBy string    `json:"created_by"`
 }
 
+type PendingJoin struct {
+	NodeID          string    `json:"node_id"`
+	Name            string    `json:"name"`
+	Platform        string    `json:"platform"`
+	Address         string    `json:"address"`
+	ObservedAddress string    `json:"observed_address"`
+	PublicKey       string    `json:"public_key"`
+	TotalBytes      int64     `json:"total_bytes"`
+	AvailableBytes  int64     `json:"available_bytes"`
+	RequestedAt     time.Time `json:"requested_at"`
+	ExpiresAt       time.Time `json:"expires_at"`
+}
+
 type JoinRequest struct {
 	JoinToken    string     `json:"join_token,omitempty"`
 	PoolUser     string     `json:"pool_user,omitempty"`
@@ -119,27 +132,11 @@ type DeviceInfo struct {
 }
 
 type JoinResponse struct {
-	ClusterID     string    `json:"cluster_id"`
-	Approved      bool      `json:"approved"`
-	ExistingNodes []NodeRef `json:"existing_nodes"`
-	PoolUser      string    `json:"pool_user,omitempty"`
-	PoolPassHash  string    `json:"pool_pass_hash,omitempty"`
-}
-
-type NodeRef struct {
-	NodeID             string    `json:"node_id"`
-	Name               string    `json:"name,omitempty"`
-	Platform           string    `json:"platform,omitempty"`
-	Address            string    `json:"address"`
-	AddressCandidates  []string  `json:"address_candidates,omitempty"`
-	LastWorkingAddress string    `json:"last_working_address,omitempty"`
-	PublicKey          string    `json:"public_key"`
-	TotalBytes         int64     `json:"total_bytes,omitempty"`
-	UsedBytes          int64     `json:"used_bytes,omitempty"`
-	AvailableBytes     int64     `json:"available_bytes,omitempty"`
-	Status             string    `json:"status,omitempty"`
-	LastSeen           time.Time `json:"last_seen,omitempty"`
-	JoinedAt           time.Time `json:"joined_at,omitempty"`
+	ClusterID     string `json:"cluster_id"`
+	Approved      bool   `json:"approved"`
+	ExistingNodes []Node `json:"existing_nodes"`
+	PoolUser      string `json:"pool_user,omitempty"`
+	PoolPassHash  string `json:"pool_pass_hash,omitempty"`
 }
 type APIResponse struct {
 	OK    bool            `json:"ok"`

@@ -2,11 +2,11 @@ package server
 
 import (
 	"context"
+	"github.com/pocketcluster/agent/internal/types"
 	"log"
 	"net/http"
 	"sync"
 	"time"
-	"github.com/pocketcluster/agent/internal/types"
 )
 
 const (
@@ -16,27 +16,27 @@ const (
 
 // HealthSummary describes the overall replica health of the pool.
 type HealthSummary struct {
-	TotalFiles      int                `json:"total_files"`
-	TotalChunks     int                `json:"total_chunks"`
-	HealthyChunks   int                `json:"healthy_chunks"`
-	UnderReplicated int                `json:"under_replicated_chunks"`
-	Unavailable     int                `json:"unavailable_chunks"`
-	RepairingChunks int                `json:"repairing_chunks"`
+	TotalFiles      int                 `json:"total_files"`
+	TotalChunks     int                 `json:"total_chunks"`
+	HealthyChunks   int                 `json:"healthy_chunks"`
+	UnderReplicated int                 `json:"under_replicated_chunks"`
+	Unavailable     int                 `json:"unavailable_chunks"`
+	RepairingChunks int                 `json:"repairing_chunks"`
 	OverallStatus   types.ReplicaStatus `json:"overall_status"`
-	LastScanAt      time.Time          `json:"last_scan_at"`
-	LastRepairAt    time.Time          `json:"last_repair_at"`
+	LastScanAt      time.Time           `json:"last_scan_at"`
+	LastRepairAt    time.Time           `json:"last_repair_at"`
 }
 
 // ChunkHealthDetail describes a single chunk's replica health.
 type ChunkHealthDetail struct {
-	ChunkID          string             `json:"chunk_id"`
-	SizeBytes        int64              `json:"size_bytes"`
-	ReplicaCount     int                `json:"replica_count"`
-	OnlineReplicas   int                `json:"online_replicas"`
-	TargetReplicas   int                `json:"target_replicas"`
+	ChunkID          string              `json:"chunk_id"`
+	SizeBytes        int64               `json:"size_bytes"`
+	ReplicaCount     int                 `json:"replica_count"`
+	OnlineReplicas   int                 `json:"online_replicas"`
+	TargetReplicas   int                 `json:"target_replicas"`
 	Status           types.ReplicaStatus `json:"status"`
-	ReplicaNodes     []ReplicaNodeInfo  `json:"replica_nodes"`
-	ReferencingFiles []string           `json:"referencing_files,omitempty"`
+	ReplicaNodes     []ReplicaNodeInfo   `json:"replica_nodes"`
+	ReferencingFiles []string            `json:"referencing_files,omitempty"`
 }
 
 // ReplicaNodeInfo describes a replica on a specific node.
@@ -66,15 +66,16 @@ type healthScanner struct {
 	underReplicated  []string        // chunkIDs needing repair, set by scan
 	skipRemoteVerify bool            // skip HEAD verification in tests
 }
+
 func newHealthScanner() *healthScanner {
 	return &healthScanner{
 		chunkHealth: make(map[string]ChunkHealthDetail),
 		repairing:   make(map[string]bool),
 	}
 }
+
 // StartHealthScan runs the periodic health scan loop.
 func (s *Server) StartHealthScan(ctx context.Context) {
-	s.health = newHealthScanner()
 	ticker := time.NewTicker(healthScanInterval)
 	defer ticker.Stop()
 	// Run once immediately on startup
@@ -251,6 +252,7 @@ func (s *Server) CleanupTombstones() error {
 	}
 	return nil
 }
+
 // DrainUnderReplicated returns and clears the under-replicated chunk list from the last scan.
 func (s *Server) DrainUnderReplicated() []string {
 	s.health.mu.Lock()
@@ -259,6 +261,14 @@ func (s *Server) DrainUnderReplicated() []string {
 	s.health.underReplicated = nil
 	return chunks
 }
+
+// QueueUnderReplicated adds chunks back to the under-replicated queue for retry.
+func (s *Server) QueueUnderReplicated(chunkIDs []string) {
+	s.health.mu.Lock()
+	defer s.health.mu.Unlock()
+	s.health.underReplicated = append(s.health.underReplicated, chunkIDs...)
+}
+
 // MarkRepairing sets the repairing state for a chunk (for UI display).
 func (s *Server) MarkRepairing(chunkID string, repairing bool) {
 	s.health.mu.Lock()
@@ -269,6 +279,7 @@ func (s *Server) MarkRepairing(chunkID string, repairing bool) {
 		delete(s.health.repairing, chunkID)
 	}
 }
+
 // SetLastRepairAt updates the last repair timestamp.
 func (s *Server) SetLastRepairAt(t time.Time) {
 	s.health.mu.Lock()
@@ -323,6 +334,7 @@ func (s *Server) FileHealth(fileID string) (*FileHealthDetail, error) {
 		Chunks:     chunks,
 	}, nil
 }
+
 // verifyRemoteChunkExists checks if a remote node actually has a chunk via HEAD request.
 func (s *Server) verifyRemoteChunkExists(nodeAddress, chunkID string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -335,7 +347,7 @@ func (s *Server) verifyRemoteChunkExists(nodeAddress, chunkID string) bool {
 	if err := s.signPeerRequest(req, emptyBodySHA256); err != nil {
 		return false
 	}
-	resp, err := peerHTTPClient.Do(req)
+	resp, err := s.peerHTTPClient.Do(req)
 	if err != nil {
 		return false
 	}

@@ -21,6 +21,9 @@ GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ${BUILD_DIR}/agent-w
 GOOS=windows GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ${BUILD_DIR}/agent-windows-arm64.exe ./cmd/agent
 GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="${LDFLAGS}" -o ${BUILD_DIR}/agent-android-arm64 ./cmd/agent
 
+echo "Copying Android binary to jniLibs..."
+mkdir -p android/app/src/main/jniLibs/arm64-v8a
+cp ${BUILD_DIR}/agent-android-arm64 android/app/src/main/jniLibs/arm64-v8a/libpocketcluster.so
 echo ""
 echo "Build complete:"
 ls -lh ${BUILD_DIR}/

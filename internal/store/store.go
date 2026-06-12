@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
-	"unicode"
 
 	_ "modernc.org/sqlite"
 
@@ -37,12 +35,16 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-var schemaVersion = 4
+var schemaVersion = 5
 
 func (s *Store) migrate() error {
-	s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`)
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
+		return fmt.Errorf("create schema_version table: %w", err)
+	}
 	var current int
-	s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&current)
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&current); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
 
 	if current < 1 {
 		if err := s.migrateV1(); err != nil {
@@ -64,10 +66,28 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if current < 5 {
+		if err := s.migrateV5(); err != nil {
+			return err
+		}
+	}
 
 	if current < schemaVersion {
-		s.db.Exec(`DELETE FROM schema_version`)
-		s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, schemaVersion)
+		tx, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin schema version tx: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("delete schema_version: %w", err)
+		}
+		if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, schemaVersion); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("insert schema_version: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit schema_version: %w", err)
+		}
 	}
 	return nil
 }
@@ -190,7 +210,26 @@ func (s *Store) migrateV4() error {
 	return s.addColumnIfMissing("pending_joins", "observed_address", "TEXT NOT NULL DEFAULT ''")
 }
 
+func (s *Store) migrateV5() error {
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS snapshots (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		snapshot_id TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		created_by TEXT NOT NULL DEFAULT '',
+		last_event_id TEXT NOT NULL DEFAULT '',
+		data TEXT NOT NULL DEFAULT '{}'
+	)`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_snapshots_created_at ON snapshots(created_at)`)
+	return err
+}
+
 func (s *Store) addColumnIfMissing(table, column, definition string) error {
+	if !isMigrationIdentifier(table) || !isMigrationIdentifier(column) || !isMigrationColumnDefinition(definition) {
+		return fmt.Errorf("unsafe migration column definition: %s.%s %s", table, column, definition)
+	}
 	exists, err := s.columnExists(table, column)
 	if err != nil {
 		return err
@@ -198,14 +237,17 @@ func (s *Store) addColumnIfMissing(table, column, definition string) error {
 	if exists {
 		return nil
 	}
-	if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition)); err != nil {
+	if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", quoteMigrationIdentifier(table), quoteMigrationIdentifier(column), definition)); err != nil {
 		return fmt.Errorf("add column %s.%s: %w", table, column, err)
 	}
 	return nil
 }
 
 func (s *Store) columnExists(table, column string) (bool, error) {
-	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if !isMigrationIdentifier(table) || !isMigrationIdentifier(column) {
+		return false, fmt.Errorf("unsafe migration identifier: %s.%s", table, column)
+	}
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", quoteMigrationIdentifier(table)))
 	if err != nil {
 		return false, err
 	}
@@ -225,6 +267,41 @@ func (s *Store) columnExists(table, column string) (bool, error) {
 	}
 	return false, rows.Err()
 }
+func isMigrationIdentifier(identifier string) bool {
+	if identifier == "" {
+		return false
+	}
+	for i := 0; i < len(identifier); i++ {
+		c := identifier[i]
+		if c >= 'a' && c <= 'z' {
+			continue
+		}
+		if c >= 'A' && c <= 'Z' {
+			continue
+		}
+		if c == '_' {
+			continue
+		}
+		if i > 0 && c >= '0' && c <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func quoteMigrationIdentifier(identifier string) string {
+	return `"` + identifier + `"`
+}
+
+func isMigrationColumnDefinition(definition string) bool {
+	switch definition {
+	case "TEXT NOT NULL DEFAULT '[]'", "TEXT NOT NULL DEFAULT ''":
+		return true
+	default:
+		return false
+	}
+}
 
 func (s *Store) seedFileSearchIndex() error {
 	var indexed int
@@ -241,775 +318,6 @@ func (s *Store) seedFileSearchIndex() error {
 func (s *Store) clearLoopbackAddresses() error {
 	_, err := s.db.Exec(`UPDATE nodes SET address = '', address_candidates = '[]', last_working_address = '' WHERE address LIKE 'localhost:%' OR address LIKE '127.0.0.1:%' OR address LIKE '[::1]:%'`)
 	return err
-}
-
-func (s *Store) indexFile(f *types.File) error {
-	if _, err := s.db.Exec(`DELETE FROM files_fts WHERE file_id = ?`, f.FileID); err != nil {
-		return err
-	}
-	if f.Deleted {
-		return nil
-	}
-	_, err := s.db.Exec(`INSERT INTO files_fts (file_id, name, path) VALUES (?, ?, ?)`, f.FileID, f.Name, f.Path)
-	return err
-}
-
-func (s *Store) deleteFileIndex(fileID string) error {
-	_, err := s.db.Exec(`DELETE FROM files_fts WHERE file_id = ?`, fileID)
-	return err
-}
-
-func fileSearchQuery(keyword string) string {
-	var parts []string
-	var token []rune
-	flush := func() {
-		if len(token) == 0 {
-			return
-		}
-		parts = append(parts, `"`+string(token)+`"*`)
-		token = token[:0]
-	}
-	for _, r := range keyword {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			token = append(token, unicode.ToLower(r))
-			continue
-		}
-		flush()
-	}
-	flush()
-	return strings.Join(parts, " ")
-}
-func isDirectChild(parent, child string) bool {
-	if parent == "" {
-		parent = "/"
-	}
-	if parent == "/" {
-		if child == "/" || !strings.HasPrefix(child, "/") {
-			return false
-		}
-		return !strings.Contains(child[1:], "/")
-	}
-	prefix := strings.TrimRight(parent, "/") + "/"
-	if !strings.HasPrefix(child, prefix) {
-		return false
-	}
-	return !strings.Contains(child[len(prefix):], "/")
-}
-
-// Node operations
-
-func (s *Store) UpsertNode(n *types.Node) error {
-	candidates, err := json.Marshal(n.AddressCandidates)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`INSERT INTO nodes
-		(node_id, name, platform, address, address_candidates, last_working_address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(node_id) DO UPDATE SET
-			name = CASE WHEN excluded.name != '' THEN excluded.name ELSE nodes.name END,
-			platform = CASE WHEN excluded.platform != '' THEN excluded.platform ELSE nodes.platform END,
-			address = CASE WHEN excluded.address != '' THEN excluded.address ELSE nodes.address END,
-			address_candidates = CASE WHEN excluded.address_candidates != '[]' THEN excluded.address_candidates ELSE nodes.address_candidates END,
-			last_working_address = CASE WHEN excluded.last_working_address != '' THEN excluded.last_working_address ELSE nodes.last_working_address END,
-			public_key = CASE WHEN excluded.public_key != '' THEN excluded.public_key ELSE nodes.public_key END,
-			total_bytes = CASE WHEN excluded.total_bytes != 0 THEN excluded.total_bytes ELSE nodes.total_bytes END,
-			used_bytes = excluded.used_bytes,
-			available_bytes = CASE WHEN excluded.available_bytes != 0 THEN excluded.available_bytes ELSE nodes.available_bytes END,
-			status = CASE WHEN excluded.status != '' THEN excluded.status ELSE nodes.status END,
-			trusted = CASE WHEN excluded.trusted != 0 THEN excluded.trusted ELSE nodes.trusted END,
-			last_seen = CASE WHEN excluded.last_seen != 0 THEN excluded.last_seen ELSE nodes.last_seen END,
-			joined_at = CASE WHEN excluded.joined_at != 0 THEN excluded.joined_at ELSE nodes.joined_at END`,
-		n.NodeID, n.Name, n.Platform, n.Address, string(candidates), n.LastWorkingAddress, n.PublicKey, n.TotalBytes, n.UsedBytes, n.AvailableBytes,
-		n.Status, boolToInt(n.Trusted), timeMillis(n.LastSeen), timeMillis(n.JoinedAt))
-	return err
-}
-
-func (s *Store) UpdateNodeStatus(nodeID, status string, lastSeen time.Time) error {
-	_, err := s.db.Exec(`UPDATE nodes SET status = ?, last_seen = ? WHERE node_id = ?`,
-		status, timeMillis(lastSeen), nodeID)
-	return err
-}
-
-func (s *Store) UpdateNodeLastWorkingAddress(nodeID, address string, lastSeen time.Time) error {
-	_, err := s.db.Exec(`UPDATE nodes SET last_working_address = ?, status = 'online', last_seen = ? WHERE node_id = ?`,
-		address, timeMillis(lastSeen), nodeID)
-	return err
-}
-
-func (s *Store) MarkStaleNodesOffline(cutoff time.Time) (int64, error) {
-	res, err := s.db.Exec(`UPDATE nodes SET status = 'offline' WHERE status = 'online' AND trusted = 1 AND last_seen > 0 AND last_seen < ?`,
-		timeMillis(cutoff))
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
-}
-
-func (s *Store) UpdateNodeFull(n *types.Node) error {
-	candidates, err := json.Marshal(n.AddressCandidates)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`INSERT INTO nodes
-		(node_id, name, platform, address, address_candidates, last_working_address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(node_id) DO UPDATE SET
-			name = excluded.name,
-			platform = excluded.platform,
-			address = excluded.address,
-			address_candidates = excluded.address_candidates,
-			last_working_address = excluded.last_working_address,
-			public_key = excluded.public_key,
-			total_bytes = excluded.total_bytes,
-			used_bytes = excluded.used_bytes,
-			available_bytes = excluded.available_bytes,
-			status = excluded.status,
-			trusted = excluded.trusted,
-			last_seen = excluded.last_seen,
-			joined_at = CASE WHEN excluded.joined_at != 0 THEN excluded.joined_at ELSE nodes.joined_at END`,
-		n.NodeID, n.Name, n.Platform, n.Address, string(candidates), n.LastWorkingAddress, n.PublicKey, n.TotalBytes, n.UsedBytes, n.AvailableBytes,
-		n.Status, boolToInt(n.Trusted), timeMillis(n.LastSeen), timeMillis(n.JoinedAt))
-	return err
-}
-func (s *Store) GetNode(nodeID string) (*types.Node, error) {
-	row := s.db.QueryRow(`SELECT node_id, name, platform, address, address_candidates, last_working_address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes WHERE node_id = ?`, nodeID)
-	return scanNode(row)
-}
-
-func (s *Store) HasTrustedNodeAtAddress(address string) bool {
-	var count int
-	s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE trusted = 1 AND (address = ? OR last_working_address = ? OR address_candidates LIKE ?)`,
-		address, address, "%\""+address+"\"%").Scan(&count)
-	return count > 0
-}
-
-func (s *Store) ListNodes() ([]types.Node, error) {
-	rows, err := s.db.Query(`SELECT node_id, name, platform, address, address_candidates, last_working_address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var nodes []types.Node
-	for rows.Next() {
-		n, err := scanNodeRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		nodes = append(nodes, *n)
-	}
-	return nodes, rows.Err()
-}
-
-// File operations
-
-func (s *Store) UpsertFile(f *types.File) error {
-	chunkJSON, err := json.Marshal(f.ChunkIDs)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`INSERT OR REPLACE INTO files
-		(file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.FileID, f.Name, f.Path, boolToInt(f.IsDir), f.SizeBytes, f.MimeType,
-		f.VersionID, f.ParentVersionID, string(chunkJSON),
-		f.CreatedAt.UnixMilli(), f.ModifiedAt.UnixMilli(), f.ModifiedBy,
-		boolToInt(f.Deleted), f.ConflictOf)
-	if err != nil {
-		return err
-	}
-	return s.indexFile(f)
-}
-
-func (s *Store) GetFile(path string) (*types.File, error) {
-	row := s.db.QueryRow(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE path = ? AND deleted = 0`, path)
-	return scanFile(row)
-}
-
-func (s *Store) GetFileByID(fileID string) (*types.File, error) {
-	row := s.db.QueryRow(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE file_id = ?`, fileID)
-	return scanFile(row)
-}
-
-func (s *Store) ListFiles(dirPath string) ([]types.File, error) {
-	var rows *sql.Rows
-	var err error
-	if dirPath == "/" || dirPath == "" {
-		rows, err = s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE deleted = 0 AND path LIKE '/%' ESCAPE '\' AND INSTR(SUBSTR(path, 2), '/') = 0 ORDER BY path ASC`)
-	} else {
-		prefix := strings.TrimRight(dirPath, "/") + "/"
-		escaped := escapeLike(prefix)
-		rows, err = s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE deleted = 0 AND path LIKE ? ESCAPE '\' AND INSTR(SUBSTR(path, ?), '/') = 0 ORDER BY path ASC`, escaped+"%", len(prefix)+1)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var files []types.File
-	for rows.Next() {
-		f, err := scanFileRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, *f)
-	}
-	return files, rows.Err()
-}
-// escapeLike escapes % and _ for SQLite LIKE patterns.
-func escapeLike(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `%`, `\%`)
-	s = strings.ReplaceAll(s, `_`, `\_`)
-	return s
-}
-
-func (s *Store) MarkFileDeleted(path string, deletedBy string) error {
-	_, err := s.db.Exec(`UPDATE files SET deleted = 1, modified_by = ?, modified_at = ? WHERE path = ? AND deleted = 0`,
-		deletedBy, time.Now().UnixMilli(), path)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`DELETE FROM files_fts WHERE file_id IN (SELECT file_id FROM files WHERE path = ?)`, path)
-	return err
-}
-// MarkChildrenDeleted soft-deletes all files and directories under dirPath (inclusive).
-func (s *Store) MarkChildrenDeleted(dirPath string, deletedBy string) error {
-	now := time.Now().UnixMilli()
-	prefix := strings.TrimSuffix(dirPath, "/") + "/"
-	_, err := s.db.Exec(`UPDATE files SET deleted = 1, modified_by = ?, modified_at = ? WHERE (path = ? OR path LIKE ? || '%') AND deleted = 0`,
-		deletedBy, now, dirPath, prefix)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`DELETE FROM files_fts WHERE file_id IN (SELECT file_id FROM files WHERE deleted = 1 AND (path = ? OR path LIKE ? || '%'))`, dirPath, prefix)
-	return err
-}
-func (s *Store) PurgeFile(fileID string) error {
-	_, err := s.db.Exec(`DELETE FROM files WHERE file_id = ? AND deleted = 1`, fileID)
-	if err != nil {
-		return err
-	}
-	return s.deleteFileIndex(fileID)
-}
-// RenameChildren updates the paths of all children when a directory is renamed.
-func (s *Store) RenameChildren(oldDirPath, newDirPath, modifiedBy string, modifiedAt time.Time) error {
-	oldPrefix := strings.TrimSuffix(oldDirPath, "/") + "/"
-	newPrefix := strings.TrimSuffix(newDirPath, "/") + "/"
-	millis := timeMillis(modifiedAt)
-	rows, err := s.db.Query(`SELECT file_id, path FROM files WHERE path LIKE ? || '%' AND deleted = 0`, oldPrefix)
-	if err != nil {
-		return err
-	}
-	type update struct {
-		fileID string
-		newP   string
-		newN   string
-	}
-	var updates []update
-	for rows.Next() {
-		var fileID, childPath string
-		if err := rows.Scan(&fileID, &childPath); err != nil {
-			continue
-		}
-		rest := childPath[len(oldPrefix):]
-		np := newPrefix + rest
-		updates = append(updates, update{fileID: fileID, newP: np, newN: filepath.Base(np)})
-	}
-	rows.Close()
-	for _, u := range updates {
-		if _, err := s.db.Exec(`UPDATE files SET path = ?, name = ?, modified_by = ?, modified_at = ? WHERE file_id = ?`,
-			u.newP, u.newN, modifiedBy, millis, u.fileID); err != nil {
-			return err
-		}
-		// Update FTS
-		s.db.Exec(`DELETE FROM files_fts WHERE file_id = ?`, u.fileID)
-		s.db.Exec(`INSERT INTO files_fts (file_id, name, path) VALUES (?, ?, ?)`, u.fileID, u.newN, u.newP)
-	}
-	return nil
-}
-
-func (s *Store) RenameFile(fileID, oldPath, newPath string, modifiedBy string, modifiedAt time.Time) error {
-	name := filepath.Base(newPath)
-	_, err := s.db.Exec(`UPDATE files SET path = ?, name = ?, modified_by = ?, modified_at = ? WHERE file_id = ? AND path = ? AND deleted = 0`,
-		newPath, name, modifiedBy, timeMillis(modifiedAt), fileID, oldPath)
-	if err != nil {
-		return err
-	}
-	if err := s.deleteFileIndex(fileID); err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`INSERT INTO files_fts (file_id, name, path) VALUES (?, ?, ?)`, fileID, name, newPath)
-	return err
-}
-
-func (s *Store) MarkFileConflict(originalFileID, conflictFileID, conflictPath, conflictVersionID, parentVersionID, modifiedBy string, modifiedAt time.Time) error {
-	name := filepath.Base(conflictPath)
-	ts := timeMillis(modifiedAt)
-	res, err := s.db.Exec(`UPDATE files SET path = ?, name = ?, version_id = ?, parent_version_id = ?, conflict_of = ?, modified_by = ?, modified_at = ? WHERE file_id = ?`,
-		conflictPath, name, conflictVersionID, parentVersionID, originalFileID, modifiedBy, ts, conflictFileID)
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows != 0 {
-		return s.indexFile(&types.File{FileID: conflictFileID, Name: name, Path: conflictPath})
-	}
-	_, err = s.db.Exec(`INSERT INTO files (file_id, name, path, version_id, parent_version_id, created_at, modified_at, modified_by, conflict_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		conflictFileID, name, conflictPath, conflictVersionID, parentVersionID, ts, ts, modifiedBy, originalFileID)
-	if err != nil {
-		return err
-	}
-	return s.indexFile(&types.File{FileID: conflictFileID, Name: name, Path: conflictPath})
-}
-
-func (s *Store) ListAllFilesIncludingDeleted() ([]types.File, error) {
-	rows, err := s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files ORDER BY path ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var files []types.File
-	for rows.Next() {
-		f, err := scanFileRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, *f)
-	}
-	return files, rows.Err()
-}
-
-func (s *Store) ListAllFiles() ([]types.File, error) {
-	rows, err := s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE deleted = 0`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var files []types.File
-	for rows.Next() {
-		f, err := scanFileRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, *f)
-	}
-	return files, rows.Err()
-}
-
-func (s *Store) SearchFiles(keyword string) ([]types.File, error) {
-	query := fileSearchQuery(keyword)
-	if query == "" {
-		return []types.File{}, nil
-	}
-	rows, err := s.db.Query(`SELECT f.file_id, f.name, f.path, f.is_dir, f.size_bytes, f.mime_type, f.version_id, f.parent_version_id, f.chunk_ids, f.created_at, f.modified_at, f.modified_by, f.deleted, f.conflict_of
-		FROM files f
-		JOIN files_fts ON files_fts.file_id = f.file_id
-		WHERE f.deleted = 0 AND files_fts MATCH ?
-		ORDER BY f.path ASC`, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var files []types.File
-	for rows.Next() {
-		f, err := scanFileRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, *f)
-	}
-	return files, rows.Err()
-}
-
-// Chunk operations
-
-func (s *Store) UpsertChunk(c *types.Chunk) error {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO chunks (chunk_id, size_bytes, stored_at) VALUES (?, ?, ?)`,
-		c.ChunkID, c.SizeBytes, c.StoredAt.UnixMilli())
-	return err
-}
-
-func (s *Store) GetChunk(chunkID string) (*types.Chunk, error) {
-	row := s.db.QueryRow(`SELECT chunk_id, size_bytes, stored_at FROM chunks WHERE chunk_id = ?`, chunkID)
-	var c types.Chunk
-	var ts int64
-	if err := row.Scan(&c.ChunkID, &c.SizeBytes, &ts); err != nil {
-		return nil, err
-	}
-	c.StoredAt = time.UnixMilli(ts)
-	return &c, nil
-}
-
-// Replica operations
-func (s *Store) ListChunks() ([]types.Chunk, error) {
-	rows, err := s.db.Query(`SELECT chunk_id, size_bytes, stored_at FROM chunks`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var chunks []types.Chunk
-	for rows.Next() {
-		var c types.Chunk
-		var ts int64
-		if err := rows.Scan(&c.ChunkID, &c.SizeBytes, &ts); err != nil {
-			return nil, err
-		}
-		c.StoredAt = time.UnixMilli(ts)
-		chunks = append(chunks, c)
-	}
-	return chunks, rows.Err()
-}
-
-func (s *Store) UpsertReplica(r *types.Replica) error {
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO replicas (chunk_id, node_id, status, stored_at, verified_at) VALUES (?, ?, ?, ?, ?)`,
-		r.ChunkID, r.NodeID, r.Status, r.StoredAt.UnixMilli(), r.VerifiedAt.UnixMilli())
-	return err
-}
-
-func (s *Store) ListReplicas() ([]types.Replica, error) {
-	rows, err := s.db.Query(`SELECT chunk_id, node_id, status, stored_at, verified_at FROM replicas ORDER BY chunk_id ASC, node_id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var reps []types.Replica
-	for rows.Next() {
-		var r types.Replica
-		var stored, verified int64
-		if err := rows.Scan(&r.ChunkID, &r.NodeID, &r.Status, &stored, &verified); err != nil {
-			return nil, err
-		}
-		r.StoredAt = time.UnixMilli(stored)
-		r.VerifiedAt = time.UnixMilli(verified)
-		reps = append(reps, r)
-	}
-	return reps, rows.Err()
-}
-
-func (s *Store) MarkReplicaRemoved(chunkID, nodeID string, verifiedAt time.Time) error {
-	_, err := s.db.Exec(`UPDATE replicas SET status = 'removed', verified_at = ? WHERE chunk_id = ? AND node_id = ?`,
-		timeMillis(verifiedAt), chunkID, nodeID)
-	return err
-}
-
-func (s *Store) GetReplicas(chunkID string) ([]types.Replica, error) {
-	rows, err := s.db.Query(`SELECT chunk_id, node_id, status, stored_at, verified_at FROM replicas WHERE chunk_id = ?`, chunkID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var reps []types.Replica
-	for rows.Next() {
-		var r types.Replica
-		var stored, verified int64
-		if err := rows.Scan(&r.ChunkID, &r.NodeID, &r.Status, &stored, &verified); err != nil {
-			return nil, err
-		}
-		r.StoredAt = time.UnixMilli(stored)
-		r.VerifiedAt = time.UnixMilli(verified)
-		reps = append(reps, r)
-	}
-	return reps, rows.Err()
-}
-func (s *Store) GetNodeChunkIDs(nodeID string) ([]string, error) {
-	rows, err := s.db.Query(`SELECT chunk_id FROM replicas WHERE node_id = ? AND status = 'available'`, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
-// Invite operations
-
-func (s *Store) CreateInvite(invite *types.Invite) error {
-	_, err := s.db.Exec(`INSERT INTO invites (token_hash, created_at, expires_at, used_at, created_by) VALUES (?, ?, ?, ?, ?)`,
-		invite.TokenHash, timeMillis(invite.CreatedAt), timeMillis(invite.ExpiresAt), timeMillis(invite.UsedAt), invite.CreatedBy)
-	return err
-}
-
-func (s *Store) UseInvite(tokenHash string, now time.Time) (bool, error) {
-	res, err := s.db.Exec(`UPDATE invites SET used_at = ? WHERE token_hash = ? AND used_at = 0 AND expires_at > ?`,
-		timeMillis(now), tokenHash, timeMillis(now))
-	if err != nil {
-		return false, err
-	}
-	rows, err := res.RowsAffected()
-	return rows == 1, err
-}
-
-// Event operations
-
-func (s *Store) InsertEvent(e *types.Event) (bool, error) {
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO events (event_id, type, node_id, seq, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?)`,
-		e.EventID, string(e.Type), e.NodeID, e.Seq, e.Timestamp.UnixMilli(), string(e.Payload))
-	if err != nil {
-		return false, err
-	}
-	rows, err := res.RowsAffected()
-	return rows > 0, err
-}
-
-func (s *Store) GetEventsSince(sinceEventID string, limit int) ([]types.Event, error) {
-	if limit <= 0 {
-		limit = 1000
-	}
-	var rows *sql.Rows
-	var err error
-	if sinceEventID == "" {
-		rows, err = s.db.Query(`SELECT event_id, type, node_id, seq, timestamp, payload FROM events ORDER BY node_id ASC, seq ASC LIMIT ?`, limit)
-	} else {
-		rows, err = s.db.Query(`SELECT event_id, type, node_id, seq, timestamp, payload FROM events WHERE event_id > ? ORDER BY event_id ASC LIMIT ?`, sinceEventID, limit)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var events []types.Event
-	for rows.Next() {
-		var e types.Event
-		var ts int64
-		var typ string
-		var payload string
-		if err := rows.Scan(&e.EventID, &typ, &e.NodeID, &e.Seq, &ts, &payload); err != nil {
-			return nil, err
-		}
-		e.Type = types.EventType(typ)
-		e.Timestamp = time.UnixMilli(ts)
-		e.Payload = json.RawMessage(payload)
-		events = append(events, e)
-	}
-	return events, rows.Err()
-}
-
-func (s *Store) GetUnpushedEvents(peerNodeID string, limit int) ([]types.Event, error) {
-	if limit <= 0 {
-		limit = 1000
-	}
-	rows, err := s.db.Query(`SELECT e.event_id, e.type, e.node_id, e.seq, e.timestamp, e.payload
-		FROM events e
-		WHERE NOT EXISTS (
-			SELECT 1 FROM peer_pushed_events p
-			WHERE p.peer_node_id = ? AND p.event_id = e.event_id
-		)
-		ORDER BY e.node_id ASC, e.seq ASC
-		LIMIT ?`, peerNodeID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var events []types.Event
-	for rows.Next() {
-		var e types.Event
-		var ts int64
-		var typ string
-		var payload string
-		if err := rows.Scan(&e.EventID, &typ, &e.NodeID, &e.Seq, &ts, &payload); err != nil {
-			return nil, err
-		}
-		e.Type = types.EventType(typ)
-		e.Timestamp = time.UnixMilli(ts)
-		e.Payload = json.RawMessage(payload)
-		events = append(events, e)
-	}
-	return events, rows.Err()
-}
-
-func (s *Store) MarkEventsPushed(peerNodeID string, events []types.Event, pushedAt time.Time) error {
-	if len(events) == 0 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, e := range events {
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO peer_pushed_events (peer_node_id, event_id, pushed_at) VALUES (?, ?, ?)`,
-			peerNodeID, e.EventID, timeMillis(pushedAt)); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *Store) NextSeq(nodeID string) (int64, error) {
-	row := s.db.QueryRow(`SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE node_id = ?`, nodeID)
-	var seq int64
-	if err := row.Scan(&seq); err != nil {
-		return 0, err
-	}
-	return seq, nil
-}
-
-type MetadataSnapshot struct {
-	LastEventID string
-	Nodes       []types.Node
-	Files       []types.File
-	Chunks      []types.Chunk
-	Replicas    []types.Replica
-}
-
-func (s *Store) MetadataSnapshot() (*MetadataSnapshot, error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	nodes, err := listNodesTx(tx)
-	if err != nil {
-		return nil, err
-	}
-	files, err := listAllFilesIncludingDeletedTx(tx)
-	if err != nil {
-		return nil, err
-	}
-	chunks, err := listChunksTx(tx)
-	if err != nil {
-		return nil, err
-	}
-	replicas, err := listReplicasTx(tx)
-	if err != nil {
-		return nil, err
-	}
-	lastEventID, err := latestEventIDTx(tx)
-	if err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return &MetadataSnapshot{
-		LastEventID: lastEventID,
-		Nodes:       nodes,
-		Files:       files,
-		Chunks:      chunks,
-		Replicas:    replicas,
-	}, nil
-}
-
-func listNodesTx(tx *sql.Tx) ([]types.Node, error) {
-	rows, err := tx.Query(`SELECT node_id, name, platform, address, address_candidates, last_working_address, public_key, total_bytes, used_bytes, available_bytes, status, trusted, last_seen, joined_at FROM nodes`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var nodes []types.Node
-	for rows.Next() {
-		n, err := scanNodeRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		nodes = append(nodes, *n)
-	}
-	return nodes, rows.Err()
-}
-
-func listAllFilesIncludingDeletedTx(tx *sql.Tx) ([]types.File, error) {
-	rows, err := tx.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files ORDER BY path ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var files []types.File
-	for rows.Next() {
-		f, err := scanFileRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, *f)
-	}
-	return files, rows.Err()
-}
-
-func listChunksTx(tx *sql.Tx) ([]types.Chunk, error) {
-	rows, err := tx.Query(`SELECT chunk_id, size_bytes, stored_at FROM chunks`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var chunks []types.Chunk
-	for rows.Next() {
-		var c types.Chunk
-		var ts int64
-		if err := rows.Scan(&c.ChunkID, &c.SizeBytes, &ts); err != nil {
-			return nil, err
-		}
-		c.StoredAt = time.UnixMilli(ts)
-		chunks = append(chunks, c)
-	}
-	return chunks, rows.Err()
-}
-
-func listReplicasTx(tx *sql.Tx) ([]types.Replica, error) {
-	rows, err := tx.Query(`SELECT chunk_id, node_id, status, stored_at, verified_at FROM replicas ORDER BY chunk_id ASC, node_id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var reps []types.Replica
-	for rows.Next() {
-		var r types.Replica
-		var stored, verified int64
-		if err := rows.Scan(&r.ChunkID, &r.NodeID, &r.Status, &stored, &verified); err != nil {
-			return nil, err
-		}
-		r.StoredAt = time.UnixMilli(stored)
-		r.VerifiedAt = time.UnixMilli(verified)
-		reps = append(reps, r)
-	}
-	return reps, rows.Err()
-}
-
-func latestEventIDTx(tx *sql.Tx) (string, error) {
-	row := tx.QueryRow(`SELECT event_id FROM events ORDER BY timestamp DESC, node_id DESC, seq DESC LIMIT 1`)
-	var eventID string
-	if err := row.Scan(&eventID); err != nil {
-		if err == sql.ErrNoRows {
-			return "", nil
-		}
-		return "", err
-	}
-	return eventID, nil
-}
-func (s *Store) LatestEventID() (string, error) {
-	row := s.db.QueryRow(`SELECT event_id FROM events ORDER BY timestamp DESC, node_id DESC, seq DESC LIMIT 1`)
-	var eventID string
-	if err := row.Scan(&eventID); err != nil {
-		if err == sql.ErrNoRows {
-			return "", nil
-		}
-		return "", err
-	}
-	return eventID, nil
-}
-
-// Storage stats
-
-func (s *Store) ChunkCount() (int, error) {
-	row := s.db.QueryRow(`SELECT COUNT(*) FROM chunks`)
-	var count int
-	err := row.Scan(&count)
-	return count, err
-}
-
-func (s *Store) TotalChunkBytes() (int64, error) {
-	row := s.db.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM chunks`)
-	var total int64
-	err := row.Scan(&total)
-	return total, err
 }
 
 // Helpers
@@ -1046,7 +354,9 @@ func scanNode(row scannable) (*types.Node, error) {
 		&n.Status, &trusted, &lastSeen, &joinedAt); err != nil {
 		return nil, err
 	}
-	_ = json.Unmarshal([]byte(candidatesJSON), &n.AddressCandidates)
+	if err := json.Unmarshal([]byte(candidatesJSON), &n.AddressCandidates); err != nil {
+		return nil, fmt.Errorf("unmarshal address_candidates: %w", err)
+	}
 	n.Trusted = intToBool(trusted)
 	n.LastSeen = time.UnixMilli(lastSeen)
 	n.JoinedAt = time.UnixMilli(joinedAt)
@@ -1071,80 +381,12 @@ func scanFile(row scannable) (*types.File, error) {
 	f.Deleted = intToBool(deleted)
 	f.CreatedAt = time.UnixMilli(created)
 	f.ModifiedAt = time.UnixMilli(modified)
-	_ = json.Unmarshal([]byte(chunkJSON), &f.ChunkIDs)
+	if err := json.Unmarshal([]byte(chunkJSON), &f.ChunkIDs); err != nil {
+		return nil, fmt.Errorf("unmarshal chunk_ids: %w", err)
+	}
 	return &f, nil
 }
 
 func scanFileRows(rows *sql.Rows) (*types.File, error) {
 	return scanFile(rows)
 }
-
-type PendingJoin struct {
-	NodeID          string    `json:"node_id"`
-	Name            string    `json:"name"`
-	Platform        string    `json:"platform"`
-	Address         string    `json:"address"`
-	ObservedAddress string    `json:"observed_address"`
-	PublicKey       string    `json:"public_key"`
-	TotalBytes      int64     `json:"total_bytes"`
-	AvailableBytes  int64     `json:"available_bytes"`
-	RequestedAt     time.Time `json:"requested_at"`
-	ExpiresAt       time.Time `json:"expires_at"`
-}
-
-func (s *Store) CreatePendingJoin(pj *PendingJoin) error {
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO pending_joins (node_id, name, platform, address, observed_address, public_key, total_bytes, available_bytes, requested_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		pj.NodeID, pj.Name, pj.Platform, pj.Address, pj.ObservedAddress, pj.PublicKey, pj.TotalBytes, pj.AvailableBytes, pj.RequestedAt.UnixMilli(), pj.ExpiresAt.UnixMilli())
-	return err
-}
-
-func (s *Store) ListPendingJoins() ([]PendingJoin, error) {
-	rows, err := s.db.Query(`SELECT node_id, name, platform, address, observed_address, public_key, total_bytes, available_bytes, requested_at, expires_at FROM pending_joins WHERE expires_at > ? ORDER BY requested_at`, time.Now().UnixMilli())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var result []PendingJoin
-	for rows.Next() {
-		var pj PendingJoin
-		var req, exp int64
-		if err := rows.Scan(&pj.NodeID, &pj.Name, &pj.Platform, &pj.Address, &pj.ObservedAddress, &pj.PublicKey, &pj.TotalBytes, &pj.AvailableBytes, &req, &exp); err != nil {
-			return nil, err
-		}
-		pj.RequestedAt = time.UnixMilli(req)
-		pj.ExpiresAt = time.UnixMilli(exp)
-		result = append(result, pj)
-	}
-	return result, rows.Err()
-}
-
-func (s *Store) GetPendingJoin(nodeID string) (*PendingJoin, error) {
-	var pj PendingJoin
-	var req, exp int64
-	err := s.db.QueryRow(`SELECT node_id, name, platform, address, observed_address, public_key, total_bytes, available_bytes, requested_at, expires_at FROM pending_joins WHERE node_id = ? AND expires_at > ?`, nodeID, time.Now().UnixMilli()).Scan(&pj.NodeID, &pj.Name, &pj.Platform, &pj.Address, &pj.ObservedAddress, &pj.PublicKey, &pj.TotalBytes, &pj.AvailableBytes, &req, &exp)
-	if err != nil {
-		return nil, err
-	}
-	pj.RequestedAt = time.UnixMilli(req)
-	pj.ExpiresAt = time.UnixMilli(exp)
-	return &pj, nil
-}
-
-func (s *Store) DeletePendingJoin(nodeID string) error {
-	_, err := s.db.Exec(`DELETE FROM pending_joins WHERE node_id = ?`, nodeID)
-	return err
-}
-
-func (s *Store) CleanExpiredPendingJoins() {
-	s.db.Exec(`DELETE FROM pending_joins WHERE expires_at <= ?`, time.Now().UnixMilli())
-}
-
-func (s *Store) IsChunkReferenced(chunkID string) (bool, error) {
-	var count int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM files WHERE deleted = 0 AND chunk_ids LIKE ?`, `%"`+chunkID+`"%`).Scan(&count)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-

@@ -3,9 +3,11 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pocketcluster/agent/internal/types"
+	"time"
 )
 
 func TestPeerEventEndpointRequiresSignature(t *testing.T) {
@@ -63,5 +65,56 @@ func TestLogoutRevokesServerSession(t *testing.T) {
 	srv.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("reused session status = %d, want %d", res.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestLoginRateLimitsFailedAttemptsByIP(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "receiver")
+	defer st.Close()
+	handler := srv.Handler()
+
+	for i := 0; i < 5; i++ {
+		res := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "192.0.2.10:1234"
+		handler.ServeHTTP(res, req)
+		if res.Code != http.StatusUnauthorized {
+			t.Fatalf("failed login %d status = %d, want %d", i+1, res.Code, http.StatusUnauthorized)
+		}
+	}
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"testpass"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "192.0.2.10:1234"
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusTooManyRequests {
+		t.Fatalf("rate-limited login status = %d, want %d", res.Code, http.StatusTooManyRequests)
+	}
+
+	res = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"testpass"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "192.0.2.11:1234"
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("other IP login status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+}
+
+func TestSessionStoreCleanupRemovesDormantExpiredSessions(t *testing.T) {
+	sessions := newSessionStore()
+	now := time.UnixMilli(1000)
+	sessions.sessions["expired"] = now.Add(-time.Second)
+	sessions.sessions["active"] = now.Add(time.Hour)
+
+	sessions.cleanupExpired(now)
+
+	if _, ok := sessions.sessions["expired"]; ok {
+		t.Fatal("expired dormant session was not cleaned")
+	}
+	if _, ok := sessions.sessions["active"]; !ok {
+		t.Fatal("active session was removed")
 	}
 }

@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/pocketcluster/agent/internal/store"
 	"github.com/pocketcluster/agent/internal/types"
 )
 
@@ -65,7 +64,10 @@ func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.ClusterID == "" {
 		s.cfg.ClusterID = uuid.New().String()
 	}
-	s.cfg.SetPoolCredentials(req.Username, req.Password)
+	if err := s.cfg.SetPoolCredentials(req.Username, req.Password); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
 	if err := s.cfg.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -201,24 +203,10 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 	existing, err := s.store.GetNode(req.NodeID)
 	if err == nil && existing.Trusted && req.PublicKey != "" && req.PublicKey == existing.PublicKey {
 		nodes, _ := s.store.ListNodes()
-		var refs []types.NodeRef
+		var refs []types.Node
 		for _, n := range nodes {
 			if n.NodeID != req.NodeID {
-				refs = append(refs, types.NodeRef{
-					NodeID:             n.NodeID,
-					Name:               n.Name,
-					Platform:           n.Platform,
-					Address:            n.Address,
-					AddressCandidates:  n.AddressCandidates,
-					LastWorkingAddress: n.LastWorkingAddress,
-					PublicKey:          n.PublicKey,
-					TotalBytes:         n.TotalBytes,
-					UsedBytes:          n.UsedBytes,
-					AvailableBytes:     n.AvailableBytes,
-					Status:             n.Status,
-					LastSeen:           n.LastSeen,
-					JoinedAt:           n.JoinedAt,
-				})
+				refs = append(refs, n)
 			}
 		}
 		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(types.JoinResponse{
@@ -261,7 +249,7 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 		advertisedAddress = observedAddress
 	}
 	now := time.Now()
-	pj := &store.PendingJoin{
+	pj := &types.PendingJoin{
 		NodeID:          req.NodeID,
 		Name:            req.DeviceInfo.Name,
 		Platform:        req.DeviceInfo.Platform,
@@ -308,12 +296,7 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUploadProgress(w http.ResponseWriter, r *http.Request) {
-	uploadProgress.RLock()
-	defer uploadProgress.RUnlock()
-	var list []uploadStatus
-	for _, v := range uploadProgress.m {
-		list = append(list, *v)
-	}
+	list := s.uploadProgress.list()
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(list)})
 }
 
@@ -357,24 +340,10 @@ func (s *Server) handleJoinApprove(w http.ResponseWriter, r *http.Request) {
 	s.store.DeletePendingJoin(nodeID)
 	s.appendEvent(types.EventNodeJoin, newNode)
 	nodes, _ := s.store.ListNodes()
-	var refs []types.NodeRef
+	var refs []types.Node
 	for _, n := range nodes {
 		if n.NodeID != nodeID {
-			refs = append(refs, types.NodeRef{
-				NodeID:             n.NodeID,
-				Name:               n.Name,
-				Platform:           n.Platform,
-				Address:            n.Address,
-				AddressCandidates:  n.AddressCandidates,
-				LastWorkingAddress: n.LastWorkingAddress,
-				PublicKey:          n.PublicKey,
-				TotalBytes:         n.TotalBytes,
-				UsedBytes:          n.UsedBytes,
-				AvailableBytes:     n.AvailableBytes,
-				Status:             n.Status,
-				LastSeen:           n.LastSeen,
-				JoinedAt:           n.JoinedAt,
-			})
+			refs = append(refs, n)
 		}
 	}
 	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(types.JoinResponse{

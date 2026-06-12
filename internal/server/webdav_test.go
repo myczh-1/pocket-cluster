@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/base64"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -64,6 +65,66 @@ func TestWebDAVUploadAndDownload(t *testing.T) {
 	}
 	if res.Body.String() != string(content) {
 		t.Fatalf("content mismatch: got %q, want %q", res.Body.String(), string(content))
+	}
+}
+
+func TestDavReadFileStreamsChunksAndSeeks(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "local")
+	defer st.Close()
+
+	firstHash, firstSize, err := srv.chunks.Store(bytes.NewReader([]byte("alpha")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertChunk(&types.Chunk{ChunkID: firstHash, SizeBytes: firstSize, StoredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	secondHash, secondSize, err := srv.chunks.Store(bytes.NewReader([]byte("bravo")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertChunk(&types.Chunk{ChunkID: secondHash, SizeBytes: secondSize, StoredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	file := &types.File{
+		FileID:    "streamed",
+		Name:      "streamed.txt",
+		Path:      "/streamed.txt",
+		SizeBytes: firstSize + secondSize,
+		ChunkIDs:  []string{firstHash, secondHash},
+	}
+	reader, err := newDavReadFile(file, st, srv.chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	all := make([]byte, int(file.SizeBytes))
+
+	if _, err := io.ReadFull(reader, all); err != nil {
+		t.Fatal(err)
+	}
+	if string(all) != "alphabravo" {
+		t.Fatalf("read = %q, want alphabravo", string(all))
+	}
+	if _, err := reader.Seek(2, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	window := make([]byte, 4)
+	if _, err := io.ReadFull(reader, window); err != nil {
+		t.Fatal(err)
+	}
+	if string(window) != "phab" {
+		t.Fatalf("seek read = %q, want phab", string(window))
+	}
+	if _, err := reader.Seek(-5, io.SeekEnd); err != nil {
+		t.Fatal(err)
+	}
+	tail, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(tail) != "bravo" {
+		t.Fatalf("tail = %q, want bravo", string(tail))
 	}
 }
 

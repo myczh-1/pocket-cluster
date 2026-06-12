@@ -42,6 +42,39 @@ func (s *Server) handleGetChunk(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", fmt.Sprint(size))
 	io.Copy(w, f)
 }
+func (s *Server) recordLocalChunkReplica(chunkID string, size int64, now time.Time) (*types.Replica, bool, error) {
+	if err := s.store.UpsertChunk(&types.Chunk{ChunkID: chunkID, SizeBytes: size, StoredAt: now}); err != nil {
+		return nil, false, err
+	}
+	alreadyAvailable, err := s.hasAvailableReplica(chunkID, s.cfg.NodeID)
+	if err != nil {
+		return nil, false, err
+	}
+	replica := &types.Replica{ChunkID: chunkID, NodeID: s.cfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}
+	if err := s.store.UpsertReplica(replica); err != nil {
+		return nil, false, err
+	}
+	if alreadyAvailable {
+		return replica, false, nil
+	}
+	if _, err := s.appendEvent(types.EventChunkReplicaAdd, replica); err != nil {
+		return nil, false, err
+	}
+	return replica, true, nil
+}
+
+func (s *Server) hasAvailableReplica(chunkID, nodeID string) (bool, error) {
+	replicas, err := s.store.GetReplicas(chunkID)
+	if err != nil {
+		return false, err
+	}
+	for _, replica := range replicas {
+		if replica.NodeID == nodeID && replica.Status == "available" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 func (s *Server) handleStoreChunk(w http.ResponseWriter, r *http.Request) {
 	expectedHash := r.Header.Get("X-Chunk-Hash")
@@ -62,17 +95,8 @@ func (s *Server) handleStoreChunk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "hash mismatch")
 		return
 	}
-	now := time.Now()
-	if err := s.store.UpsertChunk(&types.Chunk{ChunkID: actualHash, SizeBytes: size, StoredAt: now}); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	replica := &types.Replica{ChunkID: actualHash, NodeID: s.cfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}
-	if err := s.store.UpsertReplica(replica); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	if _, err := s.appendEvent(types.EventChunkReplicaAdd, replica); err != nil {
+	replica, _, err := s.recordLocalChunkReplica(actualHash, size, time.Now())
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
@@ -86,6 +110,26 @@ func (s *Server) handleStoreChunk(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 	since := r.URL.Query().Get("since")
+	// For bootstrap requests (since=""), include the latest snapshot so new nodes
+	// can load full state without replaying the entire event history.
+	if since == "" {
+		ps, _ := s.store.LoadLatestSnapshot()
+		events, err := s.store.GetEventsSince("", 1000)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		resp := map[string]any{
+			"events":   events,
+			"has_more": len(events) >= 1000,
+		}
+		if ps != nil {
+			resp["snapshot"] = json.RawMessage(ps.Data)
+			resp["snapshot_event_id"] = ps.LastEventID
+		}
+		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(resp)})
+		return
+	}
 	events, err := s.store.GetEventsSince(since, 1000)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())

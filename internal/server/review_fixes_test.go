@@ -62,6 +62,50 @@ func TestUploadShortPathDoesNotPanicAndUsesFallbackMime(t *testing.T) {
 	}
 }
 
+func TestUploadReturnsBeforeReplicaRepairFailure(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks := chunk.New(t.TempDir())
+	if err := chunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(newTestConfig(t, "local"), st, chunks)
+	session := loginTestSession(t, srv)
+	if err := st.UpsertNode(&types.Node{NodeID: "remote", Address: "127.0.0.1:1", Status: "online", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("path", "/background-repair.txt"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := mw.CreateFormFile("file", "background-repair.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("payload")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/files/upload", &body), session)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDownloadPrechecksChunksBeforeWritingBody(t *testing.T) {
 	st, err := store.Open(t.TempDir())
 	if err != nil {
@@ -116,6 +160,40 @@ func TestRepairChunkReplicasReturnsFetchError(t *testing.T) {
 	}
 	if err := srv.repairChunkReplicas(context.Background(), "missingchunk", nodes); err == nil {
 		t.Fatal("repair succeeded; want fetch error")
+	}
+}
+
+func TestStoreChunkDeduplicatesReplicaEvents(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	chunks := chunk.New(t.TempDir())
+	if err := chunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(newTestConfig(t, "local"), st, chunks)
+	body := []byte("same chunk pushed twice")
+	hash := sha256Hex(body)
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/chunks", bytes.NewReader(body))
+		req.Header.Set("X-Chunk-Hash", hash)
+		req.Header.Set(authBodySHA256Header, hash)
+		res := httptest.NewRecorder()
+		srv.handleStoreChunk(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("store chunk attempt %d status = %d, want %d: %s", i+1, res.Code, http.StatusOK, res.Body.String())
+		}
+	}
+
+	count, err := st.EventCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("event count = %d, want 1", count)
 	}
 }
 
