@@ -81,6 +81,8 @@ http://<ip>:7788/dav/
 
 使用池的用户名和密码认证。
 
+覆盖已有文件时必须带上当前 ETag（`If-Match`）；盲写会被拒绝并返回 `428 Precondition Required`。
+
 ## 架构
 
 ```

@@ -269,7 +269,7 @@ func TestSyncOncePushesWhenPullFails(t *testing.T) {
 			http.Error(w, "pull disabled", http.StatusServiceUnavailable)
 		case "/api/events/push":
 			pushed.Add(1)
-			writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"accepted": 1})})
+			writeOK(w, http.StatusOK, map[string]any{"accepted": 1})
 		default:
 			http.NotFound(w, r)
 		}
@@ -323,7 +323,7 @@ func TestPushEventsDoesNotMarkRejectedBatchPushed(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"accepted": 0})})
+		writeOK(w, http.StatusOK, map[string]any{"accepted": 0})
 	}))
 	defer remoteHTTP.Close()
 

@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"github.com/pocketcluster/agent/internal/types"
 )
 
 const (
@@ -183,9 +181,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(sessionTTL.Seconds()),
 	})
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]string{
+	writeOK(w, http.StatusOK, map[string]string{
 		"username": s.cfg.PoolUser,
-	})})
+	})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -200,12 +198,12 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true})
+	writeOK(w, http.StatusOK, nil)
 }
 
 func (s *Server) handleGetAuthStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+	writeOK(w, http.StatusOK, map[string]any{
 		"has_credentials": s.cfg.HasPoolCredentials(),
 		"username":        s.cfg.PoolUser,
-	})})
+	})
 }

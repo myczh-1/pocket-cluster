@@ -35,7 +35,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-var schemaVersion = 5
+var schemaVersion = 6
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
@@ -68,6 +68,11 @@ func (s *Store) migrate() error {
 	}
 	if current < 5 {
 		if err := s.migrateV5(); err != nil {
+			return err
+		}
+	}
+	if current < 6 {
+		if err := s.migrateV6(); err != nil {
 			return err
 		}
 	}
@@ -224,6 +229,34 @@ func (s *Store) migrateV5() error {
 	}
 	_, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_snapshots_created_at ON snapshots(created_at)`)
 	return err
+}
+func (s *Store) migrateV6() error {
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS file_chunks (
+		file_id TEXT NOT NULL,
+		chunk_id TEXT NOT NULL,
+		position INTEGER NOT NULL,
+		PRIMARY KEY (file_id, chunk_id, position)
+	)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_file_chunks_chunk_id ON file_chunks(chunk_id)`); err != nil {
+		return err
+	}
+	files, err := s.ListAllFilesIncludingDeleted()
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, f := range files {
+		if err := upsertFileChunksTx(tx, f.FileID, f.ChunkIDs); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) addColumnIfMissing(table, column, definition string) error {

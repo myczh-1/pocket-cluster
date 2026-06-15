@@ -159,8 +159,8 @@ func (s *Server) fetchChunkFromReplica(ctx context.Context, chunkID string) erro
 		var fetchErr error
 		var workingAddress string
 		for _, address := range nodeDialAddresses(*n) {
-			ctx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
-			hash, size, fetchErr = s.storeRemoteChunk(ctx, address, chunkID)
+			reqCtx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
+			hash, size, fetchErr = s.storeRemoteChunk(reqCtx, address, chunkID)
 			cancel()
 			if fetchErr == nil {
 				workingAddress = address
@@ -210,31 +210,15 @@ func (s *Server) storeChunkToPeer(ctx context.Context, n types.Node, chunkID str
 			lastErr = err
 			continue
 		}
-		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf("chunk store status %d", resp.StatusCode)
-			resp.Body.Close()
+		payload, err := decodeChunkStoreResponse(resp)
+		if err != nil {
+			lastErr = err
 			continue
-		}
-		var envelope types.APIResponse
-		if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-			resp.Body.Close()
-			return err
-		}
-		resp.Body.Close()
-		if !envelope.OK {
-			lastErr = fmt.Errorf("chunk store api error")
-			continue
-		}
-		var payload struct {
-			Replica *types.Replica `json:"replica"`
-		}
-		if err := json.Unmarshal(envelope.Data, &payload); err != nil {
-			return err
 		}
 		now := time.Now()
 		_ = s.store.UpdateNodeLastWorkingAddress(n.NodeID, address, now)
-		if payload.Replica != nil {
-			return s.store.UpsertReplica(payload.Replica)
+		if payload != nil {
+			return s.store.UpsertReplica(payload)
 		}
 		return s.store.UpsertReplica(&types.Replica{ChunkID: chunkID, NodeID: n.NodeID, Status: "available", StoredAt: now, VerifiedAt: now})
 	}
@@ -242,6 +226,27 @@ func (s *Server) storeChunkToPeer(ctx context.Context, n types.Node, chunkID str
 		return lastErr
 	}
 	return fmt.Errorf("no dial address")
+}
+
+func decodeChunkStoreResponse(resp *http.Response) (*types.Replica, error) {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("chunk store status %d", resp.StatusCode)
+	}
+	var envelope types.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, err
+	}
+	if !envelope.OK {
+		return nil, fmt.Errorf("chunk store api error")
+	}
+	var payload struct {
+		Replica *types.Replica `json:"replica"`
+	}
+	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
+		return nil, err
+	}
+	return payload.Replica, nil
 }
 
 func (s *Server) storeRemoteChunk(ctx context.Context, address, chunkID string) (string, int64, error) {

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/pocketcluster/agent/internal/types"
@@ -11,8 +12,7 @@ import (
 // Event operations
 
 func (s *Store) InsertEvent(e *types.Event) (bool, error) {
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO events (event_id, type, node_id, seq, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?)`,
-		e.EventID, string(e.Type), e.NodeID, e.Seq, e.Timestamp.UnixMilli(), string(e.Payload))
+	res, err := insertEventExec(s.db, e)
 	if err != nil {
 		return false, err
 	}
@@ -110,6 +110,50 @@ func (s *Store) NextSeq(nodeID string) (int64, error) {
 		return 0, err
 	}
 	return seq, nil
+}
+
+func (s *Store) UpsertFileWithEvent(f *types.File, nodeID string, eventType types.EventType, payload json.RawMessage, timestamp time.Time) (*types.Event, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	seq, err := nextSeqTx(tx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	e := &types.Event{
+		EventID:   fmt.Sprintf("%s:%d", nodeID, seq),
+		Type:      eventType,
+		NodeID:    nodeID,
+		Seq:       seq,
+		Timestamp: timestamp,
+		Payload:   payload,
+	}
+	if err := upsertFileTx(tx, f); err != nil {
+		return nil, err
+	}
+	if _, err := insertEventExec(tx, e); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+func nextSeqTx(tx *sql.Tx, nodeID string) (int64, error) {
+	row := tx.QueryRow(`SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE node_id = ?`, nodeID)
+	var seq int64
+	if err := row.Scan(&seq); err != nil {
+		return 0, err
+	}
+	return seq, nil
+}
+
+func insertEventExec(exec sqlExecer, e *types.Event) (sql.Result, error) {
+	return exec.Exec(`INSERT OR IGNORE INTO events (event_id, type, node_id, seq, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?)`,
+		e.EventID, string(e.Type), e.NodeID, e.Seq, timeMillis(e.Timestamp), string(e.Payload))
 }
 
 func (s *Store) LatestEventID() (string, error) {

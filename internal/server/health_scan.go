@@ -2,16 +2,21 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"github.com/pocketcluster/agent/internal/types"
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	healthScanInterval = 60 * time.Second
-	tombstoneRetention = 7 * 24 * time.Hour // 7 days
+	healthScanInterval          = 60 * time.Second
+	tombstoneRetention          = 7 * 24 * time.Hour // 7 days
+	healthRemoteVerifyBatchSize = 100
 )
 
 // HealthSummary describes the overall replica health of the pool.
@@ -122,6 +127,10 @@ func (s *Server) runHealthScan(ctx context.Context) {
 		log.Printf("health scan: list chunks: %v", err)
 		return
 	}
+	remotePresence := map[string]map[string]bool{}
+	if !s.health.skipRemoteVerify {
+		remotePresence = s.verifyRemoteChunksExist(ctx, nodes, chunks, onlineSet)
+	}
 
 	summary := HealthSummary{
 		TotalFiles:  fileCount,
@@ -152,10 +161,10 @@ func (s *Server) runHealthScan(ctx context.Context) {
 			if r.NodeID == s.cfg.NodeID {
 				hasChunk = s.chunks.Exists(c.ChunkID)
 			} else if isOnline && !s.health.skipRemoteVerify {
-				// Verify remote chunk existence via HEAD request
-				n, _ := s.store.GetNode(r.NodeID)
-				if n != nil && len(nodeDialAddresses(*n)) > 0 {
-					hasChunk = s.verifyRemoteChunkExists(nodeDialAddresses(*n)[0], c.ChunkID)
+				if nodeChunks, ok := remotePresence[r.NodeID]; ok {
+					hasChunk = nodeChunks[c.ChunkID]
+				} else if n, _ := s.store.GetNode(r.NodeID); n != nil && len(nodeDialAddresses(*n)) > 0 {
+					hasChunk = s.verifyRemoteChunkExists(ctx, nodeDialAddresses(*n)[0], c.ChunkID)
 				}
 			} else if isOnline {
 				// Test mode: assume remote node has chunk
@@ -225,12 +234,21 @@ func (s *Server) runHealthScan(ctx context.Context) {
 
 // CleanupTombstones removes files that have been deleted longer than tombstoneRetention.
 func (s *Server) CleanupTombstones() error {
+	return s.CleanupTombstonesContext(context.Background())
+}
+
+func (s *Server) CleanupTombstonesContext(ctx context.Context) error {
 	deleted, err := s.store.ListAllFilesIncludingDeleted()
 	if err != nil {
 		return err
 	}
 	cutoff := time.Now().Add(-tombstoneRetention)
 	for _, f := range deleted {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		if !f.Deleted {
 			continue
 		}
@@ -242,7 +260,7 @@ func (s *Server) CleanupTombstones() error {
 			continue
 		}
 		// Clean up unreferenced chunks
-		s.cleanupUnreferencedChunks(f.ChunkIDs)
+		s.cleanupUnreferencedChunks(ctx, f.ChunkIDs)
 	}
 	return nil
 }
@@ -329,12 +347,110 @@ func (s *Server) FileHealth(fileID string) (*FileHealthDetail, error) {
 	}, nil
 }
 
+func (s *Server) verifyRemoteChunksExist(ctx context.Context, nodes []types.Node, chunks []types.Chunk, onlineSet map[string]struct{}) map[string]map[string]bool {
+	nodeByID := make(map[string]types.Node, len(nodes))
+	for _, n := range nodes {
+		nodeByID[n.NodeID] = n
+	}
+	requests := make(map[string]map[string]struct{})
+	for _, c := range chunks {
+		replicas, err := s.store.GetReplicas(c.ChunkID)
+		if err != nil {
+			continue
+		}
+		for _, r := range replicas {
+			if r.NodeID == s.cfg.NodeID || r.Status != "available" {
+				continue
+			}
+			if _, ok := onlineSet[r.NodeID]; !ok {
+				continue
+			}
+			n, ok := nodeByID[r.NodeID]
+			if !ok || !n.Trusted || len(nodeDialAddresses(n)) == 0 {
+				continue
+			}
+			if requests[r.NodeID] == nil {
+				requests[r.NodeID] = make(map[string]struct{})
+			}
+			requests[r.NodeID][c.ChunkID] = struct{}{}
+		}
+	}
+	result := make(map[string]map[string]bool, len(requests))
+	for nodeID, chunkSet := range requests {
+		n := nodeByID[nodeID]
+		addresses := nodeDialAddresses(n)
+		if len(addresses) == 0 {
+			continue
+		}
+		chunkIDs := make([]string, 0, len(chunkSet))
+		for chunkID := range chunkSet {
+			chunkIDs = append(chunkIDs, chunkID)
+		}
+		presence := make(map[string]bool, len(chunkIDs))
+		failed := false
+		for start := 0; start < len(chunkIDs); start += healthRemoteVerifyBatchSize {
+			end := start + healthRemoteVerifyBatchSize
+			if end > len(chunkIDs) {
+				end = len(chunkIDs)
+			}
+			batchPresence, err := s.verifyRemoteChunkBatch(ctx, addresses[0], chunkIDs[start:end])
+			if err != nil {
+				failed = true
+				break
+			}
+			for chunkID, exists := range batchPresence {
+				presence[chunkID] = exists
+			}
+		}
+		if !failed {
+			result[nodeID] = presence
+		}
+	}
+	return result
+}
+
+func (s *Server) verifyRemoteChunkBatch(ctx context.Context, nodeAddress string, chunkIDs []string) (map[string]bool, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	values := url.Values{}
+	values.Set("ids", strings.Join(chunkIDs, ","))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, "http://"+nodeAddress+"/api/chunks-exists?"+values.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.signPeerRequest(req, emptyBodySHA256); err != nil {
+		return nil, err
+	}
+	resp, err := s.peerHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("chunk exists status %d", resp.StatusCode)
+	}
+	var envelope types.APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, err
+	}
+	if !envelope.OK {
+		return nil, fmt.Errorf("chunk exists api error")
+	}
+	var payload struct {
+		Exists map[string]bool `json:"exists"`
+	}
+	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
+		return nil, err
+	}
+	return payload.Exists, nil
+}
+
 // verifyRemoteChunkExists checks if a remote node actually has a chunk via HEAD request.
-func (s *Server) verifyRemoteChunkExists(nodeAddress, chunkID string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+func (s *Server) verifyRemoteChunkExists(ctx context.Context, nodeAddress, chunkID string) bool {
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	url := "http://" + nodeAddress + "/api/chunks/" + chunkID
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, url, nil)
 	if err != nil {
 		return false
 	}

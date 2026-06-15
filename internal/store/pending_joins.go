@@ -55,7 +55,12 @@ func (s *Store) CleanExpiredPendingJoins() {
 
 func (s *Store) IsChunkReferenced(chunkID string) (bool, error) {
 	var count int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM files WHERE deleted = 0 AND chunk_ids LIKE ?`, `%"`+chunkID+`"%`).Scan(&count)
+	err := s.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM file_chunks fc
+		JOIN files f ON f.file_id = fc.file_id
+		WHERE f.deleted = 0 AND fc.chunk_id = ?
+	`, chunkID).Scan(&count)
 	if err != nil {
 		return false, err
 	}

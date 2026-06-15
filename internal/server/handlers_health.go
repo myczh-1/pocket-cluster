@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"net/http"
-	"github.com/pocketcluster/agent/internal/types"
 )
 
 // GET /api/health/summary
@@ -13,7 +12,7 @@ func (s *Server) handleHealthSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summary := s.HealthSummarySnapshot()
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(summary)})
+	writeOK(w, http.StatusOK, summary)
 }
 
 // GET /api/health/chunks
@@ -48,12 +47,12 @@ func (s *Server) handleHealthChunks(w http.ResponseWriter, r *http.Request) {
 	if end > total {
 		end = total
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+	writeOK(w, http.StatusOK, map[string]any{
 		"chunks": list[offset:end],
 		"total":  total,
 		"limit":  limit,
 		"offset": offset,
-	})})
+	})
 }
 
 // GET /api/health/chunks/{hash}
@@ -74,7 +73,7 @@ func (s *Server) handleHealthChunkDetail(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "chunk not found in health scan")
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(detail)})
+	writeOK(w, http.StatusOK, detail)
 }
 
 // GET /api/health/files/{fileId}
@@ -93,5 +92,5 @@ func (s *Server) handleHealthFileDetail(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(detail)})
+	writeOK(w, http.StatusOK, detail)
 }

@@ -62,6 +62,43 @@ func TestUploadShortPathDoesNotPanicAndUsesFallbackMime(t *testing.T) {
 	}
 }
 
+func TestWriteOKReturnsErrorWhenResponseCannotMarshal(t *testing.T) {
+	res := httptest.NewRecorder()
+
+	writeOK(res, http.StatusOK, map[string]any{"bad": make(chan int)})
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusInternalServerError)
+	}
+	var body types.APIResponse
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.OK || body.Error == nil || body.Error.Code != "INTERNAL_ERROR" {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+}
+
+func TestUploadEmptyFileDoesNotCreateEmptyChunk(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "local")
+	defer st.Close()
+	session := loginTestSession(t, srv)
+
+	res := httptest.NewRecorder()
+	req := withAuth(uploadRequest(t, "/empty.txt", "empty.txt", nil), session)
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	file, err := st.GetFile("/empty.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.ChunkIDs) != 0 {
+		t.Fatalf("empty file chunk count = %d, want 0", len(file.ChunkIDs))
+	}
+}
+
 func TestUploadReturnsBeforeReplicaRepairFailure(t *testing.T) {
 	st, err := store.Open(t.TempDir())
 	if err != nil {
@@ -214,7 +251,7 @@ func TestPushEventsMarksEventsPushedPerPeer(t *testing.T) {
 		if accepted > 0 {
 			firstBatch.Add(int32(accepted))
 		}
-		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"accepted": accepted})})
+		writeOK(w, http.StatusOK, map[string]any{"accepted": accepted})
 	}))
 	defer remoteHTTP.Close()
 

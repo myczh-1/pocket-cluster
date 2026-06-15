@@ -145,7 +145,7 @@ func signatureMessage(method, requestURI, bodyHash, nodeID, timestamp string) st
 }
 
 func requiresPeerSignature(r *http.Request) bool {
-	if r.URL.Path == "/api/events" || r.URL.Path == "/api/events/push" || r.URL.Path == "/api/chunks" || r.URL.Path == "/api/snapshot" {
+	if r.URL.Path == "/api/events" || r.URL.Path == "/api/events/push" || r.URL.Path == "/api/chunks" || r.URL.Path == "/api/chunks-exists" || r.URL.Path == "/api/snapshot" {
 		return true
 	}
 	return strings.HasPrefix(r.URL.Path, "/api/chunks/")

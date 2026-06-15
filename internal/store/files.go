@@ -14,21 +14,15 @@ import (
 // File operations
 
 func (s *Store) UpsertFile(f *types.File) error {
-	chunkJSON, err := json.Marshal(f.ChunkIDs)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT OR REPLACE INTO files
-		(file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.FileID, f.Name, f.Path, boolToInt(f.IsDir), f.SizeBytes, f.MimeType,
-		f.VersionID, f.ParentVersionID, string(chunkJSON),
-		f.CreatedAt.UnixMilli(), f.ModifiedAt.UnixMilli(), f.ModifiedBy,
-		boolToInt(f.Deleted), f.ConflictOf)
-	if err != nil {
+	defer tx.Rollback()
+	if err := upsertFileTx(tx, f); err != nil {
 		return err
 	}
-	return s.indexFile(f)
+	return tx.Commit()
 }
 
 func (s *Store) GetFile(path string) (*types.File, error) {
@@ -65,6 +59,25 @@ func (s *Store) ListFiles(dirPath string) ([]types.File, error) {
 	}
 	return files, rows.Err()
 }
+// ListDescendants returns all non-deleted files under dirPath (recursively).
+func (s *Store) ListDescendants(dirPath string) ([]types.File, error) {
+	prefix := strings.TrimRight(dirPath, "/") + "/"
+	rows, err := s.db.Query(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE deleted = 0 AND (path = ? OR path LIKE ? || '%') ORDER BY path ASC`, dirPath, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var files []types.File
+	for rows.Next() {
+		f, err := scanFileRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, *f)
+	}
+	return files, rows.Err()
+}
+
 
 // escapeLike escapes % and _ for SQLite LIKE patterns.
 func escapeLike(s string) string {
@@ -98,11 +111,21 @@ func (s *Store) MarkChildrenDeleted(dirPath string, deletedBy string) error {
 }
 
 func (s *Store) PurgeFile(fileID string) error {
-	_, err := s.db.Exec(`DELETE FROM files WHERE file_id = ? AND deleted = 1`, fileID)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	return s.deleteFileIndex(fileID)
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM file_chunks WHERE file_id = ?`, fileID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM files WHERE file_id = ? AND deleted = 1`, fileID); err != nil {
+		return err
+	}
+	if err := deleteFileIndexTx(tx, fileID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // RenameChildren updates the paths of all children when a directory is renamed.
@@ -239,18 +262,62 @@ func (s *Store) SearchFiles(keyword string) ([]types.File, error) {
 }
 
 func (s *Store) indexFile(f *types.File) error {
-	if _, err := s.db.Exec(`DELETE FROM files_fts WHERE file_id = ?`, f.FileID); err != nil {
+	return indexFileTx(s.db, f)
+}
+
+func upsertFileTx(tx *sql.Tx, f *types.File) error {
+	chunkJSON, err := json.Marshal(f.ChunkIDs)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO files
+		(file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		f.FileID, f.Name, f.Path, boolToInt(f.IsDir), f.SizeBytes, f.MimeType,
+		f.VersionID, f.ParentVersionID, string(chunkJSON),
+		f.CreatedAt.UnixMilli(), f.ModifiedAt.UnixMilli(), f.ModifiedBy,
+		boolToInt(f.Deleted), f.ConflictOf); err != nil {
+		return err
+	}
+	if err := indexFileTx(tx, f); err != nil {
+		return err
+	}
+	return upsertFileChunksTx(tx, f.FileID, f.ChunkIDs)
+}
+
+type sqlExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func indexFileTx(exec sqlExecer, f *types.File) error {
+	if err := deleteFileIndexTx(exec, f.FileID); err != nil {
 		return err
 	}
 	if f.Deleted {
 		return nil
 	}
-	_, err := s.db.Exec(`INSERT INTO files_fts (file_id, name, path) VALUES (?, ?, ?)`, f.FileID, f.Name, f.Path)
+	_, err := exec.Exec(`INSERT INTO files_fts (file_id, name, path) VALUES (?, ?, ?)`, f.FileID, f.Name, f.Path)
 	return err
 }
 
+func upsertFileChunksTx(exec sqlExecer, fileID string, chunkIDs []string) error {
+	if _, err := exec.Exec(`DELETE FROM file_chunks WHERE file_id = ?`, fileID); err != nil {
+		return err
+	}
+	for i, chunkID := range chunkIDs {
+		if _, err := exec.Exec(`INSERT INTO file_chunks (file_id, chunk_id, position) VALUES (?, ?, ?)`, fileID, chunkID, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) deleteFileIndex(fileID string) error {
-	_, err := s.db.Exec(`DELETE FROM files_fts WHERE file_id = ?`, fileID)
+	return deleteFileIndexTx(s.db, fileID)
+}
+
+func deleteFileIndexTx(exec sqlExecer, fileID string) error {
+	_, err := exec.Exec(`DELETE FROM files_fts WHERE file_id = ?`, fileID)
 	return err
 }
 

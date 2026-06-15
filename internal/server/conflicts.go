@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
@@ -59,20 +61,26 @@ func (s *Server) commitFilePut(f *types.File, opts filePutOptions) error {
 			overwrittenChunkIDs = append([]string(nil), existing.ChunkIDs...)
 		}
 	}
-	if err := s.store.UpsertFile(f); err != nil {
+	body, err := json.Marshal(f)
+	if err != nil {
 		return err
 	}
-	if _, err := s.appendEvent(types.EventFilePut, f); err != nil {
+	if _, err := s.store.UpsertFileWithEvent(f, s.cfg.NodeID, types.EventFilePut, body, time.Now()); err != nil {
 		return err
 	}
 	if len(overwrittenChunkIDs) > 0 {
-		s.cleanupUnreferencedChunks(overwrittenChunkIDs)
+		s.cleanupUnreferencedChunks(context.Background(), overwrittenChunkIDs)
 	}
 	return nil
 }
 
-func (s *Server) cleanupUnreferencedChunks(chunkIDs []string) {
+func (s *Server) cleanupUnreferencedChunks(ctx context.Context, chunkIDs []string) {
 	for _, chunkID := range chunkIDs {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		ref, err := s.store.IsChunkReferenced(chunkID)
 		if err != nil || ref {
 			continue

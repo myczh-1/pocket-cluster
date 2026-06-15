@@ -70,14 +70,11 @@ func (s *Server) handleScanNetwork(w http.ResponseWriter, r *http.Request) {
 
 	wg.Wait()
 
-	writeJSON(w, http.StatusOK, types.APIResponse{
-		OK: true,
-		Data: mustMarshal(map[string]any{
-			"local_ip":    localIP,
-			"subnet":      prefix + ".0/24",
-			"found":       len(nodes),
-			"nodes":       nodes,
-		}),
+	writeOK(w, http.StatusOK, map[string]any{
+		"local_ip": localIP,
+		"subnet":   prefix + ".0/24",
+		"found":    len(nodes),
+		"nodes":    nodes,
 	})
 }
 

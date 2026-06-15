@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/pocketcluster/agent/internal/types"
@@ -25,6 +26,23 @@ func (s *Server) handleHeadChunk(w http.ResponseWriter, r *http.Request) {
 	f.Close()
 	w.Header().Set("Content-Length", fmt.Sprint(size))
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleChunksExist(w http.ResponseWriter, r *http.Request) {
+	rawIDs := strings.Split(r.URL.Query().Get("ids"), ",")
+	exists := make(map[string]bool, len(rawIDs))
+	for _, rawID := range rawIDs {
+		chunkID := strings.TrimSpace(rawID)
+		if chunkID == "" {
+			continue
+		}
+		exists[chunkID] = s.chunks.Exists(chunkID)
+	}
+	if len(exists) == 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "ids required")
+		return
+	}
+	writeOK(w, http.StatusOK, map[string]any{"exists": exists})
 }
 func (s *Server) handleGetChunk(w http.ResponseWriter, r *http.Request) {
 	hash := r.PathValue("hash")
@@ -100,12 +118,12 @@ func (s *Server) handleStoreChunk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+	writeOK(w, http.StatusOK, map[string]any{
 		"hash":       actualHash,
 		"size_bytes": size,
 		"stored":     true,
 		"replica":    replica,
-	})})
+	})
 }
 
 func (s *Server) handleGetEvents(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +145,7 @@ func (s *Server) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 			resp["snapshot"] = json.RawMessage(ps.Data)
 			resp["snapshot_event_id"] = ps.LastEventID
 		}
-		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(resp)})
+		writeOK(w, http.StatusOK, resp)
 		return
 	}
 	events, err := s.store.GetEventsSince(since, 1000)
@@ -135,10 +153,10 @@ func (s *Server) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+	writeOK(w, http.StatusOK, map[string]any{
 		"events":   events,
 		"has_more": len(events) >= 1000,
-	})})
+	})
 }
 
 func (s *Server) handlePushEvents(w http.ResponseWriter, r *http.Request) {
@@ -166,10 +184,10 @@ func (s *Server) handlePushEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		accepted++
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+	writeOK(w, http.StatusOK, map[string]any{
 		"accepted":  accepted,
 		"conflicts": []any{},
-	})})
+	})
 }
 
 func rewritePushedNodeAddress(e types.Event, senderNodeID, remoteAddr string) types.Event {

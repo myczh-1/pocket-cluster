@@ -1,9 +1,8 @@
 package server
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
-	"io"
 	"mime"
 	"net/http"
 	"os"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/pocketcluster/agent/internal/chunk"
 	"github.com/pocketcluster/agent/internal/types"
 )
 
@@ -66,11 +64,11 @@ func (s *Server) handleListLocalFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		return strings.ToLower(result[i].Name) < strings.ToLower(result[j].Name)
 	})
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+	writeOK(w, http.StatusOK, map[string]any{
 		"cwd":     abs,
 		"parent":  filepath.Dir(abs),
 		"entries": result,
-	})})
+	})
 }
 
 func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) {
@@ -111,43 +109,17 @@ func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) 
 	}
 	defer f.Close()
 
-	var chunkIDs []string
-	var stagedChunkIDs []string
+	staged, err := s.storeLocalChunks(f)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
 	committed := false
 	defer func() {
 		if !committed {
-			s.cleanupUnreferencedChunks(stagedChunkIDs)
+			s.cleanupUnreferencedChunks(context.Background(), staged.stagedChunkIDs)
 		}
 	}()
-	totalSize := int64(0)
-	var first [1]byte
-	for {
-		n, readErr := f.Read(first[:])
-		if n == 0 {
-			break
-		}
-		if readErr != nil && n == 0 {
-			break
-		}
-		hash, size, storeErr := s.chunks.Store(io.MultiReader(bytes.NewReader(first[:]), io.LimitReader(f, chunk.ChunkSize-1)))
-		if storeErr != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", storeErr.Error())
-			return
-		}
-		stagedChunkIDs = append(stagedChunkIDs, hash)
-		if _, _, err := s.recordLocalChunkReplica(hash, size, time.Now()); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
-		}
-		chunkIDs = append(chunkIDs, hash)
-		totalSize += size
-		if readErr != nil {
-			break
-		}
-	}
-	if totalSize == 0 {
-		chunkIDs = nil
-	}
 
 	mimeType := "application/octet-stream"
 	if detected := mime.TypeByExtension(filepath.Ext(abs)); detected != "" {
@@ -160,10 +132,10 @@ func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) 
 		FileID:     fileID,
 		Name:       filepath.Base(req.TargetPath),
 		Path:       req.TargetPath,
-		SizeBytes:  totalSize,
+		SizeBytes:  staged.totalSize,
 		MimeType:   mimeType,
 		VersionID:  versionID,
-		ChunkIDs:   chunkIDs,
+		ChunkIDs:   staged.chunkIDs,
 		CreatedAt:  now,
 		ModifiedAt: now,
 		ModifiedBy: s.cfg.NodeID,
@@ -178,14 +150,14 @@ func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		repairErr = err
 	} else {
-		for _, chunkID := range chunkIDs {
+		for _, chunkID := range staged.chunkIDs {
 			if err := s.repairChunkReplicas(r.Context(), chunkID, nodes); err != nil && repairErr == nil {
 				repairErr = err
 			}
 		}
 	}
 
-	replicaStatus := s.replicaStatusForChunks(chunkIDs)
+	replicaStatus := s.replicaStatusForChunks(staged.chunkIDs)
 	var deleteErr string
 	deleteLocal := false
 	if req.DeleteLocal {
@@ -203,14 +175,14 @@ func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) 
 			deleteLocal = true
 		}
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+	writeOK(w, http.StatusOK, map[string]any{
 		"file_id":        poolFile.FileID,
 		"path":           poolFile.Path,
 		"size_bytes":     poolFile.SizeBytes,
-		"chunk_count":    len(chunkIDs),
+		"chunk_count":    len(staged.chunkIDs),
 		"version_id":     poolFile.VersionID,
 		"replica_status": string(replicaStatus),
 		"delete_local":   deleteLocal,
 		"delete_error":   deleteErr,
-	})})
+	})
 }

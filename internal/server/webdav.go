@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"io"
 	"mime"
 	"net/http"
@@ -103,7 +104,6 @@ func (d *davFS) RemoveAll(_ context.Context, name string) error {
 		return os.ErrNotExist
 	}
 	if f.IsDir {
-		// Recursively delete directory and all children
 		if err := d.store.MarkChildrenDeleted(name, d.nodeID); err != nil {
 			return err
 		}
@@ -120,6 +120,7 @@ func (d *davFS) RemoveAll(_ context.Context, name string) error {
 	}
 	return nil
 }
+
 
 func (d *davFS) Rename(_ context.Context, oldName, newName string) error {
 	oldName = normPath(oldName)
@@ -447,7 +448,7 @@ func (f *davWriteFile) cleanupStagedChunks() {
 	if f.srv == nil {
 		return
 	}
-	f.srv.cleanupUnreferencedChunks(f.stagedChunkIDs)
+	f.srv.cleanupUnreferencedChunks(context.Background(), f.stagedChunkIDs)
 }
 
 func (f *davWriteFile) ReadFrom(r io.Reader) (int64, error) {
@@ -503,10 +504,11 @@ func (f *davWriteFile) Write(p []byte) (int, error) {
 // ---------- FileInfo ----------
 
 type davInfo struct {
-	name    string
-	isDir   bool
-	size    int64
-	modTime time.Time
+	name      string
+	isDir     bool
+	size      int64
+	modTime   time.Time
+	versionID string
 }
 
 func (i *davInfo) Name() string { return i.name }
@@ -520,9 +522,15 @@ func (i *davInfo) Mode() os.FileMode {
 func (i *davInfo) ModTime() time.Time { return i.modTime }
 func (i *davInfo) IsDir() bool        { return i.isDir }
 func (i *davInfo) Sys() interface{}   { return nil }
+func (i *davInfo) ETag(context.Context) (string, error) {
+	if i.versionID == "" {
+		return "", webdav.ErrNotImplemented
+	}
+	return webDAVETag(i.versionID), nil
+}
 
 func fileToInfo(f *types.File) *davInfo {
-	return &davInfo{name: f.Name, size: f.SizeBytes, modTime: f.ModifiedAt}
+	return &davInfo{name: f.Name, isDir: f.IsDir, size: f.SizeBytes, modTime: f.ModifiedAt, versionID: f.VersionID}
 }
 
 // ---------- ETag support ----------
@@ -546,36 +554,63 @@ func (w *etagResponseWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+func webDAVETag(versionID string) string {
+	return `"` + versionID + `"`
+}
+
+func (s *Server) checkWebDAVOverwritePreconditions(name string, r *http.Request) (int, bool) {
+	if r.Method != "PUT" {
+		return 0, true
+	}
+	existing, err := s.store.GetFile(name)
+	if err == sql.ErrNoRows {
+		if strings.TrimSpace(r.Header.Get("If-Match")) != "" {
+			return http.StatusPreconditionFailed, false
+		}
+		return 0, true
+	}
+	if err != nil {
+		return http.StatusInternalServerError, false
+	}
+	if existing.Deleted || existing.IsDir {
+		return 0, true
+	}
+	etag := webDAVETag(existing.VersionID)
+	if webDAVETagListMatches(r.Header.Get("If-None-Match"), etag) {
+		return http.StatusPreconditionFailed, false
+	}
+	ifMatch := r.Header.Get("If-Match")
+	if ifMatch == "" {
+		return http.StatusPreconditionRequired, false
+	}
+	if !webDAVETagListMatches(ifMatch, etag) {
+		return http.StatusPreconditionFailed, false
+	}
+	return 0, true
+}
+
+func webDAVETagListMatches(header, current string) bool {
+	for _, part := range strings.Split(header, ",") {
+		token := strings.TrimSpace(part)
+		if token == "*" || token == current {
+			return true
+		}
+	}
+	return false
+}
+
 // ---------- mount ----------
 func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
-	// Set ETag for GET/HEAD based on file version
+	name := normPath(strings.TrimPrefix(r.URL.Path, "/dav"))
+	if status, ok := s.checkWebDAVOverwritePreconditions(name, r); !ok {
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
 	if r.Method == "GET" || r.Method == "HEAD" {
-		name := normPath(strings.TrimPrefix(r.URL.Path, "/dav"))
 		if f, err := s.store.GetFile(name); err == nil && !f.Deleted && f.VersionID != "" {
-			etag := `"` + f.VersionID + `"`
-			w.Header().Set("ETag", etag)
-			// Check If-Match / If-None-Match
-			if match := r.Header.Get("If-None-Match"); match == etag {
-				w.WriteHeader(http.StatusNotModified)
-				return
-			}
+			w.Header().Set("ETag", webDAVETag(f.VersionID))
 		}
 	}
-	// Check If-Match on write methods to prevent concurrent overwrites
-	if r.Method == "PUT" || r.Method == "PATCH" || r.Method == "PROPPATCH" {
-		if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
-			name := normPath(strings.TrimPrefix(r.URL.Path, "/dav"))
-			if f, err := s.store.GetFile(name); err == nil && !f.Deleted {
-				currentETag := `"` + f.VersionID + `"`
-				if ifMatch != currentETag {
-					w.WriteHeader(http.StatusPreconditionFailed)
-					return
-				}
-			}
-		}
-	}
-	// TODO: replace MemLS with cluster-wide locking before advertising WebDAV
-	// as safe for concurrent writes from multiple mounted clients.
 	(&webdav.Handler{
 		FileSystem: &davFS{store: s.store, chunks: s.chunks, nodeID: s.cfg.NodeID, srv: s},
 		LockSystem: s.webDAVLocks,

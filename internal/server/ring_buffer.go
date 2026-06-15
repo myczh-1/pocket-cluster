@@ -3,8 +3,6 @@ package server
 import (
 	"net/http"
 	"sync"
-
-	"github.com/pocketcluster/agent/internal/types"
 )
 
 type RingBuffer struct {
@@ -48,14 +46,8 @@ func (r *RingBuffer) Lines() []string {
 
 func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
 	if s.logRing == nil {
-		writeJSON(w, http.StatusOK, types.APIResponse{
-			OK:   true,
-			Data: mustMarshal(map[string]any{"lines": []string{}}),
-		})
+		writeOK(w, http.StatusOK, map[string]any{"lines": []string{}})
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{
-		OK:   true,
-		Data: mustMarshal(map[string]any{"lines": s.logRing.Lines()}),
-	})
+	writeOK(w, http.StatusOK, map[string]any{"lines": s.logRing.Lines()})
 }

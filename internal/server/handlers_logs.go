@@ -1,10 +1,6 @@
 package server
 
-import (
-	"net/http"
-
-	"github.com/pocketcluster/agent/internal/types"
-)
+import "net/http"
 
 func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	events, err := s.store.GetEventsSince("", 50)
@@ -34,8 +30,5 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, types.APIResponse{
-		OK:   true,
-		Data: mustMarshal(map[string]any{"entries": logs}),
-	})
+	writeOK(w, http.StatusOK, map[string]any{"entries": logs})
 }

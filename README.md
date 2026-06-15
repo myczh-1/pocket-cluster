@@ -81,6 +81,8 @@ http://<ip>:7788/dav/
 
 Authenticate with your pool username and password.
 
+Existing-file overwrites are conditional: clients must send the current ETag in `If-Match`; blind overwrites are rejected with `428 Precondition Required`.
+
 ## Architecture
 
 ```

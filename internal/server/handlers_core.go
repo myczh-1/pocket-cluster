@@ -15,13 +15,10 @@ import (
 )
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, types.APIResponse{
-		OK: true,
-		Data: mustMarshal(map[string]any{
-			"node_id":        s.cfg.NodeID,
-			"status":         "online",
-			"uptime_seconds": int(time.Since(s.started).Seconds()),
-		}),
+	writeOK(w, http.StatusOK, map[string]any{
+		"node_id":        s.cfg.NodeID,
+		"status":         "online",
+		"uptime_seconds": int(time.Since(s.started).Seconds()),
 	})
 }
 
@@ -42,7 +39,7 @@ func (s *Server) handleNodeInfo(w http.ResponseWriter, r *http.Request) {
 	} else {
 		info["status"] = "online"
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(info)})
+	writeOK(w, http.StatusOK, info)
 }
 
 func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
@@ -81,10 +78,10 @@ func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(24 * time.Hour.Seconds()),
 	})
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+	writeOK(w, http.StatusOK, map[string]any{
 		"cluster_id": s.cfg.ClusterID,
 		"username":   s.cfg.PoolUser,
-	})})
+	})
 }
 
 func (s *Server) handleJoinCluster(w http.ResponseWriter, r *http.Request) {
@@ -116,10 +113,10 @@ func (s *Server) handleJoinCluster(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(24 * time.Hour.Seconds()),
 	})
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+	writeOK(w, http.StatusOK, map[string]any{
 		"cluster_id": s.cfg.ClusterID,
 		"node_count": len(nodes),
-	})})
+	})
 }
 
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +131,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 			trusted = append(trusted, n)
 		}
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(trusted)})
+	writeOK(w, http.StatusOK, trusted)
 }
 
 func (s *Server) handleListDiscovered(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +146,7 @@ func (s *Server) handleListDiscovered(w http.ResponseWriter, r *http.Request) {
 			discovered = append(discovered, n)
 		}
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(discovered)})
+	writeOK(w, http.StatusOK, discovered)
 }
 
 func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
@@ -170,10 +167,10 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+	writeOK(w, http.StatusOK, map[string]any{
 		"join_token": token,
 		"expires_at": expiresAt,
-	})})
+	})
 }
 
 func newInviteToken() (string, error) {
@@ -209,21 +206,21 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 				refs = append(refs, n)
 			}
 		}
-		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(types.JoinResponse{
+		writeOK(w, http.StatusOK, types.JoinResponse{
 			ClusterID:     s.cfg.ClusterID,
 			Approved:      true,
 			ExistingNodes: refs,
 			PoolUser:      s.cfg.PoolUser,
 			PoolPassHash:  s.cfg.PoolPassHash,
-		})})
+		})
 		return
 	}
 	if pending, err := s.store.GetPendingJoin(req.NodeID); err == nil && req.PublicKey != "" && req.PublicKey == pending.PublicKey {
-		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+		writeOK(w, http.StatusOK, map[string]any{
 			"approved": false,
 			"pending":  true,
 			"message":  "join request is still waiting for approval from pool member",
-		})})
+		})
 		return
 	}
 	// Validate pool credentials if provided
@@ -265,11 +262,11 @@ func (s *Server) handleJoinRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{
+	writeOK(w, http.StatusOK, map[string]any{
 		"approved": false,
 		"pending":  true,
 		"message":  "join request received, waiting for approval from pool member",
-	})})
+	})
 }
 
 func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
@@ -284,7 +281,7 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"path": path, "entries": files})})
+		writeOK(w, http.StatusOK, map[string]any{"path": path, "entries": files})
 		return
 	}
 	files, err := s.store.ListFiles(path)
@@ -292,12 +289,12 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(map[string]any{"path": path, "entries": files})})
+	writeOK(w, http.StatusOK, map[string]any{"path": path, "entries": files})
 }
 
 func (s *Server) handleUploadProgress(w http.ResponseWriter, r *http.Request) {
 	list := s.uploadProgress.list()
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(list)})
+	writeOK(w, http.StatusOK, list)
 }
 
 func (s *Server) handleJoinApprove(w http.ResponseWriter, r *http.Request) {
@@ -337,22 +334,32 @@ func (s *Server) handleJoinApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	s.store.DeletePendingJoin(nodeID)
-	s.appendEvent(types.EventNodeJoin, newNode)
-	nodes, _ := s.store.ListNodes()
+	if err := s.store.DeletePendingJoin(nodeID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if _, err := s.appendEvent(types.EventNodeJoin, newNode); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	nodes, err := s.store.ListNodes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
 	var refs []types.Node
 	for _, n := range nodes {
 		if n.NodeID != nodeID {
 			refs = append(refs, n)
 		}
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(types.JoinResponse{
+	writeOK(w, http.StatusOK, types.JoinResponse{
 		ClusterID:     s.cfg.ClusterID,
 		Approved:      true,
 		ExistingNodes: refs,
 		PoolUser:      s.cfg.PoolUser,
 		PoolPassHash:  s.cfg.PoolPassHash,
-	})})
+	})
 }
 
 func (s *Server) handleListPendingJoins(w http.ResponseWriter, r *http.Request) {
@@ -362,5 +369,5 @@ func (s *Server) handleListPendingJoins(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, types.APIResponse{OK: true, Data: mustMarshal(pending)})
+	writeOK(w, http.StatusOK, pending)
 }

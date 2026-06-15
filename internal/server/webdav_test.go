@@ -18,6 +18,18 @@ func basicAuth() string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte("admin:testpass"))
 }
 
+func readWebDAVFile(t *testing.T, handler http.Handler, target string) []byte {
+	t.Helper()
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", target, nil)
+	req.Header.Set("Authorization", basicAuth())
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d, want %d: %s", target, res.Code, http.StatusOK, res.Body.String())
+	}
+	return res.Body.Bytes()
+}
+
 func TestWebDAVBrowse(t *testing.T) {
 	_, st, srv := newJoinTestServer(t, "local")
 	defer st.Close()
@@ -70,7 +82,36 @@ func TestWebDAVUploadAndDownload(t *testing.T) {
 	}
 }
 
-func TestWebDAVOverwriteRemovesUnreferencedOldChunk(t *testing.T) {
+func TestWebDAVGetUsesVersionETag(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "local")
+	defer st.Close()
+
+	content := []byte("etag content")
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/dav/etag.txt", bytes.NewReader(content))
+	req.Header.Set("Authorization", basicAuth())
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusCreated && res.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200/201: %s", res.Code, res.Body.String())
+	}
+	f, err := st.GetFile("/etag.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/dav/etag.txt", nil)
+	req.Header.Set("Authorization", basicAuth())
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if got, want := res.Header().Get("ETag"), `"`+f.VersionID+`"`; got != want {
+		t.Fatalf("GET ETag = %q, want %q", got, want)
+	}
+}
+
+func TestWebDAVOverwriteRequiresCurrentETag(t *testing.T) {
 	_, st, srv := newJoinTestServer(t, "local")
 	defer st.Close()
 	handler := srv.Handler()
@@ -92,25 +133,43 @@ func TestWebDAVOverwriteRemovesUnreferencedOldChunk(t *testing.T) {
 	oldChunkID := first.ChunkIDs[0]
 
 	res = httptest.NewRecorder()
-	req = httptest.NewRequest("PUT", "/dav/overwrite.txt", bytes.NewReader([]byte("second")))
+	req = httptest.NewRequest("PUT", "/dav/overwrite.txt", bytes.NewReader([]byte("blind overwrite")))
 	req.Header.Set("Authorization", basicAuth())
 	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusPreconditionRequired {
+		t.Fatalf("blind overwrite status = %d, want %d: %s", res.Code, http.StatusPreconditionRequired, res.Body.String())
+	}
+
+	res = httptest.NewRecorder()
+	req = httptest.NewRequest("PUT", "/dav/overwrite.txt", bytes.NewReader([]byte("stale overwrite")))
+	req.Header.Set("Authorization", basicAuth())
+	req.Header.Set("If-Match", `"stale-version"`)
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale overwrite status = %d, want %d: %s", res.Code, http.StatusPreconditionFailed, res.Body.String())
+	}
+
+	current, err := st.GetFile("/overwrite.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readWebDAVFile(t, handler, "/dav/overwrite.txt")) != "first" {
+		t.Fatal("failed precondition changed file content")
+	}
+
+	res = httptest.NewRecorder()
+	req = httptest.NewRequest("PUT", "/dav/overwrite.txt", bytes.NewReader([]byte("second")))
+	req.Header.Set("Authorization", basicAuth())
+	req.Header.Set("If-Match", `"`+current.VersionID+`"`)
+	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusCreated && res.Code != http.StatusOK {
-		t.Fatalf("second PUT status = %d, want 200/201: %s", res.Code, res.Body.String())
+		t.Fatalf("conditional overwrite status = %d, want 200/201: %s", res.Code, res.Body.String())
 	}
 	if srv.chunks.Exists(oldChunkID) {
 		t.Fatalf("old chunk %s still exists after overwrite", oldChunkID)
 	}
-
-	res = httptest.NewRecorder()
-	req = httptest.NewRequest("GET", "/dav/overwrite.txt", nil)
-	req.Header.Set("Authorization", basicAuth())
-	handler.ServeHTTP(res, req)
-	if res.Code != http.StatusOK {
-		t.Fatalf("GET status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
-	}
-	if res.Body.String() != "second" {
-		t.Fatalf("content = %q, want %q", res.Body.String(), "second")
+	if string(readWebDAVFile(t, handler, "/dav/overwrite.txt")) != "second" {
+		t.Fatal("conditional overwrite did not update file content")
 	}
 }
 

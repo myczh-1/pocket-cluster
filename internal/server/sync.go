@@ -4,16 +4,18 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/pocketcluster/agent/internal/types"
 )
 
 const (
-	syncRequestTimeout = 15 * time.Second
-	targetReplicaCount = 2
-	nodeOfflineAfter   = 30 * time.Second
-	minFreeSpace       = 256 * 1024 * 1024 // 256MB minimum free space to accept a chunk
+	syncRequestTimeout  = 15 * time.Second
+	targetReplicaCount  = 2
+	nodeOfflineAfter    = 30 * time.Second
+	minFreeSpace        = 256 * 1024 * 1024 // 256MB minimum free space to accept a chunk
+	syncPeerConcurrency = 5
 )
 
 func (s *Server) StartSync(ctx context.Context, interval time.Duration) {
@@ -33,7 +35,7 @@ func (s *Server) StartSync(ctx context.Context, interval time.Duration) {
 				log.Printf("sync: %v", err)
 			}
 		case <-tombstoneTicker.C:
-			if err := s.CleanupTombstones(); err != nil {
+			if err := s.CleanupTombstonesContext(ctx); err != nil {
 				log.Printf("tombstone cleanup: %v", err)
 			}
 		}
@@ -48,30 +50,7 @@ func (s *Server) SyncOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var firstErr error
-	for _, n := range nodes {
-		if n.NodeID == s.cfg.NodeID || n.Address == "" || !n.Trusted {
-			continue
-		}
-		pullAddress, pullErr := s.pullEvents(ctx, n)
-		pushAddress, pushErr := s.pushEvents(ctx, n)
-		if pullErr == nil || pushErr == nil {
-			workingAddress := pullAddress
-			if workingAddress == "" {
-				workingAddress = pushAddress
-			}
-			if err := s.markPeerOnline(n.NodeID, workingAddress, time.Now()); err != nil && firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		if markErr := s.markPeerOfflineIfStale(n, time.Now()); markErr != nil && firstErr == nil {
-			firstErr = markErr
-		}
-		if firstErr == nil {
-			firstErr = fmt.Errorf("pull events from %s: %w; push events: %v", n.NodeID, pullErr, pushErr)
-		}
-	}
+	firstErr := s.syncPeers(ctx, nodes)
 	if err := s.fetchMissingChunks(ctx); err != nil && firstErr == nil {
 		firstErr = err
 	}
@@ -100,6 +79,69 @@ func (s *Server) SyncOnce(ctx context.Context) error {
 		}
 	}
 	return firstErr
+}
+
+func (s *Server) syncPeers(ctx context.Context, nodes []types.Node) error {
+	sem := make(chan struct{}, syncPeerConcurrency)
+	errs := make(chan error, len(nodes))
+	var wg sync.WaitGroup
+	for _, n := range nodes {
+		if n.NodeID == s.cfg.NodeID || n.Address == "" || !n.Trusted {
+			continue
+		}
+		n := n
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				errs <- ctx.Err()
+				return
+			}
+			if err := s.syncPeer(ctx, n); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) syncPeer(ctx context.Context, n types.Node) error {
+	var pullAddress string
+	var pushAddress string
+	var pullErr error
+	var pushErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		pullAddress, pullErr = s.pullEvents(ctx, n)
+	}()
+	go func() {
+		defer wg.Done()
+		pushAddress, pushErr = s.pushEvents(ctx, n)
+	}()
+	wg.Wait()
+	if pullErr == nil || pushErr == nil {
+		workingAddress := pullAddress
+		if workingAddress == "" {
+			workingAddress = pushAddress
+		}
+		return s.markPeerOnline(n.NodeID, workingAddress, time.Now())
+	}
+	if err := s.markPeerOfflineIfStale(n, time.Now()); err != nil {
+		return err
+	}
+	return fmt.Errorf("pull events from %s: %w; push events: %v", n.NodeID, pullErr, pushErr)
 }
 
 func (s *Server) markPeerOnline(nodeID, address string, now time.Time) error {

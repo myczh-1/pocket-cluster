@@ -132,6 +132,9 @@ func (s *Store) LoadSnapshot(snap *MetadataSnapshot) error {
 		}
 	}
 	// Clear and rebuild FTS index inside the transaction.
+	if _, err := tx.Exec(`DELETE FROM file_chunks`); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM files_fts`); err != nil {
 		return err
 	}
@@ -144,6 +147,9 @@ func (s *Store) LoadSnapshot(snap *MetadataSnapshot) error {
 			if _, err := tx.Exec(`INSERT INTO files_fts (file_id, name, path) VALUES (?, ?, ?)`, f.FileID, f.Name, f.Path); err != nil {
 				return err
 			}
+		}
+		if err := upsertFileChunksTx(tx, f.FileID, f.ChunkIDs); err != nil {
+			return err
 		}
 	}
 	for _, c := range snap.Chunks {

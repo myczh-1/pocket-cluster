@@ -150,10 +150,16 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, types.APIResponse{OK: false, Error: &types.APIError{Code: code, Message: msg}})
 }
 
-func mustMarshal(v any) json.RawMessage {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic("mustMarshal: " + err.Error())
+func writeOK(w http.ResponseWriter, status int, data any) {
+	resp := types.APIResponse{OK: true}
+	if data != nil {
+		body, err := json.Marshal(data)
+		if err != nil {
+			log.Printf("writeOK marshal error: %v", err)
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to encode response")
+			return
+		}
+		resp.Data = body
 	}
-	return b
+	writeJSON(w, status, resp)
 }
