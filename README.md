@@ -1,5 +1,7 @@
 # PocketCluster
 
+[中文说明](README_zh.md)
+
 > **Early MVP** — PocketCluster is in active development. Many features are rough and the API may change. Not recommended for production use yet.
 
 Turn your old phones, laptops, and tablets into a unified storage pool.
@@ -21,6 +23,19 @@ No NAS. No cloud. No central server. Just your devices.
 - **Invite Join** — approve new nodes from any existing member, or use one-time invite tokens
 - **Local File Browser** — browse local files and migrate them into the pool
 - **Cross-Platform** — single static binary for each platform, no runtime dependencies
+
+## Example Use Cases
+
+- **Home storage pool** — reuse old phones, tablets, laptops, and desktops as one local storage pool instead of buying a NAS.
+- **Portable sync between places** — create a pool with your laptop and phone at work, upload files while both are online, then bring the phone home and let a home computer join the same pool. The phone can carry metadata and chunk replicas between networks, so the home computer can sync from it.
+- **WebDAV access** — mount the pool from Finder, Windows Explorer, iOS Files, or Android file managers and use it like a local network drive.
+
+## Current MVP Limits
+
+- PocketCluster syncs over reachable local networks. It does not provide public Internet relay, NAT traversal, or always-online cloud storage.
+- A file is readable on a device only when at least one currently reachable node has every required chunk.
+- Portable sync works only after the carrying device, such as a phone, has finished receiving the needed metadata and chunk replicas before leaving the previous network.
+- Android is still geek-mode: background execution depends on foreground service, battery settings, vendor ROM behavior, and the device staying online long enough to sync.
 
 ## Quick Start
 
