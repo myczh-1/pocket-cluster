@@ -173,6 +173,15 @@ func TestHealthInsightsReportsEfficiencyAndRisk(t *testing.T) {
 		Risk struct {
 			AffectedFileCount int      `json:"affected_file_count"`
 			AffectedFiles     []string `json:"affected_files"`
+			Files             []struct {
+				Path   string `json:"path"`
+				Status string `json:"status"`
+			} `json:"files"`
+			Nodes []struct {
+				NodeID         string `json:"node_id"`
+				ChunkCount     int    `json:"chunk_count"`
+				RiskChunkCount int    `json:"risk_chunk_count"`
+			} `json:"nodes"`
 		} `json:"risk"`
 		Repair struct {
 			Status       string `json:"status"`
@@ -187,6 +196,12 @@ func TestHealthInsightsReportsEfficiencyAndRisk(t *testing.T) {
 	}
 	if payload.Risk.AffectedFileCount != 2 {
 		t.Fatalf("affected file count = %d, want 2 (%+v)", payload.Risk.AffectedFileCount, payload.Risk.AffectedFiles)
+	}
+	if len(payload.Risk.Files) != 2 {
+		t.Fatalf("file risks = %d, want 2", len(payload.Risk.Files))
+	}
+	if len(payload.Risk.Nodes) == 0 || payload.Risk.Nodes[0].ChunkCount == 0 {
+		t.Fatalf("expected node risk summary with chunk counts: %+v", payload.Risk.Nodes)
 	}
 	if payload.Repair.Status != "queued" || payload.Repair.QueuedChunks != 1 {
 		t.Fatalf("unexpected repair insight: %+v", payload.Repair)

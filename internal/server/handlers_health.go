@@ -62,10 +62,57 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 
 	summary := s.HealthSummarySnapshot()
 	chunkHealth := s.ChunkHealthSnapshot()
+	nodes, err := s.store.ListNodes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())
+		return
+	}
 	affected := map[string]struct{}{}
+	type fileRiskItem struct {
+		FileID                string              `json:"file_id"`
+		Path                  string              `json:"path"`
+		ChunkCount            int                 `json:"chunk_count"`
+		Status                types.ReplicaStatus `json:"status"`
+		ReadableChunks        int                 `json:"readable_chunks"`
+		UnavailableChunks     int                 `json:"unavailable_chunks"`
+		UnderReplicatedChunks int                 `json:"under_replicated_chunks"`
+	}
+	fileRisks := make([]fileRiskItem, 0)
+	nodeChunkCounts := make(map[string]int)
+	nodeRiskCounts := make(map[string]int)
+	nodeRepairingCounts := make(map[string]int)
+	statusRank := func(status types.ReplicaStatus) int {
+		switch status {
+		case types.ReplicaUnavailable:
+			return 3
+		case types.ReplicaRepairing:
+			return 2
+		case types.ReplicaUnderReplicated:
+			return 1
+		default:
+			return 0
+		}
+	}
+
 	for _, detail := range chunkHealth {
 		if detail.Status == types.ReplicaHealthy {
+			for _, replica := range detail.ReplicaNodes {
+				if replica.HasChunk {
+					nodeChunkCounts[replica.NodeID]++
+				}
+			}
 			continue
+		}
+		for _, replica := range detail.ReplicaNodes {
+			if replica.HasChunk {
+				nodeChunkCounts[replica.NodeID]++
+			}
+			if !replica.Online {
+				nodeRiskCounts[replica.NodeID]++
+			}
+			if detail.Status == types.ReplicaRepairing && replica.HasChunk {
+				nodeRepairingCounts[replica.NodeID]++
+			}
 		}
 		for _, p := range detail.ReferencingFiles {
 			affected[p] = struct{}{}
@@ -76,6 +123,99 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 		affectedFiles = append(affectedFiles, p)
 	}
 	sort.Strings(affectedFiles)
+
+	for _, f := range files {
+		if f.Deleted || f.IsDir {
+			continue
+		}
+		item := fileRiskItem{
+			FileID:     f.FileID,
+			Path:       f.Path,
+			ChunkCount: len(f.ChunkIDs),
+			Status:     types.ReplicaHealthy,
+		}
+		for _, chunkID := range f.ChunkIDs {
+			detail, ok := chunkHealth[chunkID]
+			if !ok {
+				continue
+			}
+			if detail.Status != types.ReplicaUnavailable {
+				item.ReadableChunks++
+			}
+			switch detail.Status {
+			case types.ReplicaUnavailable:
+				item.UnavailableChunks++
+				item.Status = types.ReplicaUnavailable
+			case types.ReplicaUnderReplicated:
+				item.UnderReplicatedChunks++
+				if item.Status == types.ReplicaHealthy {
+					item.Status = types.ReplicaUnderReplicated
+				}
+			case types.ReplicaRepairing:
+				item.UnderReplicatedChunks++
+				if item.Status == types.ReplicaHealthy || item.Status == types.ReplicaUnderReplicated {
+					item.Status = types.ReplicaRepairing
+				}
+			}
+		}
+		if item.Status != types.ReplicaHealthy {
+			fileRisks = append(fileRisks, item)
+		}
+	}
+	sort.Slice(fileRisks, func(i, j int) bool {
+		left, right := fileRisks[i], fileRisks[j]
+		if statusRank(left.Status) != statusRank(right.Status) {
+			return statusRank(left.Status) > statusRank(right.Status)
+		}
+		if left.UnavailableChunks != right.UnavailableChunks {
+			return left.UnavailableChunks > right.UnavailableChunks
+		}
+		if left.UnderReplicatedChunks != right.UnderReplicatedChunks {
+			return left.UnderReplicatedChunks > right.UnderReplicatedChunks
+		}
+		return left.Path < right.Path
+	})
+
+	type nodeRiskItem struct {
+		NodeID          string    `json:"node_id"`
+		Name            string    `json:"name"`
+		Platform        string    `json:"platform"`
+		Status          string    `json:"status"`
+		LastSeen        time.Time `json:"last_seen"`
+		UsedBytes       int64     `json:"used_bytes"`
+		TotalBytes      int64     `json:"total_bytes"`
+		ChunkCount      int       `json:"chunk_count"`
+		RiskChunkCount  int       `json:"risk_chunk_count"`
+		RepairingChunks int       `json:"repairing_chunks"`
+	}
+	nodeRisks := make([]nodeRiskItem, 0, len(nodes))
+	for _, n := range nodes {
+		if !n.Trusted {
+			continue
+		}
+		nodeRisks = append(nodeRisks, nodeRiskItem{
+			NodeID:          n.NodeID,
+			Name:            n.Name,
+			Platform:        n.Platform,
+			Status:          n.Status,
+			LastSeen:        n.LastSeen,
+			UsedBytes:       n.UsedBytes,
+			TotalBytes:      n.TotalBytes,
+			ChunkCount:      nodeChunkCounts[n.NodeID],
+			RiskChunkCount:  nodeRiskCounts[n.NodeID],
+			RepairingChunks: nodeRepairingCounts[n.NodeID],
+		})
+	}
+	sort.Slice(nodeRisks, func(i, j int) bool {
+		left, right := nodeRisks[i], nodeRisks[j]
+		if left.RiskChunkCount != right.RiskChunkCount {
+			return left.RiskChunkCount > right.RiskChunkCount
+		}
+		if left.ChunkCount != right.ChunkCount {
+			return left.ChunkCount > right.ChunkCount
+		}
+		return left.NodeID < right.NodeID
+	})
 
 	s.health.mu.RLock()
 	queuedChunks := append([]string(nil), s.health.underReplicated...)
@@ -115,6 +255,8 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 		"risk": map[string]any{
 			"affected_file_count": len(affectedFiles),
 			"affected_files":      affectedFiles,
+			"files":               fileRisks,
+			"nodes":               nodeRisks,
 		},
 		"repair": map[string]any{
 			"status":              repairStatus,

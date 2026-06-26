@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import { cx, formatBytes } from "../utils";
-import { EmptyState, PageHeader } from "../components/common";
+import { cx, formatBytes, formatLastSeen } from "../utils";
+import { EmptyState, PageHeader, StatusBadge } from "../components/common";
 
 function ProgressLine({ value }) {
   const clamped = Math.min(100, Math.max(0, value || 0));
@@ -57,6 +57,8 @@ export default function HealthPage() {
   const storage = insights?.storage;
   const repair = insights?.repair;
   const risk = insights?.risk;
+  const riskyFiles = risk?.files || [];
+  const riskyNodes = risk?.nodes || [];
   const dedupPercent = storage?.dedup_ratio ? Math.round(storage.dedup_ratio * 100) : 0;
   return (
     <div className="space-y-5">
@@ -153,6 +155,64 @@ export default function HealthPage() {
           </div>
         </div>
       )}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-950">Files needing attention</h3>
+            <span className="text-xs text-slate-500">{riskyFiles.length} file(s)</span>
+          </div>
+          <div className="space-y-2">
+            {riskyFiles.slice(0, 8).map((file) => (
+              <div key={file.file_id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate font-mono text-xs text-slate-600">{file.path}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {file.readable_chunks}/{file.chunk_count} readable
+                      {file.unavailable_chunks > 0 && ` · ${file.unavailable_chunks} unavailable`}
+                      {file.under_replicated_chunks > 0 && ` · ${file.under_replicated_chunks} under-replicated`}
+                    </div>
+                  </div>
+                  <StatusBadge status={file.status} />
+                </div>
+              </div>
+            ))}
+            {riskyFiles.length === 0 && (
+              <EmptyState title="No risky files" description="Every known file currently has healthy replica coverage." />
+            )}
+          </div>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-950">Node contribution</h3>
+            <span className="text-xs text-slate-500">{riskyNodes.length} node(s)</span>
+          </div>
+          <div className="space-y-2">
+            {riskyNodes.slice(0, 8).map((node) => (
+              <div key={node.node_id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-slate-950">{node.name || node.node_id}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {node.platform} · Seen {formatLastSeen(node.last_seen)}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {node.chunk_count} chunk(s) · {node.risk_chunk_count} risky · {node.repairing_chunks} repairing
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {formatBytes(node.used_bytes || 0)} used / {formatBytes(node.total_bytes || 0)} total
+                    </div>
+                  </div>
+                  <StatusBadge status={node.status} />
+                </div>
+              </div>
+            ))}
+            {riskyNodes.length === 0 && (
+              <EmptyState title="No nodes tracked" description="Node health details will appear after trusted nodes join the pool." />
+            )}
+          </div>
+        </div>
+      </div>
       {selectedChunk && (
         <div className="rounded-lg border border-blue-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
