@@ -2,15 +2,19 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import { cx } from "./utils";
 import FilesPage from "./pages/FilesPage";
+import MountPage from "./pages/MountPage";
 import NodesPage from "./pages/NodesPage";
 import HealthPage from "./pages/HealthPage";
+import SyncTasksPage from "./pages/SyncTasksPage";
 import LogsPage from "./pages/LogsPage";
 import { JoinPage, LoginPage } from "./pages/AuthPages";
 
 const navItems = [
   { id: "files", label: "Files", hint: "Pool browser" },
+  { id: "mount", label: "Mount", hint: "WebDAV" },
   { id: "nodes", label: "Nodes", hint: "Devices" },
   { id: "health", label: "Health", hint: "Replication" },
+  { id: "tasks", label: "Tasks", hint: "Sync" },
   { id: "logs", label: "Logs", hint: "Events" },
 ];
 
@@ -97,8 +101,10 @@ export default function App() {
       <main className="p-4 pb-28 lg:ml-64 lg:flex-1 lg:p-8 xl:p-10">
         <div className="mx-auto w-full max-w-7xl">
           {tab === "files" && <FilesPage />}
+          {tab === "mount" && <MountPage />}
           {tab === "nodes" && <NodesPage />}
           {tab === "health" && <HealthPage />}
+          {tab === "tasks" && <SyncTasksPage />}
           {tab === "logs" && <LogsPage />}
         </div>
       </main>
@@ -107,7 +113,7 @@ export default function App() {
         className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white/95 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden"
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
-        <div className="grid grid-cols-4">
+        <div className="grid grid-cols-6">
           {navItems.map((item) => (
             <button
               key={item.id}

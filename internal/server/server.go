@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sort"
 	"time"
 
 	"sync"
@@ -77,6 +78,98 @@ func (p *uploadProgressStore) list() []uploadStatus {
 	return list
 }
 
+type syncTaskStore struct {
+	mu sync.RWMutex
+	m  map[string]*types.SyncTask
+}
+
+func newSyncTaskStore() *syncTaskStore {
+	return &syncTaskStore{m: make(map[string]*types.SyncTask)}
+}
+
+func (s *syncTaskStore) upsert(task types.SyncTask) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	existing, ok := s.m[task.ID]
+	if ok {
+		if task.StartedAt.IsZero() {
+			task.StartedAt = existing.StartedAt
+		}
+		if task.Title == "" {
+			task.Title = existing.Title
+		}
+		if task.Target == "" {
+			task.Target = existing.Target
+		}
+		if task.Kind == "" {
+			task.Kind = existing.Kind
+		}
+	}
+	if task.StartedAt.IsZero() {
+		task.StartedAt = now
+	}
+	task.UpdatedAt = now
+
+	copy := task
+	if copy.Status == types.SyncTaskDone || copy.Status == types.SyncTaskFailed || copy.Status == types.SyncTaskBlocked {
+		if copy.FinishedAt.IsZero() {
+			copy.FinishedAt = now
+		}
+	} else {
+		copy.FinishedAt = time.Time{}
+	}
+	s.m[copy.ID] = &copy
+	s.pruneLocked(now)
+}
+
+func (s *syncTaskStore) list() []types.SyncTask {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	list := make([]types.SyncTask, 0, len(s.m))
+	for _, task := range s.m {
+		list = append(list, *task)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].UpdatedAt.After(list[j].UpdatedAt)
+	})
+	return list
+}
+
+func (s *syncTaskStore) pruneLocked(now time.Time) {
+	const keepDoneFor = 30 * time.Minute
+	const maxTasks = 200
+
+	if len(s.m) == 0 {
+		return
+	}
+
+	for id, task := range s.m {
+		if task.FinishedAt.IsZero() {
+			continue
+		}
+		if now.Sub(task.FinishedAt) > keepDoneFor {
+			delete(s.m, id)
+		}
+	}
+	if len(s.m) <= maxTasks {
+		return
+	}
+
+	list := make([]types.SyncTask, 0, len(s.m))
+	for _, task := range s.m {
+		list = append(list, *task)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].UpdatedAt.Before(list[j].UpdatedAt)
+	})
+	for _, task := range list[:len(list)-maxTasks] {
+		delete(s.m, task.ID)
+	}
+}
+
 type Server struct {
 	cfg              *config.Config
 	store            *store.Store
@@ -88,9 +181,11 @@ type Server struct {
 	started          time.Time
 	joinPollInterval time.Duration
 	uploadProgress   *uploadProgressStore
+	syncTasks        *syncTaskStore
 	peerHTTPClient   peerHTTPDoer
 	webDAVLocks      webdav.LockSystem
 	loginLimiter     *loginLimiter
+	lastRecovery     time.Time // last time offline nodes were pinged for recovery
 }
 
 type Option func(*Server)
@@ -128,6 +223,7 @@ func New(cfg *config.Config, s *store.Store, c *chunk.Storage, opts ...Option) *
 		health:         newHealthScanner(),
 		started:        time.Now(),
 		uploadProgress: newUploadProgressStore(),
+		syncTasks:      newSyncTaskStore(),
 		peerHTTPClient: peernet.NewHTTPClient(),
 		webDAVLocks:    webdav.NewMemLS(),
 		loginLimiter:   newLoginLimiter(5, time.Minute),

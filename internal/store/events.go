@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pocketcluster/agent/internal/types"
@@ -28,6 +30,8 @@ func (s *Store) GetEventsSince(sinceEventID string, limit int) ([]types.Event, e
 	var err error
 	if sinceEventID == "" {
 		rows, err = s.db.Query(`SELECT event_id, type, node_id, seq, timestamp, payload FROM events ORDER BY node_id ASC, seq ASC LIMIT ?`, limit)
+	} else if nodeID, seq, ok := splitEventID(sinceEventID); ok {
+		rows, err = s.db.Query(`SELECT event_id, type, node_id, seq, timestamp, payload FROM events WHERE node_id > ? OR (node_id = ? AND seq > ?) ORDER BY node_id ASC, seq ASC LIMIT ?`, nodeID, nodeID, seq, limit)
 	} else {
 		rows, err = s.db.Query(`SELECT event_id, type, node_id, seq, timestamp, payload FROM events WHERE event_id > ? ORDER BY event_id ASC LIMIT ?`, sinceEventID, limit)
 	}
@@ -50,6 +54,18 @@ func (s *Store) GetEventsSince(sinceEventID string, limit int) ([]types.Event, e
 		events = append(events, e)
 	}
 	return events, rows.Err()
+}
+
+func splitEventID(eventID string) (string, int64, bool) {
+	idx := strings.LastIndex(eventID, ":")
+	if idx <= 0 || idx == len(eventID)-1 {
+		return "", 0, false
+	}
+	seq, err := strconv.ParseInt(eventID[idx+1:], 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+	return eventID[:idx], seq, true
 }
 
 func (s *Store) GetUnpushedEvents(peerNodeID string, limit int) ([]types.Event, error) {

@@ -197,7 +197,7 @@ func (s *Server) runHealthScan(ctx context.Context) {
 		isRepairing := s.health.repairing[c.ChunkID]
 		s.health.mu.RUnlock()
 		if isRepairing {
-			status = "repairing"
+			status = types.ReplicaRepairing
 			summary.RepairingChunks++
 		}
 

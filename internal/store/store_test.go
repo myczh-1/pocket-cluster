@@ -50,6 +50,38 @@ func TestInsertEventReportsDuplicatesAndReadsPayload(t *testing.T) {
 	}
 }
 
+func TestGetEventsSinceUsesNodeSeqOrdering(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	for _, e := range []*types.Event{
+		{EventID: "node-a:1", Type: types.EventNodeUpdate, NodeID: "node-a", Seq: 1, Timestamp: time.UnixMilli(1), Payload: json.RawMessage(`{}`)},
+		{EventID: "node-a:2", Type: types.EventNodeUpdate, NodeID: "node-a", Seq: 2, Timestamp: time.UnixMilli(2), Payload: json.RawMessage(`{}`)},
+		{EventID: "node-a:10", Type: types.EventNodeUpdate, NodeID: "node-a", Seq: 10, Timestamp: time.UnixMilli(10), Payload: json.RawMessage(`{}`)},
+		{EventID: "node-b:1", Type: types.EventNodeUpdate, NodeID: "node-b", Seq: 1, Timestamp: time.UnixMilli(11), Payload: json.RawMessage(`{}`)},
+	} {
+		if _, err := s.InsertEvent(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	events, err := s.GetEventsSince("node-a:2", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(events))
+	for _, e := range events {
+		got = append(got, e.EventID)
+	}
+	want := []string{"node-a:10", "node-b:1"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("events since node-a:2 = %v, want %v", got, want)
+	}
+}
+
 func TestUpsertNodePreservesTrustWhenDiscoveryUpdatesAddress(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

@@ -91,7 +91,42 @@ const (
 	ReplicaHealthy         ReplicaStatus = "healthy"
 	ReplicaUnderReplicated ReplicaStatus = "under_replicated"
 	ReplicaUnavailable     ReplicaStatus = "unavailable"
+	ReplicaRepairing       ReplicaStatus = "repairing"
 )
+
+type SyncTaskStatus string
+
+const (
+	SyncTaskPending  SyncTaskStatus = "pending"
+	SyncTaskRunning  SyncTaskStatus = "running"
+	SyncTaskRetrying SyncTaskStatus = "retrying"
+	SyncTaskBlocked  SyncTaskStatus = "blocked"
+	SyncTaskFailed   SyncTaskStatus = "failed"
+	SyncTaskDone     SyncTaskStatus = "done"
+)
+
+type SyncTaskKind string
+
+const (
+	SyncTaskUpload         SyncTaskKind = "upload"
+	SyncTaskMetadataPull   SyncTaskKind = "metadata_pull"
+	SyncTaskMetadataPush   SyncTaskKind = "metadata_push"
+	SyncTaskReplicaRepair  SyncTaskKind = "replica_repair"
+	SyncTaskIntegrityCheck SyncTaskKind = "integrity_check"
+)
+
+type SyncTask struct {
+	ID         string         `json:"id"`
+	Kind       SyncTaskKind   `json:"kind"`
+	Status     SyncTaskStatus `json:"status"`
+	Title      string         `json:"title"`
+	Target     string         `json:"target,omitempty"`
+	Message    string         `json:"message,omitempty"`
+	Error      string         `json:"error,omitempty"`
+	StartedAt  time.Time      `json:"started_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	FinishedAt time.Time      `json:"finished_at,omitempty"`
+}
 
 type Invite struct {
 	TokenHash string    `json:"-"`

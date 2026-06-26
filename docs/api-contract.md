@@ -12,6 +12,28 @@ All responses use `Content-Type: application/json` unless noted otherwise.
 
 All requests between nodes must include a signature header for authentication.
 
+## Current v0.1 Scope
+
+This contract describes the current MVP snapshot that backs the existing Web UI and WebDAV flow.
+
+### Supported
+
+- Pool bootstrap, invite join, authentication, file browsing, upload, download, delete, and rename
+- Peer-to-peer event sync, chunk transfer, snapshot bootstrap, and basic replica health visibility
+- WebDAV access under `/dav/` using the same pool credentials as the Web UI
+
+### Experimental / Rough Edges
+
+- Android interoperability and background reliability remain environment-dependent
+- Health endpoints expose replica summary and chunk-level detail, but do not yet cover a full jobs/task model
+- Automatic repair exists, but explicit repair jobs and operator-triggered rescan/report APIs are not part of `v0.1`
+
+### Explicitly Out Of Scope For v0.1
+
+- Public Internet relay, NAT traversal, or cloud-hosted coordination
+- Multi-user permissions, ACLs, or sharing APIs
+- Dedicated jobs APIs such as `/api/jobs/*`
+
 ## Common Headers
 
 ### Node Authentication
@@ -527,6 +549,34 @@ Returns health detail for a specific file with per-chunk breakdown.
     "chunk_count": 1,
     "status": "healthy",
     "chunks": [ ... ]
+  }
+}
+```
+
+### GET /api/sync/tasks
+
+Returns the current in-memory sync task view used by the Web UI.
+
+This endpoint is an early `v0.2` observability surface. It is intended for operator visibility and may evolve before a more formal jobs API is introduced.
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "tasks": [
+      {
+        "id": "pull:nodeA",
+        "kind": "metadata_pull",
+        "status": "running",
+        "title": "Pulling metadata",
+        "target": "nodeA",
+        "message": "Fetching remote events from this node.",
+        "started_at": "2026-06-26T10:00:00Z",
+        "updated_at": "2026-06-26T10:00:01Z"
+      }
+    ]
   }
 }
 ```

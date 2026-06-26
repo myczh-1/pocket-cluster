@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -291,6 +292,39 @@ func TestWebDAVBasicAuth(t *testing.T) {
 	srv.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusMultiStatus {
 		t.Fatalf("authed status = %d, want %d: %s", res.Code, http.StatusMultiStatus, res.Body.String())
+	}
+}
+
+func TestWebDAVInfo(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "local")
+	defer st.Close()
+
+	session := loginTestSession(t, srv)
+	res := httptest.NewRecorder()
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/webdav/info", nil), session)
+	req.Host = "pocket.local:7788"
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("info status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	var envelope types.APIResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Enabled      bool   `json:"enabled"`
+		URL          string `json:"url"`
+		AuthRequired bool   `json:"auth_required"`
+		Username     string `json:"username"`
+	}
+	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Enabled || payload.URL != "http://pocket.local:7788/dav/" {
+		t.Fatalf("unexpected WebDAV info: %+v", payload)
+	}
+	if !payload.AuthRequired || payload.Username != "admin" {
+		t.Fatalf("unexpected auth info: %+v", payload)
 	}
 }
 

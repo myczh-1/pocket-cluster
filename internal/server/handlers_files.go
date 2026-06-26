@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -78,11 +79,14 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	uploadID := uuid.New().String()
 	s.uploadProgress.add(&uploadStatus{ID: uploadID, FileName: header.Filename, Status: "uploading"})
+	taskID := "upload:" + uploadID
+	s.trackSyncTask(taskID, types.SyncTaskUpload, types.SyncTaskRunning, "Uploading file", targetPath, "Writing file into the local pool node.", "")
 	defer s.uploadProgress.delete(uploadID)
 	defer file.Close()
 
 	staged, err := s.storeLocalChunks(file)
 	if err != nil {
+		s.failSyncTask(taskID, types.SyncTaskUpload, types.SyncTaskFailed, "Uploading file", targetPath, "Upload failed before metadata commit.", err.Error())
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
@@ -117,6 +121,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		ModifiedBy: s.cfg.NodeID,
 	}
 	if err := s.commitFilePut(f, filePutOptions{ConflictOnExisting: true}); err != nil {
+		s.failSyncTask(taskID, types.SyncTaskUpload, types.SyncTaskFailed, "Uploading file", targetPath, "Upload failed while committing file metadata.", err.Error())
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
@@ -124,6 +129,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	repairChunkIDs := append([]string(nil), staged.chunkIDs...)
 	go s.repairChunksAsync(repairChunkIDs)
 	s.uploadProgress.set(uploadID, "done", "", staged.totalSize)
+	s.finishSyncTask(taskID, types.SyncTaskUpload, "Uploading file", targetPath, "File content committed; replica repair continues in the background.")
 	replicaStatus := s.replicaStatusForChunks(staged.chunkIDs)
 	writeOK(w, http.StatusOK, map[string]any{
 		"file_id":        f.FileID,
@@ -144,9 +150,14 @@ func (s *Server) repairChunksAsync(chunkIDs []string) {
 		return
 	}
 	for _, chunkID := range chunkIDs {
+		taskID := "repair:" + chunkID
+		s.trackSyncTask(taskID, types.SyncTaskReplicaRepair, types.SyncTaskRunning, "Repairing replica", chunkID, "Trying to reach the target replica count for this chunk.", "")
 		if err := s.repairChunkReplicas(context.Background(), chunkID, nodes); err != nil {
+			s.failSyncTask(taskID, types.SyncTaskReplicaRepair, repairFailureStatus(err), "Repairing replica", chunkID, "Replica repair did not complete in this pass.", err.Error())
 			log.Printf("upload repair: chunk %s: %v", chunkID, err)
+			continue
 		}
+		s.finishSyncTask(taskID, types.SyncTaskReplicaRepair, "Repairing replica", chunkID, "Replica target satisfied for this chunk.")
 	}
 	s.runHealthScan(context.Background())
 }
@@ -222,7 +233,6 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, http.StatusOK, map[string]string{"path": path, "status": "deleted"})
 }
 
-
 // PATCH /api/files/rename — rename or move a file
 func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -235,6 +245,10 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Path == "" || req.NewPath == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path and new_path are required")
+		return
+	}
+	if err := validateRenamePath(req.NewPath); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_PATH", err.Error())
 		return
 	}
 	f, err := s.store.GetFile(req.Path)
@@ -266,4 +280,31 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		"old_path": req.Path,
 		"new_path": req.NewPath,
 	})
+}
+
+// validateRenamePath rejects hidden names (dot-prefixed) and relative path components.
+func validateRenamePath(p string) error {
+	if p == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+	if !strings.HasPrefix(p, "/") {
+		return fmt.Errorf("path %q must be absolute", p)
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" {
+			continue
+		}
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("path %q cannot contain relative components", p)
+		}
+		if strings.HasPrefix(seg, ".") {
+			return fmt.Errorf("name %q is not allowed: hidden files and relative paths are forbidden", seg)
+		}
+	}
+	// Reject paths that resolve outside root (e.g. contain ".." traversal).
+	cleaned := filepath.Clean(p)
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return fmt.Errorf("path %q resolves outside the pool root", p)
+	}
+	return nil
 }

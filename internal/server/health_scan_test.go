@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -108,6 +111,85 @@ func TestHealthScanDetectsUnderReplicated(t *testing.T) {
 	}
 	if detail.Status != types.ReplicaUnderReplicated {
 		t.Errorf("expected chunk status under_replicated, got %s", detail.Status)
+	}
+}
+
+func TestHealthInsightsReportsEfficiencyAndRisk(t *testing.T) {
+	s := newTestHealthServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.store.UpdateNodeFull(&types.Node{
+		NodeID:   "nodeA",
+		Name:     "Node A",
+		Platform: "linux",
+		Address:  "127.0.0.1:7788",
+		Status:   "online",
+		Trusted:  true,
+		LastSeen: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertChunk(&types.Chunk{ChunkID: "shared", SizeBytes: 100, StoredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []types.File{
+		{FileID: "f1", Name: "a.bin", Path: "/a.bin", SizeBytes: 100, VersionID: "v1", ChunkIDs: []string{"shared"}, CreatedAt: time.Now(), ModifiedAt: time.Now(), ModifiedBy: "nodeA"},
+		{FileID: "f2", Name: "b.bin", Path: "/b.bin", SizeBytes: 100, VersionID: "v2", ChunkIDs: []string{"shared"}, CreatedAt: time.Now(), ModifiedAt: time.Now(), ModifiedBy: "nodeA"},
+	} {
+		if err := s.store.UpsertFile(&f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.store.UpsertReplica(&types.Replica{
+		ChunkID:    "shared",
+		NodeID:     "nodeA",
+		Status:     "available",
+		StoredAt:   time.Now(),
+		VerifiedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.runHealthScan(ctx)
+
+	session := loginTestSession(t, s)
+	res := httptest.NewRecorder()
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/health/insights", nil), session)
+	s.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("insights status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	var envelope types.APIResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Storage struct {
+			FileCount        int   `json:"file_count"`
+			LogicalBytes     int64 `json:"logical_bytes"`
+			UniqueChunkBytes int64 `json:"unique_chunk_bytes"`
+			DedupSavedBytes  int64 `json:"dedup_saved_bytes"`
+		} `json:"storage"`
+		Risk struct {
+			AffectedFileCount int      `json:"affected_file_count"`
+			AffectedFiles     []string `json:"affected_files"`
+		} `json:"risk"`
+		Repair struct {
+			Status       string `json:"status"`
+			QueuedChunks int    `json:"queued_chunks"`
+		} `json:"repair"`
+	}
+	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Storage.FileCount != 2 || payload.Storage.LogicalBytes != 200 || payload.Storage.UniqueChunkBytes != 100 || payload.Storage.DedupSavedBytes != 100 {
+		t.Fatalf("unexpected storage insights: %+v", payload.Storage)
+	}
+	if payload.Risk.AffectedFileCount != 2 {
+		t.Fatalf("affected file count = %d, want 2 (%+v)", payload.Risk.AffectedFileCount, payload.Risk.AffectedFiles)
+	}
+	if payload.Repair.Status != "queued" || payload.Repair.QueuedChunks != 1 {
+		t.Fatalf("unexpected repair insight: %+v", payload.Repair)
 	}
 }
 

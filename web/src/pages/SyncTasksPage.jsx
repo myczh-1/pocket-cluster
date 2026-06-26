@@ -1,0 +1,116 @@
+import { useCallback, useEffect, useState } from "react";
+import { api } from "../api";
+import { EmptyState, PageHeader, Section, StatusBadge } from "../components/common";
+
+function formatWhen(value) {
+  if (!value) return "never";
+  return new Date(value).toLocaleString();
+}
+
+function kindLabel(kind) {
+  switch (kind) {
+    case "upload":
+      return "Upload";
+    case "metadata_pull":
+      return "Metadata Pull";
+    case "metadata_push":
+      return "Metadata Push";
+    case "replica_repair":
+      return "Replica Repair";
+    case "integrity_check":
+      return "Integrity Check";
+    default:
+      return kind || "Task";
+  }
+}
+
+export default function SyncTasksPage() {
+  const [tasks, setTasks] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api("/sync/tasks");
+      if (res.ok) {
+        setTasks(res.data?.tasks || []);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const grouped = tasks.reduce((acc, task) => {
+    acc[task.status] = (acc[task.status] || 0) + 1;
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow="Operations"
+        title="Sync Tasks"
+        description="See what the agent is currently uploading, syncing, repairing, retrying, or blocking on."
+      />
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+        {["running", "retrying", "blocked", "failed", "done", "pending"].map((status) => (
+          <div key={status} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase text-slate-500">{status}</div>
+            <div className="mt-1 text-lg font-bold text-slate-950">{grouped[status] || 0}</div>
+          </div>
+        ))}
+      </div>
+
+      <Section title="Recent tasks" description="Tasks are ordered by the latest update time.">
+        {loading ? (
+          <div className="py-10 text-center text-sm text-slate-400">Loading sync tasks...</div>
+        ) : tasks.length === 0 ? (
+          <EmptyState title="No sync tasks yet" description="Tasks will appear here after uploads, metadata sync, or replica repair activity." />
+        ) : (
+          <div className="space-y-3">
+            {tasks.map((task) => (
+              <div key={task.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-950">{task.title || kindLabel(task.kind)}</span>
+                      <StatusBadge status={task.status} />
+                      <span className="rounded-full bg-slate-200 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                        {kindLabel(task.kind)}
+                      </span>
+                    </div>
+                    {task.target && (
+                      <div className="mt-2 break-all font-mono text-xs text-slate-500">{task.target}</div>
+                    )}
+                    {task.message && (
+                      <p className="mt-2 text-sm leading-6 text-slate-600">{task.message}</p>
+                    )}
+                    {task.error && (
+                      <p className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{task.error}</p>
+                    )}
+                  </div>
+                  <div className="shrink-0 text-xs text-slate-500">
+                    <div>Started: <span className="font-medium text-slate-700">{formatWhen(task.started_at)}</span></div>
+                    <div className="mt-1">Updated: <span className="font-medium text-slate-700">{formatWhen(task.updated_at)}</span></div>
+                    {task.finished_at && (
+                      <div className="mt-1">Finished: <span className="font-medium text-slate-700">{formatWhen(task.finished_at)}</span></div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}

@@ -270,6 +270,8 @@ func TestSyncOncePushesWhenPullFails(t *testing.T) {
 		case "/api/events/push":
 			pushed.Add(1)
 			writeOK(w, http.StatusOK, map[string]any{"accepted": 1})
+		case "/api/health":
+			writeOK(w, http.StatusOK, map[string]any{"status": "ok"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -540,8 +542,9 @@ func TestSyncOnceMarksStaleFailedPeerOffline(t *testing.T) {
 	}
 	localSrv := New(newTestConfig(t, "local"), localStore, localChunks)
 
-	if err := localSrv.SyncOnce(context.Background()); err == nil {
-		t.Fatal("SyncOnce succeeded; expected failed peer error")
+	// SyncOnce should succeed — offline nodes are skipped, not errored.
+	if err := localSrv.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce failed: %v", err)
 	}
 	peer, err := localStore.GetNode("stale-peer")
 	if err != nil {

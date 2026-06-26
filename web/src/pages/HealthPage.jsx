@@ -3,8 +3,21 @@ import { api } from "../api";
 import { cx, formatBytes } from "../utils";
 import { EmptyState, PageHeader } from "../components/common";
 
+function ProgressLine({ value }) {
+  const clamped = Math.min(100, Math.max(0, value || 0));
+  return (
+    <div>
+      <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+        <div className="h-full rounded-full bg-green-600 transition-all" style={{ width: `${clamped}%` }} />
+      </div>
+      <p className="mt-1 text-xs font-medium text-slate-500">{clamped}% saved by chunk reuse</p>
+    </div>
+  );
+}
+
 export default function HealthPage() {
   const [summary, setSummary] = useState(null);
+  const [insights, setInsights] = useState(null);
   const [chunks, setChunks] = useState([]);
   const [selectedChunk, setSelectedChunk] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -13,11 +26,13 @@ export default function HealthPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [sumRes, chunkRes] = await Promise.all([
+      const [sumRes, insightsRes, chunkRes] = await Promise.all([
         api("/health/summary"),
+        api("/health/insights"),
         api(`/health/chunks?limit=${pageSize}&offset=${page * pageSize}`),
       ]);
       if (sumRes.ok) setSummary(sumRes.data);
+      if (insightsRes.ok) setInsights(insightsRes.data);
       if (chunkRes.ok) setChunks(chunkRes.data?.chunks || []);
     } catch {
       // API failure — keep previous state
@@ -39,13 +54,49 @@ export default function HealthPage() {
     unavailable: "border-red-200 bg-red-50 text-red-700",
     repairing: "border-blue-200 bg-blue-50 text-blue-700",
   };
+  const storage = insights?.storage;
+  const repair = insights?.repair;
+  const risk = insights?.risk;
+  const dedupPercent = storage?.dedup_ratio ? Math.round(storage.dedup_ratio * 100) : 0;
   return (
     <div className="space-y-5">
       <PageHeader
         eyebrow="Replication"
         title="Health"
-        description="Track chunk availability, replica coverage, and repair activity across the pool."
+        description="Check whether pool data is safe, how much storage is saved, and what repair is doing next."
       />
+      {insights && (
+        <div className="grid gap-3 lg:grid-cols-3">
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase text-slate-500">Storage efficiency</div>
+            <div className="mt-1 text-2xl font-bold text-slate-950">{formatBytes(storage?.dedup_saved_bytes || 0)}</div>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              Saved across {storage?.file_count || 0} file(s). Logical {formatBytes(storage?.logical_bytes || 0)}, stored chunks {formatBytes(storage?.unique_chunk_bytes || 0)}.
+            </p>
+            <div className="mt-3">
+              <ProgressLine value={dedupPercent} />
+            </div>
+          </div>
+          <div className={`rounded-lg border p-4 shadow-sm ${risk?.affected_file_count > 0 ? "border-amber-200 bg-amber-50" : "border-green-200 bg-green-50"}`}>
+            <div className="text-xs font-semibold uppercase text-slate-500">Files at risk</div>
+            <div className={`mt-1 text-2xl font-bold ${risk?.affected_file_count > 0 ? "text-amber-700" : "text-green-700"}`}>
+              {risk?.affected_file_count || 0}
+            </div>
+            <p className="mt-1 text-xs leading-5 text-slate-600">
+              {risk?.affected_file_count > 0 ? "Some files reference chunks that need attention." : "No files currently reference unhealthy chunks."}
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase text-slate-500">Repair loop</div>
+            <div className="mt-1 text-lg font-bold capitalize text-slate-950">{repair?.status || "idle"}</div>
+            <p className="mt-1 text-xs leading-5 text-slate-500">{repair?.message || "Replica coverage is currently stable."}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500">
+              <span>Queued: <strong className="text-slate-800">{repair?.queued_chunks || 0}</strong></span>
+              <span>Repairing: <strong className="text-slate-800">{repair?.repairing_chunks || 0}</strong></span>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className={`rounded-lg border p-4 shadow-sm ${statusColor[summary.overall_status] || "border-slate-200 bg-white text-slate-700"}`}>
           <div className="text-xs font-semibold uppercase opacity-70">Overall</div>
@@ -87,7 +138,21 @@ export default function HealthPage() {
       <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 shadow-sm">
         Last scan: <span className="font-medium text-slate-700">{summary.last_scan_at ? new Date(summary.last_scan_at).toLocaleString() : "never"}</span>
         {summary.last_repair_at && <> · Last repair: <span className="font-medium text-slate-700">{new Date(summary.last_repair_at).toLocaleString()}</span></>}
+        {repair?.next_retry_seconds > 0 && <> · Next repair pass: <span className="font-medium text-slate-700">about {repair.next_retry_seconds}s</span></>}
       </div>
+      {risk?.affected_file_count > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-white p-4 shadow-sm">
+          <div className="mb-2 text-sm font-semibold text-slate-950">Affected files</div>
+          <div className="space-y-1">
+            {(risk.affected_files || []).slice(0, 6).map((p) => (
+              <div key={p} className="truncate rounded-md bg-amber-50 px-2 py-1 font-mono text-xs text-amber-800">{p}</div>
+            ))}
+            {risk.affected_file_count > 6 && (
+              <p className="text-xs text-slate-500">And {risk.affected_file_count - 6} more file(s).</p>
+            )}
+          </div>
+        </div>
+      )}
       {selectedChunk && (
         <div className="rounded-lg border border-blue-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">

@@ -31,8 +31,7 @@ func (s *Server) pullEvents(ctx context.Context, n types.Node) (string, error) {
 func (s *Server) pullEventsFrom(ctx context.Context, n types.Node, address string) error {
 	ctx, cancel := context.WithTimeout(ctx, syncRequestTimeout)
 	defer cancel()
-	url := "http://" + address + "/api/events"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+"/api/events", nil)
 	if err != nil {
 		return err
 	}

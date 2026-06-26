@@ -29,7 +29,7 @@ PocketCluster 是一个客户端 + Agent 形态的家庭闲置设备资源池产
 - 上传文件到资源池；该动作等同网盘上传，不删除或移动本地原文件
 - 从任意在线节点下载文件
 - 搜索资源池内文件
-- 浏览当前节点本机文件，并按需迁移到资源池释放当前设备空间
+- 通过 WebDAV 从 Finder、资源管理器或 Android 文件管理器访问资源池
 - 在高级模式下排查节点、副本和同步状态
 
 ## Product Form
@@ -56,7 +56,7 @@ PocketCluster 是一个客户端 + Agent 形态的家庭闲置设备资源池产
 1. 用户打开客户端。
 2. 客户端展示总容量、已用容量、在线节点和文件列表。
 3. 用户上传、下载、浏览或搜索资源池文件。
-4. 用户也可以进入“本节点本地文件”视图，选择本机文件迁移到资源池；只有该迁移工作流才涉及删除或确认删除本地原文件，普通上传不涉及删除。
+4. 用户也可以通过 WebDAV 将资源池挂载为网络驱动器，在熟悉的文件管理器里读写文件。
 5. 系统在后台完成 Chunk 切分、Hash 寻址、副本生成、元数据同步和离线恢复。
 
 ## Core Features
@@ -85,15 +85,15 @@ PocketCluster 是一个客户端 + Agent 形态的家庭闲置设备资源池产
 - User value: 让统一存储空间可用、可找、可管理。
 - Required in v1: yes
 
-### Feature 5: Local File Browser And Move To Pool
+### Feature 5: WebDAV Access
 
-- Description: 用户可以浏览当前节点本机磁盘上的文件，并选择文件迁移进资源池。迁移成功并确认资源池写入、副本生成后，才进入删除本地原文件或用户确认删除流程；这是独立于普通上传的工作流。
-- User value: 释放当前设备空间，同时让文件进入统一访问体系。
+- Description: 用户可以通过标准 WebDAV 客户端把资源池挂载为网络驱动器，在 Finder、Windows 资源管理器或 Android 文件管理器中访问文件。
+- User value: 降低学习成本，让统一存储池能融入现有文件工作流。
 - Required in v1: yes
 
-### Feature 6: Advanced Node And Replica Status
+### Feature 6: Advanced Node And Data Health Status
 
-- Description: 高级模式展示节点状态、副本状态、同步状态和设备信息。
+- Description: 高级模式展示节点状态、副本状态、修复进度和设备信息。
 - User value: 极客用户可以理解系统健康度并排查异常。
 - Required in v1: yes
 
@@ -117,6 +117,7 @@ PocketCluster 是一个客户端 + Agent 形态的家庭闲置设备资源池产
 
 - 节点状态
 - 副本状态
+- Health 汇总
 - 同步状态
 - 设备信息
 
@@ -124,7 +125,7 @@ PocketCluster 是一个客户端 + Agent 形态的家庭闲置设备资源池产
 
 ## MVP Scope
 
-### Included In V1
+### Current v0.1 Snapshot - Supported
 
 - Windows Agent
 - Mac Agent
@@ -136,22 +137,31 @@ PocketCluster 是一个客户端 + Agent 形态的家庭闲置设备资源池产
 - 下载文件
 - 浏览资源池文件
 - 搜索资源池文件
-- 浏览本节点本地文件并迁移到资源池
+- WebDAV 挂载与基础读写
 - Chunk 切分
 - Chunk Hash 寻址
 - 双副本
 - 元数据全量同步
 - 节点离线恢复
 - Syncthing 式冲突处理
+- Health 汇总、Chunk 详情与基础修复状态展示
 
-### Excluded From V1
+### Current v0.1 Snapshot - Experimental / Rough
 
-- WebDAV
+- Android 后台稳定性仍依赖前台服务、电池设置和厂商 ROM 行为
+- Health 视图可以帮助排障，但尚未形成完整的文件级可信度面板
+- 自动副本修复已存在，但显式的任务列表、手动重扫和修复作业接口还未提供
+- WebDAV 主要面向局域网客户端，兼容性矩阵仍待补齐
+
+### Explicitly Not In Current v0.1
+
+- 本地文件浏览与迁移到资源池工作流
 - SMB
 - 自动均衡
 - 自动迁移
 - Android 电池检测
 - 节点评级
+- 独立的同步任务页面
 - Chunk 可视化
 - 权限系统
 - 纠删码
@@ -164,7 +174,7 @@ PocketCluster 是一个客户端 + Agent 形态的家庭闲置设备资源池产
 
 ## Data / Content
 
-v1 需要处理和同步的数据包括：
+当前 v0.1 需要处理和同步的数据包括：
 
 - 资源池信息
 - 节点信息

@@ -99,6 +99,23 @@ func TestUploadEmptyFileDoesNotCreateEmptyChunk(t *testing.T) {
 	}
 }
 
+func TestRenameRejectsRelativeAndHiddenPathComponents(t *testing.T) {
+	for _, p := range []string{
+		"relative.txt",
+		"/a/../b.txt",
+		"/a/./b.txt",
+		"/.hidden",
+		"/dir/.hidden",
+	} {
+		if err := validateRenamePath(p); err == nil {
+			t.Fatalf("validateRenamePath(%q) succeeded, want error", p)
+		}
+	}
+	if err := validateRenamePath("/dir/visible.txt"); err != nil {
+		t.Fatalf("validateRenamePath valid path failed: %v", err)
+	}
+}
+
 func TestUploadReturnsBeforeReplicaRepairFailure(t *testing.T) {
 	st, err := store.Open(t.TempDir())
 	if err != nil {
