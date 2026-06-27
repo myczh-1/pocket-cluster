@@ -170,6 +170,98 @@ func (s *syncTaskStore) pruneLocked(now time.Time) {
 	}
 }
 
+type jobStore struct {
+	mu sync.RWMutex
+	m  map[string]*types.Job
+}
+
+func newJobStore() *jobStore {
+	return &jobStore{m: make(map[string]*types.Job)}
+}
+
+func (s *jobStore) upsert(job types.Job) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	existing, ok := s.m[job.ID]
+	if ok {
+		if job.CreatedAt.IsZero() {
+			job.CreatedAt = existing.CreatedAt
+		}
+		if job.Title == "" {
+			job.Title = existing.Title
+		}
+		if job.Kind == "" {
+			job.Kind = existing.Kind
+		}
+	}
+	if job.CreatedAt.IsZero() {
+		job.CreatedAt = now
+	}
+	job.UpdatedAt = now
+	if job.Status == types.JobDone || job.Status == types.JobFailed || job.Status == types.JobBlocked {
+		if job.FinishedAt.IsZero() {
+			job.FinishedAt = now
+		}
+	} else {
+		job.FinishedAt = time.Time{}
+	}
+	copy := job
+	s.m[copy.ID] = &copy
+	s.pruneLocked(now)
+}
+
+func (s *jobStore) list() []types.Job {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	list := make([]types.Job, 0, len(s.m))
+	for _, job := range s.m {
+		list = append(list, *job)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].UpdatedAt.After(list[j].UpdatedAt)
+	})
+	return list
+}
+
+func (s *jobStore) get(id string) (*types.Job, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	job, ok := s.m[id]
+	if !ok {
+		return nil, false
+	}
+	copy := *job
+	return &copy, true
+}
+
+func (s *jobStore) pruneLocked(now time.Time) {
+	const keepDoneFor = 2 * time.Hour
+	const maxJobs = 200
+	for id, job := range s.m {
+		if job.FinishedAt.IsZero() {
+			continue
+		}
+		if now.Sub(job.FinishedAt) > keepDoneFor {
+			delete(s.m, id)
+		}
+	}
+	if len(s.m) <= maxJobs {
+		return
+	}
+	list := make([]types.Job, 0, len(s.m))
+	for _, job := range s.m {
+		list = append(list, *job)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].UpdatedAt.Before(list[j].UpdatedAt)
+	})
+	for _, job := range list[:len(list)-maxJobs] {
+		delete(s.m, job.ID)
+	}
+}
+
 type Server struct {
 	cfg              *config.Config
 	store            *store.Store
@@ -182,6 +274,7 @@ type Server struct {
 	joinPollInterval time.Duration
 	uploadProgress   *uploadProgressStore
 	syncTasks        *syncTaskStore
+	jobs             *jobStore
 	peerHTTPClient   peerHTTPDoer
 	webDAVLocks      webdav.LockSystem
 	loginLimiter     *loginLimiter
@@ -224,6 +317,7 @@ func New(cfg *config.Config, s *store.Store, c *chunk.Storage, opts ...Option) *
 		started:        time.Now(),
 		uploadProgress: newUploadProgressStore(),
 		syncTasks:      newSyncTaskStore(),
+		jobs:           newJobStore(),
 		peerHTTPClient: peernet.NewHTTPClient(),
 		webDAVLocks:    webdav.NewMemLS(),
 		loginLimiter:   newLoginLimiter(5, time.Minute),

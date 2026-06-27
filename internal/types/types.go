@@ -128,6 +128,37 @@ type SyncTask struct {
 	FinishedAt time.Time      `json:"finished_at,omitempty"`
 }
 
+type JobStatus string
+
+const (
+	JobPending  JobStatus = "pending"
+	JobRunning  JobStatus = "running"
+	JobRetrying JobStatus = "retrying"
+	JobBlocked  JobStatus = "blocked"
+	JobFailed   JobStatus = "failed"
+	JobDone     JobStatus = "done"
+)
+
+type JobKind string
+
+const (
+	JobRescan                JobKind = "rescan"
+	JobRepairUnderReplicated JobKind = "repair_under_replicated"
+	JobIntegrityCheck        JobKind = "integrity_check"
+)
+
+type Job struct {
+	ID         string    `json:"id"`
+	Kind       JobKind   `json:"kind"`
+	Status     JobStatus `json:"status"`
+	Title      string    `json:"title"`
+	Message    string    `json:"message,omitempty"`
+	Error      string    `json:"error,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
+}
+
 type Invite struct {
 	TokenHash string    `json:"-"`
 	CreatedAt time.Time `json:"created_at"`

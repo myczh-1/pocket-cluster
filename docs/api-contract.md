@@ -580,6 +580,48 @@ This endpoint is an early `v0.2` observability surface. It is intended for opera
   }
 }
 ```
+
+### GET /api/jobs
+
+Returns operator-triggered background jobs such as rescans and manual repair passes.
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "jobs": [
+      {
+        "id": "job-123",
+        "kind": "rescan",
+        "status": "done",
+        "title": "Rescanning health state",
+        "message": "Health scan completed.",
+        "created_at": "2026-06-27T10:00:00Z",
+        "updated_at": "2026-06-27T10:00:01Z",
+        "finished_at": "2026-06-27T10:00:01Z"
+      }
+    ]
+  }
+}
+```
+
+### GET /api/jobs/{jobId}
+
+Returns a single operator-triggered background job by ID.
+
+### POST /api/jobs/rescan
+
+Starts a health rescan job.
+
+**Response:** `202 Accepted` with the created job object.
+
+### POST /api/jobs/repair-under-replicated
+
+Starts a best-effort repair pass for currently under-replicated chunks.
+
+**Response:** `202 Accepted` with the created job object.
 ## Error Codes
 
 | Code                | HTTP Status | Description                              |
