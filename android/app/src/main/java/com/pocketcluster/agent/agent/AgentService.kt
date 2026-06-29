@@ -32,6 +32,7 @@ class AgentService : Service() {
         private const val MAX_LOG_LINES = 500
         private const val MAX_RESTART_ATTEMPTS = 3
         private const val RESTART_DELAY_MS = 3000L
+        private const val EXIT_SIGILL = 132
 
         var isRunning: Boolean = false
             private set
@@ -39,7 +40,6 @@ class AgentService : Service() {
             private set
         val logLines: MutableList<String> = Collections.synchronizedList(mutableListOf<String>())
     }
-
     private var process: Process? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var multicastLock: WifiManager.MulticastLock? = null
@@ -101,6 +101,8 @@ class AgentService : Service() {
                 return
             }
 
+            addAbiCompatibilityWarning(binary)
+
             val dataDir = File(filesDir, "pocketcluster")
             dataDir.mkdirs()
 
@@ -151,6 +153,17 @@ class AgentService : Service() {
                     val exitCode = process?.waitFor()
                     isRunning = false
                     addLog("Agent exited with code $exitCode")
+
+                    val fatalMessage = fatalExitMessage(exitCode)
+                    if (fatalMessage != null) {
+                        addLog(fatalMessage)
+                        shouldRun.set(false)
+                        process = null
+                        releaseWakeLocks()
+                        updateNotification("Unsupported CPU/emulator ABI")
+                        return@Thread
+                    }
+
                     updateNotification("Agent stopped (exit=$exitCode)")
 
                     // Auto-restart if not intentionally stopped
@@ -223,6 +236,27 @@ class AgentService : Service() {
         multicastLock = null
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
+    }
+
+    private fun addAbiCompatibilityWarning(binary: File) {
+        val primaryAbi = Build.SUPPORTED_ABIS.firstOrNull() ?: return
+        val expectedDir = when (primaryAbi) {
+            "arm64-v8a" -> "/arm64-v8a/"
+            "x86_64" -> "/x86_64/"
+            "x86" -> "/x86/"
+            "armeabi-v7a" -> "/armeabi-v7a/"
+            else -> "/$primaryAbi/"
+        }
+        if (!binary.absolutePath.contains(expectedDir)) {
+            addLog("WARNING: Device primary ABI is $primaryAbi but binary is from a different ABI directory. Performance or stability may be affected.")
+        }
+    }
+
+    private fun fatalExitMessage(exitCode: Int?): String? {
+        if (exitCode != EXIT_SIGILL) return null
+
+        val abiList = Build.SUPPORTED_ABIS.joinToString(", ")
+        return "ERROR: Native agent crashed with SIGILL (illegal instruction). Device ABIs: $abiList. Please collect: adb logcat -b crash -d"
     }
 
     private fun addLog(line: String) {
