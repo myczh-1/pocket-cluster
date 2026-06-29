@@ -48,6 +48,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/jobs/{jobId}", s.handleGetJob)
 	mux.HandleFunc("POST /api/jobs/rescan", s.handleJobRescan)
 	mux.HandleFunc("POST /api/jobs/repair-under-replicated", s.handleJobRepairUnderReplicated)
+	mux.HandleFunc("POST /api/jobs/integrity-check", s.handleJobIntegrityCheck)
 	mux.HandleFunc("GET /api/webdav/info", s.handleWebDAVInfo)
 	mux.HandleFunc("GET /api/health/summary", s.handleHealthSummary)
 	mux.HandleFunc("GET /api/health/insights", s.handleHealthInsights)

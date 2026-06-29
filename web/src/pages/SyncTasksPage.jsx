@@ -102,6 +102,13 @@ export default function SyncTasksPage() {
             >
               {runningJob === "repair" ? "Starting..." : "Repair under-replicated"}
             </button>
+            <button
+              onClick={() => runJob("/jobs/integrity-check", "integrity", "Started an integrity check job.")}
+              disabled={runningJob === "integrity"}
+              className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {runningJob === "integrity" ? "Starting..." : "Run integrity check"}
+            </button>
           </div>
         }
       />
@@ -121,7 +128,7 @@ export default function SyncTasksPage() {
         {loading ? (
           <div className="py-10 text-center text-sm text-slate-400">Loading jobs...</div>
         ) : jobs.length === 0 ? (
-          <EmptyState title="No jobs yet" description="Start a rescan or repair job to create an operator action record." />
+          <EmptyState title="No jobs yet" description="Start a rescan, repair, or integrity check job to create an operator action record." />
         ) : (
           <div className="space-y-3">
             {jobs.map((job) => (

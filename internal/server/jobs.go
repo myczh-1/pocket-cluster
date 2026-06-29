@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
+
 
 	"github.com/google/uuid"
 	"github.com/pocketcluster/agent/internal/types"
@@ -137,6 +139,76 @@ func (s *Server) handleJobRepairUnderReplicated(w http.ResponseWriter, r *http.R
 			return types.JobRetrying, "Repair made partial progress, but some chunks still need another pass.", nil
 		default:
 			return types.JobDone, "Repair pass completed for all currently under-replicated chunks.", nil
+		}
+	})
+	writeOK(w, http.StatusAccepted, job)
+}
+// handleJobIntegrityCheck re-verifies every locally stored chunk by recomputing
+// its SHA-256 hash on disk and comparing against the recorded chunk ID. Chunks
+// whose file is absent are reported as missing; chunks whose hash no longer
+// matches are reported as corrupt. The verified_at timestamp of the local
+// replica is refreshed for every chunk that passes verification.
+func (s *Server) handleJobIntegrityCheck(w http.ResponseWriter, r *http.Request) {
+	job := s.startJob(types.JobIntegrityCheck, "Verifying chunk integrity", "Recomputing hashes for every local chunk to detect corruption or loss.", func(ctx context.Context, jobID string) (types.JobStatus, string, error) {
+		taskID := "job:" + jobID + ":integrity"
+		s.trackSyncTask(taskID, types.SyncTaskIntegrityCheck, types.SyncTaskRunning, "Verifying chunk integrity", "local", "Recomputing chunk hashes on disk.", "")
+
+		chunks, err := s.store.ListChunks()
+		if err != nil {
+			s.failSyncTask(taskID, types.SyncTaskIntegrityCheck, types.SyncTaskFailed, "Verifying chunk integrity", "local", "Could not load chunk list for verification.", err.Error())
+			return types.JobFailed, "Could not load chunk list for verification.", err
+		}
+
+		var verified, missing, corrupt int
+		var firstCorrupt, firstMissing string
+		now := time.Now()
+
+		for _, c := range chunks {
+			if !s.chunks.Exists(c.ChunkID) {
+				missing++
+				if firstMissing == "" {
+					firstMissing = c.ChunkID
+				}
+				continue
+			}
+			if err := s.chunks.Verify(c.ChunkID); err != nil {
+				corrupt++
+				if firstCorrupt == "" {
+					firstCorrupt = c.ChunkID
+				}
+				continue
+			}
+			verified++
+			// Refresh verified_at on the local replica so operators can see
+			// the last time each chunk was integrity-checked.
+			replica := &types.Replica{ChunkID: c.ChunkID, NodeID: s.cfg.NodeID, Status: "available", StoredAt: c.StoredAt, VerifiedAt: now}
+			_ = s.store.UpsertReplica(replica)
+		}
+
+		s.runHealthScan(ctx)
+
+		switch {
+		case corrupt > 0:
+			msg := fmt.Sprintf("Integrity check found %d corrupt chunk(s) and %d missing chunk(s) out of %d total.", corrupt, missing, len(chunks))
+			if firstCorrupt != "" {
+				msg += " First corrupt chunk: " + firstCorrupt + "."
+			}
+			if firstMissing != "" {
+				msg += " First missing chunk: " + firstMissing + "."
+			}
+			s.failSyncTask(taskID, types.SyncTaskIntegrityCheck, types.SyncTaskFailed, "Verifying chunk integrity", "local", msg, "")
+			return types.JobFailed, msg, nil
+		case missing > 0:
+			msg := fmt.Sprintf("Integrity check verified %d chunk(s); %d chunk(s) are missing from local disk. Run repair to restore coverage.", verified, missing)
+			if firstMissing != "" {
+				msg += " First missing chunk: " + firstMissing + "."
+			}
+			s.finishSyncTask(taskID, types.SyncTaskIntegrityCheck, "Verifying chunk integrity", "local", msg)
+			return types.JobRetrying, msg, nil
+		default:
+			msg := fmt.Sprintf("All %d local chunk(s) passed integrity verification.", verified)
+			s.finishSyncTask(taskID, types.SyncTaskIntegrityCheck, "Verifying chunk integrity", "local", msg)
+			return types.JobDone, msg, nil
 		}
 	})
 	writeOK(w, http.StatusAccepted, job)

@@ -622,6 +622,15 @@ Starts a health rescan job.
 Starts a best-effort repair pass for currently under-replicated chunks.
 
 **Response:** `202 Accepted` with the created job object.
+
+### POST /api/jobs/integrity-check
+
+Starts an integrity verification job that recomputes the SHA-256 hash of every locally stored chunk and compares it against the recorded chunk ID. Detects on-disk corruption and data loss. Chunks that pass verification have their `verified_at` timestamp refreshed.
+
+**Response:** `202 Accepted` with the created job object. The job finishes with:
+- `done` — all local chunks passed verification
+- `retrying` — some chunks are missing from local disk (run repair to restore)
+- `failed` — one or more chunks are corrupt (hash mismatch)
 ## Error Codes
 
 | Code                | HTTP Status | Description                              |
