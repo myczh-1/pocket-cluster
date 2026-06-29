@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { EmptyState, PageHeader, Section } from "../components/common";
+import { cx } from "../utils";
 
 export default function LogsPage() {
   const [logs, setLogs] = useState([]);
