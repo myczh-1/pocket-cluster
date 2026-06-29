@@ -68,6 +68,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	log.Printf("config loaded (path=%s, node_id=%s, cluster_id=%s, has_credentials=%t, pool_user=%q)", filepath.Join(*dataDir, "config.json"), cfg.NodeID, printableConfigValue(cfg.ClusterID), cfg.HasPoolCredentials(), cfg.PoolUser)
 	cfg.HTTPPort = *port
 	if *name != "" {
 		cfg.Name = *name
@@ -150,6 +151,13 @@ func main() {
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".pocketcluster")
+}
+
+func printableConfigValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "<empty>"
+	}
+	return value
 }
 
 func syncDiscoveredNodes(ctx context.Context, s *store.Store, srv *server.Server, disc *discovery.Discovery, cfg *config.Config) {

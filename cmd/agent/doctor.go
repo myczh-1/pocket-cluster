@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/pocketcluster/agent/internal/config"
 )
 
 const doctorTimeout = 5 * time.Second
@@ -27,6 +29,7 @@ func runDoctor(dataDir string, port int) {
 	var results []checkResult
 
 	results = append(results, checkDataDir(dataDir))
+	results = append(results, checkConfigSummary(dataDir))
 	results = append(results, checkChunkDir(dataDir))
 	results = append(results, checkPort(port))
 	results = append(results, checkAgentRunning(port))
@@ -69,11 +72,34 @@ func checkDataDir(dataDir string) checkResult {
 	if !info.IsDir() {
 		return checkResult{"Data directory", "fail", fmt.Sprintf("%s is not a directory", dataDir)}
 	}
-	dbPath := filepath.Join(dataDir, "pocketcluster.db")
+	dbPath := filepath.Join(dataDir, "metadata.db")
 	if _, err := os.Stat(dbPath); err != nil {
 		return checkResult{"Data directory", "warn", fmt.Sprintf("%s exists but no database found", dataDir)}
 	}
 	return checkResult{"Data directory", "ok", dataDir}
+}
+
+func checkConfigSummary(dataDir string) checkResult {
+	cfgPath := filepath.Join(dataDir, "config.json")
+	if _, err := os.Stat(cfgPath); err != nil {
+		if os.IsNotExist(err) {
+			return checkResult{"Config", "warn", fmt.Sprintf("%s is missing (new node will be created on first run)", cfgPath)}
+		}
+		return checkResult{"Config", "fail", err.Error()}
+	}
+	cfg, err := config.Load(dataDir)
+	if err != nil {
+		return checkResult{"Config", "fail", err.Error()}
+	}
+	clusterID := cfg.ClusterID
+	if clusterID == "" {
+		clusterID = "<empty>"
+	}
+	hasCreds := cfg.HasPoolCredentials()
+	if cfg.ClusterID != "" && !hasCreds {
+		return checkResult{"Config", "warn", fmt.Sprintf("cluster=%s user=%q has_credentials=false", clusterID, cfg.PoolUser)}
+	}
+	return checkResult{"Config", "ok", fmt.Sprintf("cluster=%s user=%q has_credentials=%t", clusterID, cfg.PoolUser, hasCreds)}
 }
 
 func checkPort(port int) checkResult {
