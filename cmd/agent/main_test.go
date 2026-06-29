@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/pocketcluster/agent/internal/config"
+	"github.com/pocketcluster/agent/internal/netutil"
 
 	"github.com/pocketcluster/agent/internal/store"
 	"github.com/pocketcluster/agent/internal/types"
@@ -56,11 +57,11 @@ func TestBuildSelfNodeUsesLocalIPOverride(t *testing.T) {
 }
 
 func TestBuildSelfNodeIgnoresLoopbackLocalIPOverride(t *testing.T) {
-	if got := usableLocalIP("127.0.0.1"); got != "" {
-		t.Fatalf("usableLocalIP loopback = %q, want empty", got)
+	if got := netutil.UsableLocalIP("127.0.0.1"); got != "" {
+		t.Fatalf("UsableLocalIP loopback = %q, want empty", got)
 	}
-	if got := usableLocalIP("localhost"); got != "" {
-		t.Fatalf("usableLocalIP localhost = %q, want empty", got)
+	if got := netutil.UsableLocalIP("localhost"); got != "" {
+		t.Fatalf("UsableLocalIP localhost = %q, want empty", got)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/pocketcluster/agent/internal/chunk"
 	"github.com/pocketcluster/agent/internal/config"
 	"github.com/pocketcluster/agent/internal/discovery"
+	"github.com/pocketcluster/agent/internal/netutil"
 	"github.com/pocketcluster/agent/internal/server"
 	"github.com/pocketcluster/agent/internal/store"
 	"github.com/pocketcluster/agent/internal/types"
@@ -277,54 +278,11 @@ func normalizePeerAddress(value string) string {
 }
 
 func selfNodeAddress(localIP string, port int) string {
-	host := usableLocalIP(localIP)
+	host := netutil.PreferredLocalIPv4(localIP)
 	if host == "" {
-		host = localAddress()
+		host = "localhost"
 	}
 	return net.JoinHostPort(host, fmt.Sprint(port))
-}
-
-func usableLocalIP(value string) string {
-	ip := net.ParseIP(strings.TrimSpace(value))
-	if ip == nil || ip.IsLoopback() {
-		return ""
-	}
-	if ipv4 := ip.To4(); ipv4 != nil {
-		return ipv4.String()
-	}
-	return ip.String()
-}
-
-func localAddress() string {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return "localhost"
-	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip == nil || ip.IsLoopback() {
-				continue
-			}
-			if ipv4 := ip.To4(); ipv4 != nil {
-				return ipv4.String()
-			}
-		}
-	}
-	return "localhost"
 }
 
 type logWriter struct {

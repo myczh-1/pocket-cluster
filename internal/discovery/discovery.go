@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/grandcat/zeroconf"
+	"github.com/pocketcluster/agent/internal/netutil"
 )
 
 type Node struct {
@@ -162,9 +163,6 @@ func (d *Discovery) browse(ctx context.Context, _ *net.Interface) {
 }
 
 func (d *Discovery) handleEntry(entry *zeroconf.ServiceEntry) {
-	if len(entry.AddrIPv4) == 0 {
-		return
-	}
 	nodeID := ""
 	name := ""
 	platform := ""
@@ -182,7 +180,10 @@ func (d *Discovery) handleEntry(entry *zeroconf.ServiceEntry) {
 	if nodeID == "" || nodeID == d.nodeID {
 		return
 	}
-	addr := entry.AddrIPv4[0].String()
+	addr := netutil.BestAvailableIPv4(entry.AddrIPv4)
+	if addr == "" {
+		return
+	}
 	port := entry.Port
 	d.SetNodeOnline(nodeID, name, platform, addr+":"+strconv.Itoa(port), port)
 	log.Printf("mDNS discovered node: %s (%s) at %s:%d", name, nodeID, addr, port)

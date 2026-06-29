@@ -5,21 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/pocketcluster/agent/internal/netutil"
 	"github.com/pocketcluster/agent/internal/types"
 )
 
 func (s *Server) handleScanNetwork(w http.ResponseWriter, r *http.Request) {
 	// Get local IP to determine subnet
 	localIP := s.getLocalIP()
-	if localIP == "" && s.localIP != "" {
-		localIP = s.localIP
-	}
 	log.Printf("network scan: local IP = %q (server=%q)", localIP, s.localIP)
 	if localIP == "" {
 		writeError(w, http.StatusInternalServerError, "NO_NETWORK", "cannot determine local network - try manual join")
@@ -79,18 +76,7 @@ func (s *Server) handleScanNetwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getLocalIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return ""
-	}
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ip4 := ipnet.IP.To4(); ip4 != nil {
-				return ip4.String()
-			}
-		}
-	}
-	return ""
+	return netutil.PreferredLocalIPv4(s.localIP)
 }
 
 func (s *Server) probeNode(ctx context.Context, addr string) (map[string]any, error) {
