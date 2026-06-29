@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -334,6 +335,10 @@ func (s *Server) handleJoinApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
+	if err := s.retireConflictingTrustedNodes(newNode); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
 	if err := s.store.DeletePendingJoin(nodeID); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -360,6 +365,46 @@ func (s *Server) handleJoinApprove(w http.ResponseWriter, r *http.Request) {
 		PoolUser:      s.cfg.PoolUser,
 		PoolPassHash:  s.cfg.PoolPassHash,
 	})
+}
+
+func (s *Server) retireConflictingTrustedNodes(newNode *types.Node) error {
+	addresses := filterLoopbackAddresses(mergeAddresses(append([]string{newNode.Address, newNode.LastWorkingAddress}, newNode.AddressCandidates...)...))
+	if len(addresses) == 0 {
+		return nil
+	}
+	nodes, err := s.store.ListNodes()
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	for _, existing := range nodes {
+		if existing.NodeID == newNode.NodeID || !existing.Trusted {
+			continue
+		}
+		if !nodeHasAnyAddress(existing, addresses) {
+			continue
+		}
+		if err := s.store.UpdateNodeStatus(existing.NodeID, "offline", existing.LastSeen); err != nil {
+			return err
+		}
+		if err := s.store.MarkNodeReplicasRemoved(existing.NodeID, now); err != nil {
+			return err
+		}
+		log.Printf("retired trusted node %s due to address collision with newly approved node %s (%v)", existing.NodeID, newNode.NodeID, addresses)
+	}
+	return nil
+}
+
+func nodeHasAnyAddress(node types.Node, addresses []string) bool {
+	candidates := mergeAddresses(append([]string{node.Address, node.LastWorkingAddress}, node.AddressCandidates...)...)
+	for _, candidate := range candidates {
+		for _, address := range addresses {
+			if candidate == address {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) handleListPendingJoins(w http.ResponseWriter, r *http.Request) {

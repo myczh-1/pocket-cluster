@@ -95,3 +95,9 @@ func (s *Store) GetNodeChunkIDs(nodeID string) ([]string, error) {
 	}
 	return ids, rows.Err()
 }
+
+func (s *Store) MarkNodeReplicasRemoved(nodeID string, verifiedAt time.Time) error {
+	_, err := s.db.Exec(`UPDATE replicas SET status = 'removed', verified_at = ? WHERE node_id = ? AND status = 'available'`,
+		timeMillis(verifiedAt), nodeID)
+	return err
+}

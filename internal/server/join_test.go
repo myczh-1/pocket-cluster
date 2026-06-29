@@ -371,6 +371,90 @@ func TestJoinClusterPreservesExistingNodeStatus(t *testing.T) {
 	}
 }
 
+func TestApproveJoinRetiresTrustedNodeWithSameAddress(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "bootstrap")
+	defer st.Close()
+	session := loginTestSession(t, srv)
+
+	oldSeen := time.UnixMilli(1234)
+	if err := st.UpdateNodeFull(&types.Node{
+		NodeID:             "old-phone",
+		Name:               "Pixel",
+		Platform:           "android",
+		Address:            "10.0.0.15:7788",
+		AddressCandidates:  []string{"10.0.0.15:7788"},
+		LastWorkingAddress: "10.0.0.15:7788",
+		PublicKey:          "old-pub",
+		Status:             "online",
+		Trusted:            true,
+		LastSeen:           oldSeen,
+		JoinedAt:           oldSeen,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertReplica(&types.Replica{
+		ChunkID:    "chunk-a",
+		NodeID:     "old-phone",
+		Status:     "available",
+		StoredAt:   oldSeen,
+		VerifiedAt: oldSeen,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	joinReq := types.JoinRequest{
+		NodeID:       "new-phone",
+		PublicKey:    "new-pub",
+		PoolUser:     "admin",
+		PoolPassword: "testpass",
+		DeviceInfo:   types.DeviceInfo{Name: "Pixel", Platform: "android", Address: "10.0.0.15:7788"},
+	}
+	body := mustJSON(t, joinReq)
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/join/request", bytes.NewReader(body))
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("join request status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+
+	res = httptest.NewRecorder()
+	req = withAuth(httptest.NewRequest(http.MethodPost, "/api/join/approve/new-phone", nil), session)
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("approve status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+
+	oldNode, err := st.GetNode("old-phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldNode.Status != "offline" {
+		t.Fatalf("old phone status = %q, want offline", oldNode.Status)
+	}
+	if !oldNode.LastSeen.Equal(oldSeen) {
+		t.Fatalf("old phone last_seen = %s, want preserved", oldNode.LastSeen)
+	}
+
+	replicas, err := st.GetReplicas("chunk-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replicas) != 1 {
+		t.Fatalf("replica count = %d, want 1", len(replicas))
+	}
+	if replicas[0].Status != "removed" {
+		t.Fatalf("old phone replica status = %q, want removed", replicas[0].Status)
+	}
+
+	newNode, err := st.GetNode("new-phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newNode.Status != "online" || !newNode.Trusted {
+		t.Fatalf("new phone status/trusted = %q/%v, want online/true", newNode.Status, newNode.Trusted)
+	}
+}
+
 func TestAddressFromRemoteKeepsAdvertisedPort(t *testing.T) {
 	got := addressFromRemote("10.8.0.20:53210", "192.168.1.10:7788")
 	if got != "10.8.0.20:7788" {
