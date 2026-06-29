@@ -45,13 +45,12 @@
 - 统一文件视图下的上传、下载、浏览与搜索
 - 基于 SHA256 寻址的 Chunk 存储与默认双副本
 - 通过标准桌面端和 Android WebDAV 客户端挂载
-- 副本汇总、Chunk 详情与修复进度的基础健康可视化
+- 副本汇总、Chunk 详情、文件/节点风险与同步任务追踪的健康可视化
+- 手动运维作业：重扫健康、修复副本不足、完整性校验（Chunk 哈希重算）
 
 ### 实验性 / 仍较粗糙
 
-- Android 仍属于高阶用户工作流，受后台执行限制明显
-- Health 视图已能排障，但还不是完整的文件级信任面板
-- 副本修复已自动进行，但用户侧任务追踪和手动运维入口仍不足
+- 运维作业和同步任务追踪已可用，但任务模型仍可能演进
 - WebDAV 主要面向局域网使用，仍需要更广泛的客户端兼容性验证
 
 ### 明确暂不支持
@@ -148,6 +147,17 @@ cd android && ./gradlew assembleDebug
 ## API
 
 完整 API 文档见 [docs/api-contract.md](docs/api-contract.md)。
+
+
+## 可靠性验证
+
+基于场景的 E2E 脚本位于 `scripts/e2e/`，覆盖：
+
+- **双节点基础** — 入池、副本复制、节点丢失后读测试（`two-node-basic.sh`）
+- **WebDAV 冒烟** — 上传、列表、下载、删除（`webdav-smoke-test.sh`）
+- **Android 手动** — 入池与携带流程清单（`android-manual-test.md`）
+
+验证结果和已知差距见 [docs/reliability-test-report.md](docs/reliability-test-report.md)。另见 [docs/troubleshooting.md](docs/troubleshooting.md) 和 [docs/limitations.md](docs/limitations.md)。
 
 ## 许可证
 

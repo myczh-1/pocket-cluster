@@ -16,7 +16,7 @@
 - Android background reliability
 - WebDAV client compatibility breadth
 - Health visibility beyond chunk-focused diagnosis
-- Automatic replica repair without a dedicated jobs/task model
+- Operator-triggered jobs (rescan, repair, integrity check) with sync task visibility, still maturing
 
 ### Explicitly Not In Current v0.1
 

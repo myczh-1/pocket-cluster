@@ -45,13 +45,13 @@ No NAS. No cloud. No central server. Just your devices.
 - Upload, download, browse, and search from the unified pool view
 - Chunked storage with SHA256 addressing and default dual replicas
 - WebDAV mount from standard desktop and Android WebDAV clients
-- Basic health visibility for replica summary, chunk detail, and repair progress
+- Health visibility for replica summary, chunk detail, file/node risk, and sync task tracking
+- Operator-triggered jobs: rescan, repair under-replicated, and integrity check (chunk hash verification)
 
 ### Experimental / Rough Edges
 
 - Android remains an advanced-user workflow and is sensitive to background execution limits
-- Health visibility is good enough for diagnosis, but not yet a complete file-level trust dashboard
-- Replica repair is automatic but still light on user-facing task tracking and manual operations
+- Operator-triggered jobs and sync task tracking are functional but the task model may still evolve
 - WebDAV is intended for local-network use and still needs broader client compatibility validation
 
 ### Explicitly Not Supported
@@ -148,6 +148,16 @@ cd android && ./gradlew assembleDebug
 ## API
 
 See [docs/api-contract.md](docs/api-contract.md) for the full API reference.
+
+## Reliability Validation
+
+Scenario-based E2E scripts live in `scripts/e2e/` and cover:
+
+- **Two-node basic** — join, replicate, read-after-node-loss (`two-node-basic.sh`)
+- **WebDAV smoke** — upload, list, download, delete (`webdav-smoke-test.sh`)
+- **Android manual** — join and carry checklist (`android-manual-test.md`)
+
+Results and known gaps are recorded in [docs/reliability-test-report.md](docs/reliability-test-report.md). See also [docs/troubleshooting.md](docs/troubleshooting.md) and [docs/limitations.md](docs/limitations.md).
 
 ## License
 

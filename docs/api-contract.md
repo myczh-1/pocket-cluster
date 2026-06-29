@@ -25,14 +25,12 @@ This contract describes the current MVP snapshot that backs the existing Web UI 
 ### Experimental / Rough Edges
 
 - Android interoperability and background reliability remain environment-dependent
-- Health endpoints expose replica summary and chunk-level detail, but do not yet cover a full jobs/task model
-- Automatic repair exists, but explicit repair jobs and operator-triggered rescan/report APIs are not part of `v0.1`
+- Operator-triggered jobs (rescan, repair, integrity check) are available via `/api/jobs/*` but the task model may still evolve
 
 ### Explicitly Out Of Scope For v0.1
 
 - Public Internet relay, NAT traversal, or cloud-hosted coordination
 - Multi-user permissions, ACLs, or sharing APIs
-- Dedicated jobs APIs such as `/api/jobs/*`
 
 ## Common Headers
 
