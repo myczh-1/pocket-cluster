@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { cx, formatBytes, formatLastSeen } from "../utils";
-import { EmptyState, PageHeader, StatusBadge } from "../components/common";
+import { EmptyState, PageHeader, StatusBadge, statusLabel } from "../components/common";
 
 function ProgressLine({ value }) {
   const clamped = Math.min(100, Math.max(0, value || 0));
@@ -10,7 +10,7 @@ function ProgressLine({ value }) {
       <div className="h-2 overflow-hidden rounded-full bg-slate-200">
         <div className="h-full rounded-full bg-green-600 transition-all" style={{ width: `${clamped}%` }} />
       </div>
-      <p className="mt-1 text-xs font-medium text-slate-500">{clamped}% saved by chunk reuse</p>
+      <p className="mt-1 text-xs font-medium text-slate-500">通过 Chunk 复用节省了 {clamped}% 空间</p>
     </div>
   );
 }
@@ -46,8 +46,8 @@ export default function HealthPage() {
     const id = setInterval(load, 10_000);
     return () => clearInterval(id);
   }, [load]);
-  if (loading) return <div className="py-16 text-center text-sm text-slate-400">Loading health data...</div>;
-  if (!summary) return <div className="py-16 text-center text-sm text-slate-400">Health data unavailable</div>;
+  if (loading) return <div className="py-16 text-center text-sm text-slate-400">健康数据加载中...</div>;
+  if (!summary) return <div className="py-16 text-center text-sm text-slate-400">健康数据暂不可用</div>;
   const statusColor = {
     healthy: "border-green-200 bg-green-50 text-green-700",
     under_replicated: "border-amber-200 bg-amber-50 text-amber-700",
@@ -63,94 +63,94 @@ export default function HealthPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        eyebrow="Replication"
-        title="Health"
-        description="Check whether pool data is safe, how much storage is saved, and what repair is doing next."
+        eyebrow="副本"
+        title="健康"
+        description="查看当前数据是否安全、节省了多少空间，以及修复流程下一步在做什么。"
       />
       {insights && (
         <div className="grid gap-3 lg:grid-cols-3">
           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-xs font-semibold uppercase text-slate-500">Storage efficiency</div>
+            <div className="text-xs font-semibold uppercase text-slate-500">空间效率</div>
             <div className="mt-1 text-2xl font-bold text-slate-950">{formatBytes(storage?.dedup_saved_bytes || 0)}</div>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              Saved across {storage?.file_count || 0} file(s). Logical {formatBytes(storage?.logical_bytes || 0)}, stored chunks {formatBytes(storage?.unique_chunk_bytes || 0)}.
+              覆盖 {storage?.file_count || 0} 个文件。逻辑大小 {formatBytes(storage?.logical_bytes || 0)}，实际 Chunk 存储 {formatBytes(storage?.unique_chunk_bytes || 0)}。
             </p>
             <div className="mt-3">
               <ProgressLine value={dedupPercent} />
             </div>
           </div>
           <div className={`rounded-lg border p-4 shadow-sm ${risk?.affected_file_count > 0 ? "border-amber-200 bg-amber-50" : "border-green-200 bg-green-50"}`}>
-            <div className="text-xs font-semibold uppercase text-slate-500">Files at risk</div>
+            <div className="text-xs font-semibold uppercase text-slate-500">风险文件</div>
             <div className={`mt-1 text-2xl font-bold ${risk?.affected_file_count > 0 ? "text-amber-700" : "text-green-700"}`}>
               {risk?.affected_file_count || 0}
             </div>
             <p className="mt-1 text-xs leading-5 text-slate-600">
-              {risk?.affected_file_count > 0 ? "Some files reference chunks that need attention." : "No files currently reference unhealthy chunks."}
+              {risk?.affected_file_count > 0 ? "有些文件引用了需要关注的 Chunk。" : "当前没有文件引用异常 Chunk。"}
             </p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-xs font-semibold uppercase text-slate-500">Repair loop</div>
-            <div className="mt-1 text-lg font-bold capitalize text-slate-950">{repair?.status || "idle"}</div>
-            <p className="mt-1 text-xs leading-5 text-slate-500">{repair?.message || "Replica coverage is currently stable."}</p>
+            <div className="text-xs font-semibold uppercase text-slate-500">修复循环</div>
+            <div className="mt-1 text-lg font-bold capitalize text-slate-950">{statusLabel(repair?.status || "idle")}</div>
+            <p className="mt-1 text-xs leading-5 text-slate-500">{repair?.message || "当前副本覆盖状态稳定。"}</p>
             <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500">
-              <span>Queued: <strong className="text-slate-800">{repair?.queued_chunks || 0}</strong></span>
-              <span>Repairing: <strong className="text-slate-800">{repair?.repairing_chunks || 0}</strong></span>
+              <span>等待中：<strong className="text-slate-800">{repair?.queued_chunks || 0}</strong></span>
+              <span>修复中：<strong className="text-slate-800">{repair?.repairing_chunks || 0}</strong></span>
             </div>
           </div>
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className={`rounded-lg border p-4 shadow-sm ${statusColor[summary.overall_status] || "border-slate-200 bg-white text-slate-700"}`}>
-          <div className="text-xs font-semibold uppercase opacity-70">Overall</div>
-          <div className="mt-1 text-lg font-bold capitalize">{summary.overall_status}</div>
+          <div className="text-xs font-semibold uppercase opacity-70">总体状态</div>
+          <div className="mt-1 text-lg font-bold capitalize">{statusLabel(summary.overall_status)}</div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">Files</div>
+          <div className="text-xs font-semibold uppercase text-slate-500">文件</div>
           <div className="mt-1 text-lg font-bold text-slate-950">{summary.total_files}</div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">Chunks</div>
+          <div className="text-xs font-semibold uppercase text-slate-500">Chunk 数</div>
           <div className="mt-1 text-lg font-bold text-slate-950">{summary.total_chunks}</div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">Healthy</div>
+          <div className="text-xs font-semibold uppercase text-slate-500">健康</div>
           <div className="mt-1 text-lg font-bold text-green-700">{summary.healthy_chunks}</div>
         </div>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">Under-replicated</div>
+          <div className="text-xs font-semibold uppercase text-slate-500">副本不足</div>
           <div className={`mt-1 text-lg font-bold ${summary.under_replicated_chunks > 0 ? "text-amber-600" : "text-slate-400"}`}>
             {summary.under_replicated_chunks}
           </div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">Unavailable</div>
+          <div className="text-xs font-semibold uppercase text-slate-500">不可用</div>
           <div className={`mt-1 text-lg font-bold ${summary.unavailable_chunks > 0 ? "text-red-600" : "text-slate-400"}`}>
             {summary.unavailable_chunks}
           </div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">Repairing</div>
+          <div className="text-xs font-semibold uppercase text-slate-500">修复中</div>
           <div className={`mt-1 text-lg font-bold ${summary.repairing_chunks > 0 ? "text-blue-600" : "text-slate-400"}`}>
             {summary.repairing_chunks}
           </div>
         </div>
       </div>
       <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 shadow-sm">
-        Last scan: <span className="font-medium text-slate-700">{summary.last_scan_at ? new Date(summary.last_scan_at).toLocaleString() : "never"}</span>
-        {summary.last_repair_at && <> · Last repair: <span className="font-medium text-slate-700">{new Date(summary.last_repair_at).toLocaleString()}</span></>}
-        {repair?.next_retry_seconds > 0 && <> · Next repair pass: <span className="font-medium text-slate-700">about {repair.next_retry_seconds}s</span></>}
+        最近扫描：<span className="font-medium text-slate-700">{summary.last_scan_at ? new Date(summary.last_scan_at).toLocaleString() : "从未"}</span>
+        {summary.last_repair_at && <> · 最近修复：<span className="font-medium text-slate-700">{new Date(summary.last_repair_at).toLocaleString()}</span></>}
+        {repair?.next_retry_seconds > 0 && <> · 下一轮修复：<span className="font-medium text-slate-700">约 {repair.next_retry_seconds} 秒后</span></>}
       </div>
       {risk?.affected_file_count > 0 && (
         <div className="rounded-lg border border-amber-200 bg-white p-4 shadow-sm">
-          <div className="mb-2 text-sm font-semibold text-slate-950">Affected files</div>
+          <div className="mb-2 text-sm font-semibold text-slate-950">受影响文件</div>
           <div className="space-y-1">
             {(risk.affected_files || []).slice(0, 6).map((p) => (
               <div key={p} className="truncate rounded-md bg-amber-50 px-2 py-1 font-mono text-xs text-amber-800">{p}</div>
             ))}
             {risk.affected_file_count > 6 && (
-              <p className="text-xs text-slate-500">And {risk.affected_file_count - 6} more file(s).</p>
+              <p className="text-xs text-slate-500">还有 {risk.affected_file_count - 6} 个文件。</p>
             )}
           </div>
         </div>
@@ -158,8 +158,8 @@ export default function HealthPage() {
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-950">Files needing attention</h3>
-            <span className="text-xs text-slate-500">{riskyFiles.length} file(s)</span>
+            <h3 className="text-sm font-semibold text-slate-950">需要关注的文件</h3>
+            <span className="text-xs text-slate-500">{riskyFiles.length} 个文件</span>
           </div>
           <div className="space-y-2">
             {riskyFiles.slice(0, 8).map((file) => (
@@ -168,9 +168,9 @@ export default function HealthPage() {
                   <div className="min-w-0">
                     <div className="truncate font-mono text-xs text-slate-600">{file.path}</div>
                     <div className="mt-1 text-xs text-slate-500">
-                      {file.readable_chunks}/{file.chunk_count} readable
-                      {file.unavailable_chunks > 0 && ` · ${file.unavailable_chunks} unavailable`}
-                      {file.under_replicated_chunks > 0 && ` · ${file.under_replicated_chunks} under-replicated`}
+                      {file.readable_chunks}/{file.chunk_count} 可读
+                      {file.unavailable_chunks > 0 && ` · ${file.unavailable_chunks} 不可用`}
+                      {file.under_replicated_chunks > 0 && ` · ${file.under_replicated_chunks} 副本不足`}
                     </div>
                   </div>
                   <StatusBadge status={file.status} />
@@ -178,14 +178,14 @@ export default function HealthPage() {
               </div>
             ))}
             {riskyFiles.length === 0 && (
-              <EmptyState title="No risky files" description="Every known file currently has healthy replica coverage." />
+              <EmptyState title="没有风险文件" description="当前所有已知文件的副本覆盖都正常。" />
             )}
           </div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-950">Node contribution</h3>
-            <span className="text-xs text-slate-500">{riskyNodes.length} node(s)</span>
+            <h3 className="text-sm font-semibold text-slate-950">节点贡献</h3>
+            <span className="text-xs text-slate-500">{riskyNodes.length} 个节点</span>
           </div>
           <div className="space-y-2">
             {riskyNodes.slice(0, 8).map((node) => (
@@ -194,10 +194,10 @@ export default function HealthPage() {
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-slate-950">{node.name || node.node_id}</div>
                     <div className="mt-1 text-xs text-slate-500">
-                      {node.platform} · Seen {formatLastSeen(node.last_seen)}
+                      {node.platform} · 最近在线 {formatLastSeen(node.last_seen)}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
-                      {node.chunk_count} chunk(s) · {node.risk_chunk_count} risky · {node.repairing_chunks} repairing
+                      {node.chunk_count} 个 Chunk · {node.risk_chunk_count} 个风险 · {node.repairing_chunks} 个修复中
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
                       {formatBytes(node.used_bytes || 0)} used / {formatBytes(node.total_bytes || 0)} total
@@ -208,7 +208,7 @@ export default function HealthPage() {
               </div>
             ))}
             {riskyNodes.length === 0 && (
-              <EmptyState title="No nodes tracked" description="Node health details will appear after trusted nodes join the pool." />
+              <EmptyState title="还没有节点记录" description="可信节点加入存储池后，这里会出现节点健康详情。" />
             )}
           </div>
         </div>
@@ -216,24 +216,24 @@ export default function HealthPage() {
       {selectedChunk && (
         <div className="rounded-lg border border-blue-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-950">Chunk detail</h3>
-            <button onClick={() => setSelectedChunk(null)} className="rounded-md px-2 py-1 text-sm text-slate-400 hover:bg-slate-100 hover:text-slate-700">Close</button>
+            <h3 className="text-sm font-semibold text-slate-950">Chunk 详情</h3>
+            <button onClick={() => setSelectedChunk(null)} className="rounded-md px-2 py-1 text-sm text-slate-400 hover:bg-slate-100 hover:text-slate-700">关闭</button>
           </div>
           <div className="mb-2 break-all font-mono text-xs text-slate-500">{selectedChunk.chunk_id}</div>
           <div className="mb-3 grid grid-cols-2 gap-2 text-sm text-slate-700">
-            <div>Size: {formatBytes(selectedChunk.size_bytes)}</div>
-            <div>Replicas: {selectedChunk.online_replicas}/{selectedChunk.target_replicas}</div>
-            <div>Status: <span className={`font-medium ${selectedChunk.status === "healthy" ? "text-green-600" : selectedChunk.status === "unavailable" ? "text-red-600" : "text-yellow-600"}`}>{selectedChunk.status}</span></div>
+            <div>大小：{formatBytes(selectedChunk.size_bytes)}</div>
+            <div>副本：{selectedChunk.online_replicas}/{selectedChunk.target_replicas}</div>
+            <div>状态：<span className={`font-medium ${selectedChunk.status === "healthy" ? "text-green-600" : selectedChunk.status === "unavailable" ? "text-red-600" : "text-yellow-600"}`}>{statusLabel(selectedChunk.status)}</span></div>
           </div>
           {selectedChunk.replica_nodes && selectedChunk.replica_nodes.length > 0 && (
             <div>
-              <div className="mb-1 text-xs font-semibold text-slate-500">Replica Nodes</div>
+              <div className="mb-1 text-xs font-semibold text-slate-500">副本节点</div>
               <div className="space-y-1">
                 {selectedChunk.replica_nodes.map((r) => (
                   <div key={r.node_id} className="flex items-center gap-2 text-xs">
                     <span className={`w-2 h-2 rounded-full ${r.online ? "bg-green-500" : "bg-gray-300"}`}></span>
                     <span className="font-mono">{r.node_id}</span>
-                    <span className="text-slate-400">{r.online ? "online" : "offline"}</span>
+                    <span className="text-slate-400">{r.online ? "在线" : "离线"}</span>
                   </div>
                 ))}
               </div>
@@ -241,7 +241,7 @@ export default function HealthPage() {
           )}
           {selectedChunk.referencing_files && selectedChunk.referencing_files.length > 0 && (
             <div className="mt-3">
-              <div className="mb-1 text-xs font-semibold text-slate-500">Referencing Files</div>
+              <div className="mb-1 text-xs font-semibold text-slate-500">引用该 Chunk 的文件</div>
               <div className="space-y-1">
                 {selectedChunk.referencing_files.map((p) => (
                   <div key={p} className="font-mono text-xs text-slate-600">{p}</div>
@@ -252,7 +252,7 @@ export default function HealthPage() {
         </div>
       )}
       <div>
-        <h3 className="mb-3 text-sm font-semibold text-slate-950">All Chunks ({chunks.length})</h3>
+        <h3 className="mb-3 text-sm font-semibold text-slate-950">全部 Chunks（{chunks.length}）</h3>
         <div className="space-y-2">
           {chunks.map((c) => (
             <button
@@ -271,18 +271,18 @@ export default function HealthPage() {
                   c.status === "repairing" ? "bg-blue-100 text-blue-700" :
                   "bg-yellow-100 text-yellow-700"
                 }`}>
-                  {c.status}
+                  {statusLabel(c.status)}
                 </span>
               </div>
               <div className="mt-1 flex gap-4 text-xs text-slate-400">
                 <span>{formatBytes(c.size_bytes)}</span>
-                <span>{c.online_replicas}/{c.target_replicas} replicas</span>
-                {c.referencing_files && <span>{c.referencing_files.length} file(s)</span>}
+                <span>{c.online_replicas}/{c.target_replicas} 副本</span>
+                {c.referencing_files && <span>{c.referencing_files.length} 个文件</span>}
               </div>
             </button>
           ))}
           {chunks.length === 0 && (
-            <EmptyState title="No chunks found" description="Health data will populate after files are added to the pool." />
+            <EmptyState title="还没有 Chunk" description="存储池里有文件后，这里会显示健康数据。" />
           )}
         </div>
       </div>

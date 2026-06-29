@@ -71,7 +71,7 @@ export default function LocalFilesPage() {
           onClick={() => load(parent)}
           className="px-3 py-2 bg-slate-100 rounded-lg text-sm hover:bg-slate-200"
         >
-          Parent
+          返回上级
         </button>
       )}
 
@@ -88,21 +88,21 @@ export default function LocalFilesPage() {
               ) : (
                 <p className="font-medium text-sm truncate">{e.name}</p>
               )}
-              <p className="text-xs text-slate-400">{e.is_dir ? "Directory" : formatBytes(e.size_bytes)}</p>
+              <p className="text-xs text-slate-400">{e.is_dir ? "目录" : formatBytes(e.size_bytes)}</p>
             </div>
             {!e.is_dir && (
               <button
                 onClick={() => { setMigrating(e); setTargetPath("/" + e.name); setDeleteLocal(false); setResult(null); }}
                 className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium hover:bg-green-100"
               >
-                Migrate → Pool
+                迁移到存储池
               </button>
             )}
           </div>
         ))}
         {entries.length === 0 && (
           <div className="bg-white rounded-lg shadow p-8 text-center text-slate-400 text-sm col-span-full">
-            Empty directory
+            空目录
           </div>
         )}
       </div>
@@ -111,10 +111,10 @@ export default function LocalFilesPage() {
       {migrating && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
-            <h3 className="font-semibold text-base">Migrate to Pool</h3>
+            <h3 className="font-semibold text-base">迁移到存储池</h3>
             <p className="text-sm text-slate-500">{migrating.name} ({formatBytes(migrating.size_bytes)})</p>
             <label className="block">
-              <span className="text-xs text-slate-500 mb-1 block">Target path in pool</span>
+              <span className="text-xs text-slate-500 mb-1 block">存储池目标路径</span>
               <input
                 type="text"
                 value={targetPath}
@@ -124,17 +124,17 @@ export default function LocalFilesPage() {
             </label>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={deleteLocal} onChange={(e) => setDeleteLocal(e.target.checked)} />
-              <span>Delete local file after migration</span>
+              <span>迁移完成后删除本地文件</span>
             </label>
             {result && (
               <div className={`text-sm p-3 rounded-lg ${result.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
-                {result.ok ? `Migrated! ${result.data?.chunk_count} chunks, status: ${result.data?.replica_status}` : result.error?.message}
+                {result.ok ? `迁移完成：${result.data?.chunk_count} 个 Chunk，状态：${result.data?.replica_status}` : result.error?.message}
               </div>
             )}
             <div className="flex gap-2 justify-end">
-              <button onClick={() => { setMigrating(null); setResult(null); }} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
+              <button onClick={() => { setMigrating(null); setResult(null); }} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
               <button onClick={handleMigrate} disabled={busy} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
-                {busy ? "Migrating…" : "Migrate"}
+                {busy ? "迁移中…" : "开始迁移"}
               </button>
             </div>
           </div>

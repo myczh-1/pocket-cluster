@@ -1,5 +1,25 @@
 import { cx } from "../utils";
 
+const statusLabels = {
+  healthy: "健康",
+  under_replicated: "副本不足",
+  unavailable: "不可用",
+  repairing: "修复中",
+  online: "在线",
+  offline: "离线",
+  pending: "等待中",
+  running: "运行中",
+  retrying: "重试中",
+  blocked: "已阻塞",
+  failed: "失败",
+  done: "完成",
+  idle: "空闲",
+};
+
+export function statusLabel(status) {
+  return statusLabels[status] || status || "-";
+}
+
 export function StatusBadge({ status }) {
   const colors = {
     healthy: "border-green-200 bg-green-50 text-green-700",
@@ -20,7 +40,7 @@ export function StatusBadge({ status }) {
       "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold capitalize",
       colors[status] || "border-slate-200 bg-slate-100 text-slate-600"
     )}>
-      {status}
+      {statusLabel(status)}
     </span>
   );
 }
@@ -88,7 +108,7 @@ export function ProgressBar({ value, tone = "blue" }) {
   );
 }
 
-export function ConfirmDialog({ title, message, confirmLabel = "Confirm", tone = "danger", busy, onConfirm, onCancel }) {
+export function ConfirmDialog({ title, message, confirmLabel = "确认", tone = "danger", busy, onConfirm, onCancel }) {
   const confirmClass = tone === "danger"
     ? "bg-red-600 text-white hover:bg-red-700"
     : "bg-blue-600 text-white hover:bg-blue-700";
@@ -99,10 +119,10 @@ export function ConfirmDialog({ title, message, confirmLabel = "Confirm", tone =
         <p className="mt-2 text-sm leading-6 text-slate-600">{message}</p>
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100">
-            Cancel
+            取消
           </button>
           <button type="button" onClick={onConfirm} disabled={busy} className={cx("rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50", confirmClass)}>
-            {busy ? "Working..." : confirmLabel}
+            {busy ? "处理中..." : confirmLabel}
           </button>
         </div>
       </div>

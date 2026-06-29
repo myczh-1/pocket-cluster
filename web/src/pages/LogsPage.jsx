@@ -37,24 +37,24 @@ export default function LogsPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Diagnostics"
-        title="Logs"
-        description="Switch between raw agent output and pool events without losing your place."
+        eyebrow="诊断"
+        title="日志"
+        description="在 agent 原始日志和存储池事件之间切换，不会丢失当前视图。"
         action={
           <button
             onClick={handleRefresh}
             disabled={refreshing}
             className="rounded-lg bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50"
           >
-            {refreshing ? "Refreshing..." : "Refresh"}
+            {refreshing ? "刷新中..." : "刷新"}
           </button>
         }
       />
 
       <div className="inline-flex w-full rounded-lg bg-slate-200 p-1 sm:w-auto">
         {[
-          ["agent", "Agent logs"],
-          ["events", "Events"],
+          ["agent", "运行日志"],
+          ["events", "事件"],
         ].map(([id, label]) => (
           <button
             key={id}
@@ -72,7 +72,7 @@ export default function LogsPage() {
       {view === "agent" && (
         <div className="max-h-[65vh] overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-3 shadow-sm">
           {agentLogs.length === 0 ? (
-            <p className="py-8 text-center text-xs text-slate-400">No agent logs yet</p>
+            <p className="py-8 text-center text-xs text-slate-400">还没有 agent 日志</p>
           ) : (
             agentLogs.map((line, i) => (
               <p key={i} className="font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-emerald-300">
@@ -93,11 +93,11 @@ export default function LogsPage() {
                 </span>
                 <span className="shrink-0 text-xs text-slate-400">{log.timestamp}</span>
               </div>
-              <p className="truncate font-mono text-xs text-slate-500">Node: {log.node_id?.slice(0, 8)}...</p>
+              <p className="truncate font-mono text-xs text-slate-500">节点：{log.node_id?.slice(0, 8)}...</p>
             </div>
           ))}
           {logs.length === 0 && (
-            <EmptyState title="No events yet" description="Pool activity will appear here after file and node changes." />
+            <EmptyState title="还没有事件" description="文件或节点发生变化后，这里会显示存储池活动。" />
           )}
         </div>
       )}

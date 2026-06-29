@@ -17,19 +17,19 @@ function FileCard({ file, onDownload, onDelete, onRename, onPreview }) {
           "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-bold",
           file.is_dir ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"
         )}>
-          {file.is_dir ? "DIR" : "FILE"}
+          {file.is_dir ? "目录" : "文件"}
         </div>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-950">{file.name}</p>
           <p className="truncate text-xs text-slate-500">
-            {file.is_dir ? "Directory" : formatBytes(file.size_bytes)}
-            {file.modified_at && ` · Modified ${new Date(file.modified_at).toLocaleDateString()}`}
+            {file.is_dir ? "目录" : formatBytes(file.size_bytes)}
+            {file.modified_at && ` · 修改于 ${new Date(file.modified_at).toLocaleDateString()}`}
           </p>
         </div>
       </div>
       <div className="min-w-0">
         {file.conflict_of && (
-          <p className="mb-2 truncate rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">Conflict with {file.conflict_of}</p>
+          <p className="mb-2 truncate rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">与 {file.conflict_of} 存在冲突</p>
         )}
       </div>
       <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0">
@@ -38,7 +38,7 @@ function FileCard({ file, onDownload, onDelete, onRename, onPreview }) {
             onClick={() => onPreview(file)}
             className="rounded-lg bg-green-50 px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-100 active:bg-green-200"
           >
-            Preview
+            预览
           </button>
         )}
         {!file.is_dir && (
@@ -46,20 +46,20 @@ function FileCard({ file, onDownload, onDelete, onRename, onPreview }) {
             onClick={() => onDownload(file)}
             className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 active:bg-blue-200"
           >
-            Download
+            下载
           </button>
         )}
         <button
           onClick={() => onRename(file)}
           className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 active:bg-slate-300"
         >
-          Rename
+          重命名
         </button>
         <button
           onClick={() => onDelete(file)}
           className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 active:bg-red-200"
         >
-          Delete
+          删除
         </button>
       </div>
     </div>
@@ -77,7 +77,7 @@ function FilePreview({ file, onClose }) {
     fetch(url, { credentials: "same-origin" })
       .then(r => r.text())
       .then(t => { setContent(t); setLoading(false); })
-      .catch(() => { setContent("Failed to load"); setLoading(false); });
+      .catch(() => { setContent("加载失败"); setLoading(false); });
   }, [file.path]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onClick={onClose}>
@@ -88,13 +88,13 @@ function FilePreview({ file, onClose }) {
             <p className="text-xs text-slate-500">{formatBytes(file.size_bytes)} · {file.mime_type}</p>
           </div>
           <div className="ml-4 flex shrink-0 gap-2">
-            <a href={url} download className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100">Download</a>
-            <button onClick={onClose} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200">Close</button>
+            <a href={url} download className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100">下载</a>
+            <button onClick={onClose} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200">关闭</button>
           </div>
         </div>
         <div className="flex-1 overflow-auto bg-slate-50 p-4">
           {loading ? (
-            <div className="py-8 text-center text-sm text-slate-400">Loading preview...</div>
+            <div className="py-8 text-center text-sm text-slate-400">预览加载中...</div>
           ) : file.mime_type?.startsWith("image/") ? (
             <img src={url} alt={file.name} className="max-w-full max-h-[70vh] mx-auto object-contain" />
           ) : (
@@ -107,12 +107,12 @@ function FilePreview({ file, onClose }) {
 }
 
 function isInvalidRenamePath(p) {
-  if (!p || !p.trim()) return "Path cannot be empty";
+  if (!p || !p.trim()) return "路径不能为空";
   const base = p.split("/").filter(Boolean).pop() || "";
-  if (base === "." || base === "..") return "Name cannot be '.' or '..'";
-  if (base.startsWith(".")) return "Name cannot start with a dot (hidden files are not allowed)";
-  if (p.includes("/../") || p.endsWith("/..") || p.startsWith("../")) return "Path cannot contain '..'";
-  if (p.includes("/./") || p.endsWith("/.") || p.startsWith("./")) return "Path cannot contain '.' components";
+  if (base === "." || base === "..") return "名称不能是 '.' 或 '..'";
+  if (base.startsWith(".")) return "名称不能以点开头（不允许隐藏文件）";
+  if (p.includes("/../") || p.endsWith("/..") || p.startsWith("../")) return "路径不能包含 '..'";
+  if (p.includes("/./") || p.endsWith("/.") || p.startsWith("./")) return "路径不能包含 '.' 段";
   return null;
 }
 
@@ -127,10 +127,10 @@ function RenameDialog({ file, busy, error, onSubmit, onCancel }) {
         className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <h3 className="text-base font-semibold text-slate-950">Rename item</h3>
+        <h3 className="text-base font-semibold text-slate-950">重命名项目</h3>
         <p className="mt-1 truncate text-sm text-slate-500">{file.name}</p>
         <label className="mt-4 block">
-          <span className="mb-1 block text-xs font-semibold text-slate-500">New pool path</span>
+          <span className="mb-1 block text-xs font-semibold text-slate-500">新的池内路径</span>
           <input
             autoFocus
             type="text"
@@ -142,9 +142,9 @@ function RenameDialog({ file, busy, error, onSubmit, onCancel }) {
         {validationError && <div className="mt-3"><InlineMessage tone="error">{validationError}</InlineMessage></div>}
         {error && !validationError && <div className="mt-3"><InlineMessage tone="error">{error}</InlineMessage></div>}
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100">Cancel</button>
+          <button type="button" onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100">取消</button>
           <button type="submit" disabled={!canSubmit} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-            {busy ? "Renaming..." : "Rename"}
+            {busy ? "重命名中..." : "确认重命名"}
           </button>
         </div>
       </form>
@@ -180,10 +180,10 @@ export default function FilesPage() {
       if (res.ok) {
         setFiles(res.data?.entries || []);
       } else {
-        setMessage({ tone: "error", text: res.error?.message || "Failed to load files" });
+        setMessage({ tone: "error", text: res.error?.message || "加载文件失败" });
       }
     } catch (err) {
-      setMessage({ tone: "error", text: err.message || "Failed to load files" });
+      setMessage({ tone: "error", text: err.message || "加载文件失败" });
     } finally {
       setLoading(false);
     }
@@ -222,17 +222,17 @@ export default function FilesPage() {
       }
       try {
         const data = JSON.parse(xhr.responseText);
-        if (!data.ok) setMessage({ tone: "error", text: `Upload failed: ${data.error?.message || "Unknown error"}` });
-        else setMessage({ tone: "success", text: `Uploaded ${file.name}` });
+        if (!data.ok) setMessage({ tone: "error", text: `上传失败：${data.error?.message || "未知错误"}` });
+        else setMessage({ tone: "success", text: `已上传 ${file.name}` });
       } catch {
-        setMessage({ tone: "error", text: "Upload completed but received an unexpected response." });
+        setMessage({ tone: "error", text: "上传完成，但返回结果异常。" });
       }
       loadFiles();
     };
     xhr.onerror = () => {
       setUploading(false);
       setUploadProgress(null);
-      setMessage({ tone: "error", text: "Upload failed. Check the agent connection and try again." });
+      setMessage({ tone: "error", text: "上传失败，请检查 agent 连接后重试。" });
     };
     xhr.open("POST", `${API}/files/upload`);
     xhr.withCredentials = true;
@@ -252,11 +252,11 @@ export default function FilesPage() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error?.message || res.statusText);
       }
-      setMessage({ tone: "success", text: `Deleted ${deleteFile.name}` });
+      setMessage({ tone: "success", text: `已删除 ${deleteFile.name}` });
       setDeleteFile(null);
       loadFiles();
     } catch (err) {
-      setActionError(err.message || "Delete failed");
+      setActionError(err.message || "删除失败");
     } finally {
       setActionBusy(false);
     }
@@ -277,11 +277,11 @@ export default function FilesPage() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error?.message || res.statusText);
       }
-      setMessage({ tone: "success", text: `Renamed ${renameFile.name}` });
+      setMessage({ tone: "success", text: `已重命名 ${renameFile.name}` });
       setRenameFile(null);
       loadFiles();
     } catch (err) {
-      setActionError(err.message || "Rename failed");
+      setActionError(err.message || "重命名失败");
     } finally {
       setActionBusy(false);
     }
@@ -291,13 +291,13 @@ export default function FilesPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Storage pool"
-        title="Files"
-        description="Upload, preview, rename, and download files stored across the pool."
+        eyebrow="存储池"
+        title="文件"
+        description="上传、预览、重命名和下载存储池中的文件。"
         action={
           <label className="block">
             <span className="inline-flex cursor-pointer items-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 active:bg-blue-800">
-              {uploading ? `Uploading ${uploadProgress ?? 0}%` : "Upload file"}
+              {uploading ? `上传中 ${uploadProgress ?? 0}%` : "上传文件"}
             </span>
             <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
           </label>
@@ -305,32 +305,32 @@ export default function FilesPage() {
       />
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase text-slate-500">Visible items</p>
+          <p className="text-xs font-semibold uppercase text-slate-500">当前项目数</p>
           <p className="mt-1 text-2xl font-semibold text-slate-950">{files.length}</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase text-slate-500">Folders</p>
+          <p className="text-xs font-semibold uppercase text-slate-500">文件夹</p>
           <p className="mt-1 text-2xl font-semibold text-slate-950">{folders}</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase text-slate-500">Visible file size</p>
+          <p className="text-xs font-semibold uppercase text-slate-500">当前可见文件大小</p>
           <p className="mt-1 text-2xl font-semibold text-slate-950">{formatBytes(totalSize)}</p>
         </div>
       </div>
       <Section>
         <div className="flex flex-col gap-3 lg:flex-row">
           <div className="flex flex-1 items-center rounded-lg border border-slate-300 bg-white px-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
-            <span className="text-sm text-slate-400">Search</span>
+            <span className="text-sm text-slate-400">搜索</span>
             <input
               type="text"
-              placeholder="name, type, or path"
+              placeholder="按名称、类型或路径搜索"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="min-w-0 flex-1 border-0 bg-transparent px-3 py-3 text-sm outline-none"
             />
             {search && (
               <button onClick={() => setSearch("")} className="rounded-md px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100">
-                Clear
+                清空
               </button>
             )}
           </div>
@@ -339,20 +339,20 @@ export default function FilesPage() {
             disabled={refreshing}
             className="rounded-lg bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-200 active:bg-slate-300 disabled:opacity-50"
           >
-            {refreshing ? "Refreshing..." : "Refresh"}
+            {refreshing ? "刷新中..." : "刷新"}
           </button>
         </div>
         {uploading && uploadProgress !== null && (
           <div className="mt-4 space-y-2">
             <ProgressBar value={uploadProgress} />
-            <p className="text-xs font-medium text-slate-500">Uploading into {path}</p>
+            <p className="text-xs font-medium text-slate-500">正在上传到 {path}</p>
           </div>
         )}
       </Section>
       {message && <InlineMessage tone={message.tone}>{message.text}</InlineMessage>}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {loading ? (
-          <EmptyState title="Loading files..." description="Checking the current pool path." />
+          <EmptyState title="文件加载中..." description="正在读取当前存储池路径。" />
         ) : files.length > 0 ? (
           files.map((f) => (
             <FileCard
@@ -366,8 +366,8 @@ export default function FilesPage() {
           ))
         ) : (
           <EmptyState
-            title={search ? "No matching files" : "No files yet"}
-            description={search ? "Try a shorter search term or clear the search." : "Upload a file to start filling this pool."}
+            title={search ? "没有匹配的文件" : "还没有文件"}
+            description={search ? "试试更短的关键词，或清空搜索条件。" : "上传一个文件，开始往存储池里放内容。"}
           />
         )}
       </div>
@@ -383,9 +383,9 @@ export default function FilesPage() {
       )}
       {deleteFile && (
         <ConfirmDialog
-          title="Delete file?"
-          message={`This removes "${deleteFile.name}" from the pool. This action cannot be undone.`}
-          confirmLabel="Delete"
+          title="删除文件？"
+          message={`这会从存储池中移除“${deleteFile.name}”，且无法撤销。`}
+          confirmLabel="确认删除"
           busy={actionBusy}
           onCancel={() => { setDeleteFile(null); setActionError(null); }}
           onConfirm={handleDelete}

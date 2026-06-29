@@ -10,12 +10,12 @@ import LogsPage from "./pages/LogsPage";
 import { JoinPage, LoginPage } from "./pages/AuthPages";
 
 const navItems = [
-  { id: "files", label: "Files", hint: "Pool browser" },
-  { id: "mount", label: "Mount", hint: "WebDAV" },
-  { id: "nodes", label: "Nodes", hint: "Devices" },
-  { id: "health", label: "Health", hint: "Replication" },
-  { id: "tasks", label: "Tasks", hint: "Sync" },
-  { id: "logs", label: "Logs", hint: "Events" },
+  { id: "files", label: "文件", hint: "池内文件" },
+  { id: "mount", label: "挂载", hint: "WebDAV" },
+  { id: "nodes", label: "节点", hint: "设备" },
+  { id: "health", label: "健康", hint: "副本" },
+  { id: "tasks", label: "任务", hint: "同步" },
+  { id: "logs", label: "日志", hint: "事件" },
 ];
 
 
@@ -47,17 +47,17 @@ export default function App() {
         setLoading(false);
       });
     }).catch((err) => {
-      setStartupError(err.message || "Unable to reach the local agent");
+      setStartupError(err.message || "无法连接本地 agent");
       setLoading(false);
     });
   }, []);
 
-  if (loading) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading...</div>;
+  if (loading) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">加载中...</div>;
   if (startupError) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
         <div className="w-full max-w-md rounded-lg border border-red-200 bg-white p-5 shadow-sm">
-          <h1 className="text-lg font-semibold text-slate-950">PocketCluster cannot reach the local agent</h1>
+          <h1 className="text-lg font-semibold text-slate-950">PocketCluster 无法连接本地 agent</h1>
           <p className="mt-2 text-sm leading-6 text-slate-600">{startupError}</p>
         </div>
       </div>
@@ -72,11 +72,11 @@ export default function App() {
         <div className="flex items-center justify-between gap-3 lg:block">
           <div>
             <h1 className="text-lg font-bold text-slate-950 lg:text-2xl">PocketCluster</h1>
-            <p className="hidden text-xs text-slate-500 lg:mt-1 lg:block">LAN storage pool</p>
+            <p className="hidden text-xs text-slate-500 lg:mt-1 lg:block">局域网存储池</p>
           </div>
           <div className="min-w-0 rounded-lg bg-slate-100 px-3 py-2 text-right lg:mt-5 lg:text-left">
-            <p className="text-[10px] font-semibold uppercase text-slate-500">Cluster</p>
-            <p className="max-w-[160px] truncate font-mono text-xs text-slate-700">{clusterId || "unknown"}</p>
+            <p className="text-[10px] font-semibold uppercase text-slate-500">集群</p>
+            <p className="max-w-[160px] truncate font-mono text-xs text-slate-700">{clusterId || "未知"}</p>
           </div>
         </div>
         <nav className="mt-8 hidden lg:block">

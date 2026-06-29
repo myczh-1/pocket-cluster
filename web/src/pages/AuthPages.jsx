@@ -42,7 +42,7 @@ export function JoinPage({ mode }) {
   };
   const handleCreateCluster = async (e) => {
     e.preventDefault();
-    if (!createUser || !createPass) { setError("Username and password are required"); return; }
+    if (!createUser || !createPass) { setError("用户名和密码不能为空"); return; }
     setLoading(true);
     setError(null);
     try {
@@ -52,7 +52,7 @@ export function JoinPage({ mode }) {
         body: JSON.stringify({ username: createUser, password: createPass }),
       });
       if (r.ok) window.location.reload();
-      else setError(r.error?.message || "Failed to create cluster");
+      else setError(r.error?.message || "创建存储池失败");
     } catch (e) {
       setError(e.message);
     } finally {
@@ -62,7 +62,7 @@ export function JoinPage({ mode }) {
 
   const handleJoin = async (e) => {
     e.preventDefault();
-    if (!joinUser || !joinPass) { setError("Pool username and password are required"); return; }
+    if (!joinUser || !joinPass) { setError("存储池用户名和密码不能为空"); return; }
     setLoading(true);
     setError(null);
     try {
@@ -73,7 +73,7 @@ export function JoinPage({ mode }) {
         body: JSON.stringify({ bootstrap: addr, join_token: token, pool_user: joinUser, pool_password: joinPass }),
       });
       if (r.ok) window.location.reload();
-      else setError(r.error?.message || "Join failed");
+      else setError(r.error?.message || "加入失败");
     } catch (e) {
       setError(e.message);
     } finally {
@@ -86,12 +86,12 @@ export function JoinPage({ mode }) {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold mb-2">PocketCluster</h1>
-          <p className="text-gray-500 text-sm">Distributed storage pool</p>
+          <p className="text-gray-500 text-sm">分布式存储池</p>
         </div>
 
         {mode === "invite" && discovered.length > 0 && (
           <div className="bg-white rounded-lg shadow p-4 mb-4">
-            <h2 className="font-semibold text-sm mb-3">Discovered nodes</h2>
+            <h2 className="font-semibold text-sm mb-3">发现的节点</h2>
             <div className="space-y-2">
               {discovered.map((n) => (
                 <button
@@ -112,13 +112,13 @@ export function JoinPage({ mode }) {
         {/* Network scan */}
         <div className="bg-white rounded-lg shadow p-4 mb-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-sm">Scan local network</h2>
+            <h2 className="font-semibold text-sm">扫描局域网</h2>
             <button
               onClick={handleScan}
               disabled={scanning}
               className="px-3 py-1.5 bg-gray-100 rounded text-sm hover:bg-gray-200 disabled:opacity-50"
             >
-              {scanning ? "Scanning..." : "Scan"}
+              {scanning ? "扫描中..." : "开始扫描"}
             </button>
           </div>
           {scanResults.length > 0 && (
@@ -141,24 +141,24 @@ export function JoinPage({ mode }) {
             </div>
           )}
           {scanResults.length === 0 && !scanning && (
-            <p className="text-xs text-gray-400">Click scan to find PocketCluster nodes on your network</p>
+            <p className="text-xs text-gray-400">点击扫描，查找当前网络里的 PocketCluster 节点</p>
           )}
         </div>
 
         <form onSubmit={handleJoin} className="bg-white rounded-lg shadow p-4 mb-4 space-y-3">
-          <h2 className="font-semibold text-sm">Join existing pool</h2>
+          <h2 className="font-semibold text-sm">加入已有存储池</h2>
           <input
             type="text"
             value={bootstrap}
             onChange={(e) => setBootstrap(e.target.value)}
-            placeholder="Pool address (e.g. http://192.168.1.10:7788)"
+            placeholder="存储池地址（例如 http://192.168.1.10:7788）"
             className="w-full border rounded-lg px-4 py-3 text-sm"
           />
           <input
             type="text"
             value={joinUser}
             onChange={(e) => setJoinUser(e.target.value)}
-            placeholder="Pool username"
+            placeholder="存储池用户名"
             required
             className="w-full border rounded-lg px-4 py-3 text-sm"
           />
@@ -166,7 +166,7 @@ export function JoinPage({ mode }) {
             type="password"
             value={joinPass}
             onChange={(e) => setJoinPass(e.target.value)}
-            placeholder="Pool password"
+            placeholder="存储池密码"
             required
             className="w-full border rounded-lg px-4 py-3 text-sm"
           />
@@ -174,7 +174,7 @@ export function JoinPage({ mode }) {
             type="text"
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            placeholder="Invite token (optional)"
+            placeholder="邀请令牌（可选）"
             className="w-full border rounded-lg px-4 py-3 text-sm"
           />
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -183,7 +183,7 @@ export function JoinPage({ mode }) {
             disabled={loading || (!bootstrap && !selectedAddr)}
             className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
           >
-            {loading ? "Joining…" : "Join"}
+            {loading ? "加入中…" : "加入"}
           </button>
         </form>
         <div className="bg-white rounded-lg shadow p-4">
@@ -191,7 +191,7 @@ export function JoinPage({ mode }) {
             onClick={() => setShowCreate(!showCreate)}
             className="text-sm text-gray-500 hover:text-gray-700 w-full text-left"
           >
-            {showCreate ? "Hide" : "Create a new pool"}...
+            {showCreate ? "收起" : "创建新存储池"}...
           </button>
           {showCreate && (
             <form onSubmit={handleCreateCluster} className="mt-3 space-y-3">
@@ -199,7 +199,7 @@ export function JoinPage({ mode }) {
                 type="text"
                 value={createUser}
                 onChange={(e) => setCreateUser(e.target.value)}
-                placeholder="Pool username"
+                placeholder="存储池用户名"
                 required
                 className="w-full border rounded-lg px-4 py-3 text-sm"
               />
@@ -207,7 +207,7 @@ export function JoinPage({ mode }) {
                 type="password"
                 value={createPass}
                 onChange={(e) => setCreatePass(e.target.value)}
-                placeholder="Pool password"
+                placeholder="存储池密码"
                 required
                 className="w-full border rounded-lg px-4 py-3 text-sm"
               />
@@ -217,7 +217,7 @@ export function JoinPage({ mode }) {
                 disabled={loading || !createUser || !createPass}
                 className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
               >
-                {loading ? "Creating..." : "Create Pool"}
+                {loading ? "创建中..." : "创建存储池"}
               </button>
             </form>
           )}
@@ -247,7 +247,7 @@ export function LoginPage() {
       if (data.ok) {
         window.location.reload();
       } else {
-        setError(data.error?.message || "Login failed");
+        setError(data.error?.message || "登录失败");
       }
     } catch (err) {
       setError(err.message);
@@ -261,14 +261,14 @@ export function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold mb-2">PocketCluster</h1>
-          <p className="text-gray-500 text-sm">Login to your storage pool</p>
+          <p className="text-gray-500 text-sm">登录你的存储池</p>
         </div>
         <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-4 space-y-3">
           <input
             type="text"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="Username"
+            placeholder="用户名"
             required
             className="w-full border rounded-lg px-4 py-3 text-sm"
           />
@@ -276,7 +276,7 @@ export function LoginPage() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password"
+            placeholder="密码"
             required
             className="w-full border rounded-lg px-4 py-3 text-sm"
           />
@@ -286,7 +286,7 @@ export function LoginPage() {
             disabled={busy || !username || !password}
             className="w-full bg-blue-600 text-white py-3 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
           >
-            {busy ? "Logging in..." : "Login"}
+            {busy ? "登录中..." : "登录"}
           </button>
         </form>
       </div>
