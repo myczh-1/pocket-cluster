@@ -237,6 +237,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeOK(w, http.StatusOK, map[string]string{"path": path, "status": "deleted"})
+	go s.runHealthScan(context.Background())
 }
 
 // PATCH /api/files/rename — rename or move a file

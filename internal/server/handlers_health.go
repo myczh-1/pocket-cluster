@@ -26,52 +26,44 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var logicalBytes int64
+	fileCount := 0
 	files, err := s.store.ListAllFiles()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())
 		return
 	}
-	chunks, err := s.store.ListChunks()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())
-		return
-	}
-
-	var logicalBytes int64
-	fileCount := 0
-	liveChunkIDs := make(map[string]struct{})
 	for _, f := range files {
 		if f.Deleted || f.IsDir {
 			continue
 		}
 		fileCount++
 		logicalBytes += f.SizeBytes
-		for _, chunkID := range f.ChunkIDs {
-			liveChunkIDs[chunkID] = struct{}{}
-		}
 	}
 
+	summary := s.HealthSummarySnapshot()
+	chunkHealth := s.ChunkHealthSnapshot()
+	liveChunkIDs := make(map[string]struct{}, len(chunkHealth))
+	retainedChunkIDs := make(map[string]struct{}, len(chunkHealth))
 	var activeUniqueChunkBytes int64
 	var retainedUniqueChunkBytes int64
 	activeUniqueChunkCount := 0
 	retainedUniqueChunkCount := 0
-	for _, c := range chunks {
-		if _, ok := liveChunkIDs[c.ChunkID]; ok {
-			activeUniqueChunkBytes += c.SizeBytes
+	for chunkID, detail := range chunkHealth {
+		if len(detail.ReferencingFiles) > 0 {
+			liveChunkIDs[chunkID] = struct{}{}
+			activeUniqueChunkBytes += detail.SizeBytes
 			activeUniqueChunkCount++
 			continue
 		}
-		retainedUniqueChunkBytes += c.SizeBytes
+		retainedChunkIDs[chunkID] = struct{}{}
+		retainedUniqueChunkBytes += detail.SizeBytes
 		retainedUniqueChunkCount++
 	}
 	replicas, err := s.store.ListReplicas()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())
 		return
-	}
-	chunkSizes := make(map[string]int64, len(chunks))
-	for _, c := range chunks {
-		chunkSizes[c.ChunkID] = c.SizeBytes
 	}
 	var activePhysicalReplicaBytes int64
 	activePhysicalReplicaCount := 0
@@ -83,11 +75,17 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 		}
 		if _, ok := liveChunkIDs[replica.ChunkID]; ok {
 			activePhysicalReplicaCount++
-			activePhysicalReplicaBytes += chunkSizes[replica.ChunkID]
+			if detail, ok := chunkHealth[replica.ChunkID]; ok {
+				activePhysicalReplicaBytes += detail.SizeBytes
+			}
 			continue
 		}
-		retainedPhysicalReplicaCount++
-		retainedPhysicalReplicaBytes += chunkSizes[replica.ChunkID]
+		if _, ok := retainedChunkIDs[replica.ChunkID]; ok {
+			retainedPhysicalReplicaCount++
+			if detail, ok := chunkHealth[replica.ChunkID]; ok {
+				retainedPhysicalReplicaBytes += detail.SizeBytes
+			}
+		}
 	}
 	dedupSavedBytes := logicalBytes - activeUniqueChunkBytes
 	if dedupSavedBytes < 0 {
@@ -97,9 +95,6 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 	if logicalBytes > 0 {
 		dedupRatio = float64(dedupSavedBytes) / float64(logicalBytes)
 	}
-
-	summary := s.HealthSummarySnapshot()
-	chunkHealth := s.ChunkHealthSnapshot()
 	nodes, err := s.store.ListNodes()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())

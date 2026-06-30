@@ -72,6 +72,11 @@ export default function HealthPage() {
       setRetentionHours(String(storage.tombstone_retention_hours));
     }
   }, [storage?.tombstone_retention_hours]);
+  useEffect(() => {
+    if (!selectedChunk) return;
+    const updated = chunks.find((chunk) => chunk.chunk_id === selectedChunk.chunk_id);
+    setSelectedChunk(updated || null);
+  }, [chunks, selectedChunk]);
 
   if (loading) return <div className="py-16 text-center text-sm text-slate-400">健康数据加载中...</div>;
   if (!summary) return <div className="py-16 text-center text-sm text-slate-400">健康数据暂不可用</div>;
