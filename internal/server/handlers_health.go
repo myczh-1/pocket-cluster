@@ -51,6 +51,24 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 	for _, c := range chunks {
 		uniqueChunkBytes += c.SizeBytes
 	}
+	replicas, err := s.store.ListReplicas()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())
+		return
+	}
+	chunkSizes := make(map[string]int64, len(chunks))
+	for _, c := range chunks {
+		chunkSizes[c.ChunkID] = c.SizeBytes
+	}
+	var physicalReplicaBytes int64
+	physicalReplicaCount := 0
+	for _, replica := range replicas {
+		if replica.Status != "available" {
+			continue
+		}
+		physicalReplicaCount++
+		physicalReplicaBytes += chunkSizes[replica.ChunkID]
+	}
 	dedupSavedBytes := logicalBytes - uniqueChunkBytes
 	if dedupSavedBytes < 0 {
 		dedupSavedBytes = 0
@@ -78,7 +96,7 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 		UnderReplicatedChunks int                 `json:"under_replicated_chunks"`
 	}
 	fileRisks := make([]fileRiskItem, 0)
-	nodeChunkCounts := make(map[string]int)
+	nodeReplicaCounts := make(map[string]int)
 	nodeRiskCounts := make(map[string]int)
 	nodeRepairingCounts := make(map[string]int)
 	statusRank := func(status types.ReplicaStatus) int {
@@ -94,23 +112,21 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for _, detail := range chunkHealth {
-		if detail.Status == types.ReplicaHealthy {
-			for _, replica := range detail.ReplicaNodes {
-				if replica.HasChunk {
-					nodeChunkCounts[replica.NodeID]++
-				}
-			}
+	for _, replica := range replicas {
+		if replica.Status != "available" {
 			continue
 		}
+		nodeReplicaCounts[replica.NodeID]++
+	}
+	for _, detail := range chunkHealth {
 		for _, replica := range detail.ReplicaNodes {
-			if replica.HasChunk {
-				nodeChunkCounts[replica.NodeID]++
+			if !replica.HasChunk {
+				continue
 			}
-			if !replica.Online {
+			if detail.Status != types.ReplicaHealthy && !replica.Online {
 				nodeRiskCounts[replica.NodeID]++
 			}
-			if detail.Status == types.ReplicaRepairing && replica.HasChunk {
+			if detail.Status == types.ReplicaRepairing {
 				nodeRepairingCounts[replica.NodeID]++
 			}
 		}
@@ -184,7 +200,7 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 		LastSeen        time.Time `json:"last_seen"`
 		UsedBytes       int64     `json:"used_bytes"`
 		TotalBytes      int64     `json:"total_bytes"`
-		ChunkCount      int       `json:"chunk_count"`
+		ReplicaCount    int       `json:"replica_count"`
 		RiskChunkCount  int       `json:"risk_chunk_count"`
 		RepairingChunks int       `json:"repairing_chunks"`
 	}
@@ -201,7 +217,7 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 			LastSeen:        n.LastSeen,
 			UsedBytes:       n.UsedBytes,
 			TotalBytes:      n.TotalBytes,
-			ChunkCount:      nodeChunkCounts[n.NodeID],
+			ReplicaCount:    nodeReplicaCounts[n.NodeID],
 			RiskChunkCount:  nodeRiskCounts[n.NodeID],
 			RepairingChunks: nodeRepairingCounts[n.NodeID],
 		})
@@ -211,8 +227,8 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 		if left.RiskChunkCount != right.RiskChunkCount {
 			return left.RiskChunkCount > right.RiskChunkCount
 		}
-		if left.ChunkCount != right.ChunkCount {
-			return left.ChunkCount > right.ChunkCount
+		if left.ReplicaCount != right.ReplicaCount {
+			return left.ReplicaCount > right.ReplicaCount
 		}
 		return left.NodeID < right.NodeID
 	})
@@ -246,11 +262,14 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 
 	writeOK(w, http.StatusOK, map[string]any{
 		"storage": map[string]any{
-			"file_count":         fileCount,
-			"logical_bytes":      logicalBytes,
-			"unique_chunk_bytes": uniqueChunkBytes,
-			"dedup_saved_bytes":  dedupSavedBytes,
-			"dedup_ratio":        dedupRatio,
+			"file_count":             fileCount,
+			"logical_bytes":          logicalBytes,
+			"unique_chunk_count":     len(chunks),
+			"unique_chunk_bytes":     uniqueChunkBytes,
+			"physical_replica_count": physicalReplicaCount,
+			"physical_replica_bytes": physicalReplicaBytes,
+			"dedup_saved_bytes":      dedupSavedBytes,
+			"dedup_ratio":            dedupRatio,
 		},
 		"risk": map[string]any{
 			"affected_file_count": len(affectedFiles),

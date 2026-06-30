@@ -73,7 +73,7 @@ export default function HealthPage() {
             <div className="text-xs font-semibold uppercase text-slate-500">空间效率</div>
             <div className="mt-1 text-2xl font-bold text-slate-950">{formatBytes(storage?.dedup_saved_bytes || 0)}</div>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              覆盖 {storage?.file_count || 0} 个文件。逻辑大小 {formatBytes(storage?.logical_bytes || 0)}，实际 Chunk 存储 {formatBytes(storage?.unique_chunk_bytes || 0)}。
+              覆盖 {storage?.file_count || 0} 个文件。逻辑大小 {formatBytes(storage?.logical_bytes || 0)}，唯一 Chunk 存储 {formatBytes(storage?.unique_chunk_bytes || 0)}，物理副本占用 {formatBytes(storage?.physical_replica_bytes || 0)}。
             </p>
             <div className="mt-3">
               <ProgressLine value={dedupPercent} />
@@ -109,15 +109,19 @@ export default function HealthPage() {
           <div className="mt-1 text-lg font-bold text-slate-950">{summary.total_files}</div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">Chunk 数</div>
-          <div className="mt-1 text-lg font-bold text-slate-950">{summary.total_chunks}</div>
+          <div className="text-xs font-semibold uppercase text-slate-500">唯一 Chunk 数</div>
+          <div className="mt-1 text-lg font-bold text-slate-950">{storage?.unique_chunk_count ?? summary.total_chunks}</div>
         </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-semibold uppercase text-slate-500">物理副本数</div>
+          <div className="mt-1 text-lg font-bold text-slate-950">{storage?.physical_replica_count ?? 0}</div>
+        </div>
+      </div>
+      <div className="grid grid-cols-4 gap-3">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">健康</div>
           <div className="mt-1 text-lg font-bold text-green-700">{summary.healthy_chunks}</div>
         </div>
-      </div>
-      <div className="grid grid-cols-3 gap-3">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">副本不足</div>
           <div className={`mt-1 text-lg font-bold ${summary.under_replicated_chunks > 0 ? "text-amber-600" : "text-slate-400"}`}>
@@ -197,7 +201,7 @@ export default function HealthPage() {
                       {node.platform} · 最近在线 {formatLastSeen(node.last_seen)}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
-                      {node.chunk_count} 个 Chunk · {node.risk_chunk_count} 个风险 · {node.repairing_chunks} 个修复中
+                      {node.replica_count} 个副本 · {node.risk_chunk_count} 个风险 · {node.repairing_chunks} 个修复中
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
                       {formatBytes(node.used_bytes || 0)} used / {formatBytes(node.total_bytes || 0)} total

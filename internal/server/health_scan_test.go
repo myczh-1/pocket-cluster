@@ -165,10 +165,13 @@ func TestHealthInsightsReportsEfficiencyAndRisk(t *testing.T) {
 	}
 	var payload struct {
 		Storage struct {
-			FileCount        int   `json:"file_count"`
-			LogicalBytes     int64 `json:"logical_bytes"`
-			UniqueChunkBytes int64 `json:"unique_chunk_bytes"`
-			DedupSavedBytes  int64 `json:"dedup_saved_bytes"`
+			FileCount            int   `json:"file_count"`
+			LogicalBytes         int64 `json:"logical_bytes"`
+			UniqueChunkCount     int   `json:"unique_chunk_count"`
+			UniqueChunkBytes     int64 `json:"unique_chunk_bytes"`
+			PhysicalReplicaCount int   `json:"physical_replica_count"`
+			PhysicalReplicaBytes int64 `json:"physical_replica_bytes"`
+			DedupSavedBytes      int64 `json:"dedup_saved_bytes"`
 		} `json:"storage"`
 		Risk struct {
 			AffectedFileCount int      `json:"affected_file_count"`
@@ -179,7 +182,7 @@ func TestHealthInsightsReportsEfficiencyAndRisk(t *testing.T) {
 			} `json:"files"`
 			Nodes []struct {
 				NodeID         string `json:"node_id"`
-				ChunkCount     int    `json:"chunk_count"`
+				ReplicaCount   int    `json:"replica_count"`
 				RiskChunkCount int    `json:"risk_chunk_count"`
 			} `json:"nodes"`
 		} `json:"risk"`
@@ -191,7 +194,13 @@ func TestHealthInsightsReportsEfficiencyAndRisk(t *testing.T) {
 	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Storage.FileCount != 2 || payload.Storage.LogicalBytes != 200 || payload.Storage.UniqueChunkBytes != 100 || payload.Storage.DedupSavedBytes != 100 {
+	if payload.Storage.FileCount != 2 ||
+		payload.Storage.LogicalBytes != 200 ||
+		payload.Storage.UniqueChunkCount != 1 ||
+		payload.Storage.UniqueChunkBytes != 100 ||
+		payload.Storage.PhysicalReplicaCount != 1 ||
+		payload.Storage.PhysicalReplicaBytes != 100 ||
+		payload.Storage.DedupSavedBytes != 100 {
 		t.Fatalf("unexpected storage insights: %+v", payload.Storage)
 	}
 	if payload.Risk.AffectedFileCount != 2 {
@@ -200,8 +209,8 @@ func TestHealthInsightsReportsEfficiencyAndRisk(t *testing.T) {
 	if len(payload.Risk.Files) != 2 {
 		t.Fatalf("file risks = %d, want 2", len(payload.Risk.Files))
 	}
-	if len(payload.Risk.Nodes) == 0 || payload.Risk.Nodes[0].ChunkCount == 0 {
-		t.Fatalf("expected node risk summary with chunk counts: %+v", payload.Risk.Nodes)
+	if len(payload.Risk.Nodes) == 0 || payload.Risk.Nodes[0].ReplicaCount == 0 {
+		t.Fatalf("expected node risk summary with replica counts: %+v", payload.Risk.Nodes)
 	}
 	if payload.Repair.Status != "queued" || payload.Repair.QueuedChunks != 1 {
 		t.Fatalf("unexpected repair insight: %+v", payload.Repair)
