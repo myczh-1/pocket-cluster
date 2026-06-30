@@ -55,14 +55,6 @@ export default function HealthPage() {
     const id = setInterval(() => load({ background: true }), 10_000);
     return () => clearInterval(id);
   }, [load]);
-  if (loading) return <div className="py-16 text-center text-sm text-slate-400">健康数据加载中...</div>;
-  if (!summary) return <div className="py-16 text-center text-sm text-slate-400">健康数据暂不可用</div>;
-  const statusColor = {
-    healthy: "border-green-200 bg-green-50 text-green-700",
-    under_replicated: "border-amber-200 bg-amber-50 text-amber-700",
-    unavailable: "border-red-200 bg-red-50 text-red-700",
-    repairing: "border-blue-200 bg-blue-50 text-blue-700",
-  };
   const storage = insights?.storage;
   const repair = insights?.repair;
   const risk = insights?.risk;
@@ -77,6 +69,15 @@ export default function HealthPage() {
       setRetentionHours(String(storage.tombstone_retention_hours));
     }
   }, [storage?.tombstone_retention_hours]);
+
+  if (loading) return <div className="py-16 text-center text-sm text-slate-400">健康数据加载中...</div>;
+  if (!summary) return <div className="py-16 text-center text-sm text-slate-400">健康数据暂不可用</div>;
+  const statusColor = {
+    healthy: "border-green-200 bg-green-50 text-green-700",
+    under_replicated: "border-amber-200 bg-amber-50 text-amber-700",
+    unavailable: "border-red-200 bg-red-50 text-red-700",
+    repairing: "border-blue-200 bg-blue-50 text-blue-700",
+  };
 
   async function saveRetention() {
     const hours = Number(retentionHours);
