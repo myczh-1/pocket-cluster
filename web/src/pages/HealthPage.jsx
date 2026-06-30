@@ -20,6 +20,9 @@ export default function HealthPage() {
   const [insights, setInsights] = useState(null);
   const [chunks, setChunks] = useState([]);
   const [selectedChunk, setSelectedChunk] = useState(null);
+  const [showRetainedChunks, setShowRetainedChunks] = useState(false);
+  const [retentionHours, setRetentionHours] = useState("168");
+  const [savingRetention, setSavingRetention] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(0);
@@ -63,9 +66,35 @@ export default function HealthPage() {
   const storage = insights?.storage;
   const repair = insights?.repair;
   const risk = insights?.risk;
+  const coverage = insights?.coverage;
   const riskyFiles = risk?.files || [];
   const riskyNodes = risk?.nodes || [];
+  const visibleChunks = showRetainedChunks ? chunks : chunks.filter((c) => (c.referencing_files || []).length > 0);
+  const retainedChunks = chunks.filter((c) => (c.referencing_files || []).length === 0);
   const dedupPercent = storage?.dedup_ratio ? Math.round(storage.dedup_ratio * 100) : 0;
+  useEffect(() => {
+    if (storage?.tombstone_retention_hours) {
+      setRetentionHours(String(storage.tombstone_retention_hours));
+    }
+  }, [storage?.tombstone_retention_hours]);
+
+  async function saveRetention() {
+    const hours = Number(retentionHours);
+    if (!Number.isFinite(hours) || hours < 1) return;
+    setSavingRetention(true);
+    try {
+      const res = await api("/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tombstone_retention_hours: hours }),
+      });
+      if (res.ok) {
+        await load({ background: true });
+      }
+    } finally {
+      setSavingRetention(false);
+    }
+  }
   return (
     <div className="space-y-5">
       <PageHeader
@@ -79,7 +108,7 @@ export default function HealthPage() {
             <div className="text-xs font-semibold uppercase text-slate-500">空间效率</div>
             <div className="mt-1 text-2xl font-bold text-slate-950">{formatBytes(storage?.dedup_saved_bytes || 0)}</div>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              覆盖 {storage?.file_count || 0} 个文件。逻辑大小 {formatBytes(storage?.logical_bytes || 0)}，唯一 Chunk 存储 {formatBytes(storage?.unique_chunk_bytes || 0)}，物理副本占用 {formatBytes(storage?.physical_replica_bytes || 0)}。
+              仅统计活文件。覆盖 {storage?.file_count || 0} 个文件，逻辑大小 {formatBytes(storage?.logical_bytes || 0)}，唯一 Chunk 存储 {formatBytes(storage?.unique_chunk_bytes || 0)}，物理副本占用 {formatBytes(storage?.physical_replica_bytes || 0)}。
             </p>
             <div className="mt-3">
               <ProgressLine value={dedupPercent} />
@@ -105,6 +134,41 @@ export default function HealthPage() {
           </div>
         </div>
       )}
+      {insights && (
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase text-amber-700">待回收占用</div>
+            <div className="mt-1 text-2xl font-bold text-amber-800">{formatBytes(storage?.retained_physical_replica_bytes || 0)}</div>
+            <p className="mt-1 text-xs leading-5 text-amber-700">
+              这些 Chunk 当前没有被活文件引用，通常来自已删除文件的保留期。现有 {storage?.retained_unique_chunk_count || 0} 个待回收唯一 Chunk，{storage?.retained_physical_replica_count || 0} 个物理副本。
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase text-slate-500">删除保留期</div>
+            <div className="mt-1 flex items-end gap-2">
+              <input
+                type="number"
+                min="1"
+                max="2160"
+                value={retentionHours}
+                onChange={(e) => setRetentionHours(e.target.value)}
+                className="w-24 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
+              />
+              <span className="pb-2 text-sm text-slate-500">小时</span>
+              <button
+                onClick={saveRetention}
+                disabled={savingRetention}
+                className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50"
+              >
+                {savingRetention ? "保存中..." : "保存"}
+              </button>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-slate-500">
+              删除文件后不会立即删 Chunk。超过这个保留期，后台清理轮询会回收未被引用的 Chunk。
+            </p>
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className={`rounded-lg border p-4 shadow-sm ${statusColor[summary.overall_status] || "border-slate-200 bg-white text-slate-700"}`}>
           <div className="text-xs font-semibold uppercase opacity-70">总体状态</div>
@@ -116,7 +180,7 @@ export default function HealthPage() {
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">唯一 Chunk 数</div>
-          <div className="mt-1 text-lg font-bold text-slate-950">{storage?.unique_chunk_count ?? summary.total_chunks}</div>
+          <div className="mt-1 text-lg font-bold text-slate-950">{storage?.unique_chunk_count ?? coverage?.total_chunks ?? summary.total_chunks}</div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">物理副本数</div>
@@ -126,24 +190,24 @@ export default function HealthPage() {
       <div className="grid grid-cols-4 gap-3">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">健康</div>
-          <div className="mt-1 text-lg font-bold text-green-700">{summary.healthy_chunks}</div>
+          <div className="mt-1 text-lg font-bold text-green-700">{coverage?.healthy_chunks ?? summary.healthy_chunks}</div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">副本不足</div>
-          <div className={`mt-1 text-lg font-bold ${summary.under_replicated_chunks > 0 ? "text-amber-600" : "text-slate-400"}`}>
-            {summary.under_replicated_chunks}
+          <div className={`mt-1 text-lg font-bold ${(coverage?.under_replicated_chunks ?? summary.under_replicated_chunks) > 0 ? "text-amber-600" : "text-slate-400"}`}>
+            {coverage?.under_replicated_chunks ?? summary.under_replicated_chunks}
           </div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">不可用</div>
-          <div className={`mt-1 text-lg font-bold ${summary.unavailable_chunks > 0 ? "text-red-600" : "text-slate-400"}`}>
-            {summary.unavailable_chunks}
+          <div className={`mt-1 text-lg font-bold ${(coverage?.unavailable_chunks ?? summary.unavailable_chunks) > 0 ? "text-red-600" : "text-slate-400"}`}>
+            {coverage?.unavailable_chunks ?? summary.unavailable_chunks}
           </div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">修复中</div>
-          <div className={`mt-1 text-lg font-bold ${summary.repairing_chunks > 0 ? "text-blue-600" : "text-slate-400"}`}>
-            {summary.repairing_chunks}
+          <div className={`mt-1 text-lg font-bold ${(coverage?.repairing_chunks ?? summary.repairing_chunks) > 0 ? "text-blue-600" : "text-slate-400"}`}>
+            {coverage?.repairing_chunks ?? summary.repairing_chunks}
           </div>
         </div>
       </div>
@@ -235,6 +299,7 @@ export default function HealthPage() {
             <div>大小：{formatBytes(selectedChunk.size_bytes)}</div>
             <div>副本：{selectedChunk.online_replicas}/{selectedChunk.target_replicas}</div>
             <div>状态：<span className={`font-medium ${selectedChunk.status === "healthy" ? "text-green-600" : selectedChunk.status === "unavailable" ? "text-red-600" : "text-yellow-600"}`}>{statusLabel(selectedChunk.status)}</span></div>
+            <div>用途：{(selectedChunk.referencing_files || []).length > 0 ? "活文件引用中" : "未被活文件引用，等待回收"}</div>
           </div>
           {selectedChunk.replica_nodes && selectedChunk.replica_nodes.length > 0 && (
             <div>
@@ -263,9 +328,17 @@ export default function HealthPage() {
         </div>
       )}
       <div>
-        <h3 className="mb-3 text-sm font-semibold text-slate-950">全部 Chunks（{chunks.length}）</h3>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-slate-950">活文件 Chunks（{visibleChunks.length}）</h3>
+          <button
+            onClick={() => setShowRetainedChunks((v) => !v)}
+            className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+          >
+            {showRetainedChunks ? "隐藏待回收 Chunk" : `显示待回收 Chunk（${retainedChunks.length}）`}
+          </button>
+        </div>
         <div className="space-y-2">
-          {chunks.map((c) => (
+          {visibleChunks.map((c) => (
             <button
               key={c.chunk_id}
               onClick={() => setSelectedChunk(c)}
@@ -288,11 +361,11 @@ export default function HealthPage() {
               <div className="mt-1 flex gap-4 text-xs text-slate-400">
                 <span>{formatBytes(c.size_bytes)}</span>
                 <span>{c.online_replicas}/{c.target_replicas} 副本</span>
-                {c.referencing_files && <span>{c.referencing_files.length} 个文件</span>}
+                {(c.referencing_files || []).length > 0 ? <span>{c.referencing_files.length} 个文件</span> : <span>待回收</span>}
               </div>
             </button>
           ))}
-          {chunks.length === 0 && (
+          {visibleChunks.length === 0 && (
             <EmptyState title="还没有 Chunk" description="存储池里有文件后，这里会显示健康数据。" />
           )}
         </div>

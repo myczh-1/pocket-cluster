@@ -15,7 +15,6 @@ import (
 
 const (
 	healthScanInterval          = 60 * time.Second
-	tombstoneRetention          = 7 * 24 * time.Hour // 7 days
 	healthRemoteVerifyBatchSize = 100
 )
 
@@ -232,7 +231,7 @@ func (s *Server) runHealthScan(ctx context.Context) {
 	}
 }
 
-// CleanupTombstones removes files that have been deleted longer than tombstoneRetention.
+// CleanupTombstones removes files that have been deleted longer than the configured retention window.
 func (s *Server) CleanupTombstones() error {
 	return s.CleanupTombstonesContext(context.Background())
 }
@@ -242,7 +241,7 @@ func (s *Server) CleanupTombstonesContext(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	cutoff := time.Now().Add(-tombstoneRetention)
+	cutoff := time.Now().Add(-s.cfg.TombstoneRetentionDuration())
 	for _, f := range deleted {
 		select {
 		case <-ctx.Done():

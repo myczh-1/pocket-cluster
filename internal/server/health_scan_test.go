@@ -295,6 +295,120 @@ func TestHealthInsightsHealthyChunkDoesNotFlagAffectedFiles(t *testing.T) {
 	}
 }
 
+func TestHealthInsightsSeparatesRetainedChunksFromActiveStorage(t *testing.T) {
+	s := newTestHealthServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for _, nodeID := range []string{"nodeA", "nodeB"} {
+		if err := s.store.UpdateNodeFull(&types.Node{
+			NodeID:   nodeID,
+			Name:     nodeID,
+			Platform: "linux",
+			Address:  "127.0.0.1:7788",
+			Status:   "online",
+			Trusted:  true,
+			LastSeen: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.store.UpsertChunk(&types.Chunk{ChunkID: "active", SizeBytes: 100, StoredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertChunk(&types.Chunk{ChunkID: "retained", SizeBytes: 200, StoredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertFile(&types.File{
+		FileID:     "live-file",
+		Name:       "live.txt",
+		Path:       "/live.txt",
+		SizeBytes:  100,
+		VersionID:  "v1",
+		ChunkIDs:   []string{"active"},
+		CreatedAt:  time.Now(),
+		ModifiedAt: time.Now(),
+		ModifiedBy: "nodeA",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertFile(&types.File{
+		FileID:     "deleted-file",
+		Name:       "old.txt",
+		Path:       "/old.txt",
+		SizeBytes:  200,
+		VersionID:  "v2",
+		ChunkIDs:   []string{"retained"},
+		CreatedAt:  time.Now().Add(-2 * time.Hour),
+		ModifiedAt: time.Now().Add(-2 * time.Hour),
+		ModifiedBy: "nodeA",
+		Deleted:    true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, replica := range []types.Replica{
+		{ChunkID: "active", NodeID: "nodeA", Status: "available", StoredAt: time.Now(), VerifiedAt: time.Now()},
+		{ChunkID: "active", NodeID: "nodeB", Status: "available", StoredAt: time.Now(), VerifiedAt: time.Now()},
+		{ChunkID: "retained", NodeID: "nodeA", Status: "available", StoredAt: time.Now(), VerifiedAt: time.Now()},
+	} {
+		replica := replica
+		if err := s.store.UpsertReplica(&replica); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s.runHealthScan(ctx)
+
+	session := loginTestSession(t, s)
+	res := httptest.NewRecorder()
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/health/insights", nil), session)
+	s.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("insights status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+
+	var envelope types.APIResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Storage struct {
+			FileCount                    int   `json:"file_count"`
+			UniqueChunkCount             int   `json:"unique_chunk_count"`
+			UniqueChunkBytes             int64 `json:"unique_chunk_bytes"`
+			PhysicalReplicaCount         int   `json:"physical_replica_count"`
+			PhysicalReplicaBytes         int64 `json:"physical_replica_bytes"`
+			RetainedUniqueChunkCount     int   `json:"retained_unique_chunk_count"`
+			RetainedUniqueChunkBytes     int64 `json:"retained_unique_chunk_bytes"`
+			RetainedPhysicalReplicaCount int   `json:"retained_physical_replica_count"`
+			RetainedPhysicalReplicaBytes int64 `json:"retained_physical_replica_bytes"`
+		} `json:"storage"`
+		Coverage struct {
+			TotalChunks   int `json:"total_chunks"`
+			HealthyChunks int `json:"healthy_chunks"`
+		} `json:"coverage"`
+	}
+	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Storage.FileCount != 1 ||
+		payload.Storage.UniqueChunkCount != 1 ||
+		payload.Storage.UniqueChunkBytes != 100 ||
+		payload.Storage.PhysicalReplicaCount != 2 ||
+		payload.Storage.PhysicalReplicaBytes != 200 {
+		t.Fatalf("unexpected active storage insights: %+v", payload.Storage)
+	}
+	if payload.Storage.RetainedUniqueChunkCount != 1 ||
+		payload.Storage.RetainedUniqueChunkBytes != 200 ||
+		payload.Storage.RetainedPhysicalReplicaCount != 1 ||
+		payload.Storage.RetainedPhysicalReplicaBytes != 200 {
+		t.Fatalf("unexpected retained storage insights: %+v", payload.Storage)
+	}
+	if payload.Coverage.TotalChunks != 1 || payload.Coverage.HealthyChunks != 1 {
+		t.Fatalf("unexpected active coverage: %+v", payload.Coverage)
+	}
+}
+
 func TestHealthScanHealthyChunks(t *testing.T) {
 	s := newTestHealthServer(t)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -13,6 +13,8 @@ var webFS embed.FS
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/node/info", s.handleNodeInfo)
+	mux.HandleFunc("GET /api/settings", s.handleGetSettings)
+	mux.HandleFunc("POST /api/settings", s.handleUpdateSettings)
 	mux.HandleFunc("GET /api/nodes", s.handleListNodes)
 	mux.HandleFunc("GET /api/nodes/discovered", s.handleListDiscovered)
 	mux.HandleFunc("POST /api/invites", s.handleCreateInvite)
