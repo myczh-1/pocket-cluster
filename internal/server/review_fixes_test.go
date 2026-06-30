@@ -32,7 +32,7 @@ func TestUploadShortPathDoesNotPanicAndUsesFallbackMime(t *testing.T) {
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	if err := mw.WriteField("path", "x"); err != nil {
+	if err := mw.WriteField("path", "/x"); err != nil {
 		t.Fatal(err)
 	}
 	part, err := mw.CreateFormFile("file", "x")
@@ -53,7 +53,7 @@ func TestUploadShortPathDoesNotPanicAndUsesFallbackMime(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("upload status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
 	}
-	f, err := st.GetFile("x")
+	f, err := st.GetFile("/x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +102,7 @@ func TestUploadEmptyFileDoesNotCreateEmptyChunk(t *testing.T) {
 func TestRenameRejectsRelativeAndHiddenPathComponents(t *testing.T) {
 	for _, p := range []string{
 		"relative.txt",
+		"/",
 		"/a/../b.txt",
 		"/a/./b.txt",
 		"/.hidden",
@@ -113,6 +114,70 @@ func TestRenameRejectsRelativeAndHiddenPathComponents(t *testing.T) {
 	}
 	if err := validateRenamePath("/dir/visible.txt"); err != nil {
 		t.Fatalf("validateRenamePath valid path failed: %v", err)
+	}
+}
+
+func TestNormalizePoolFilePathCollapsesHarmlessDuplicateSlashes(t *testing.T) {
+	got, err := normalizePoolFilePath("/dir//visible.txt")
+	if err != nil {
+		t.Fatalf("normalizePoolFilePath returned error: %v", err)
+	}
+	if got != "/dir/visible.txt" {
+		t.Fatalf("normalized path = %q, want %q", got, "/dir/visible.txt")
+	}
+
+	got, err = normalizePoolFilePath("/dir/visible.txt/")
+	if err != nil {
+		t.Fatalf("normalizePoolFilePath trailing slash returned error: %v", err)
+	}
+	if got != "/dir/visible.txt" {
+		t.Fatalf("normalized trailing-slash path = %q, want %q", got, "/dir/visible.txt")
+	}
+}
+
+func TestRenameCanonicalizesDuplicateSlashes(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	chunks := chunk.New(t.TempDir())
+	if err := chunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(newTestConfig(t, "local"), st, chunks)
+	session := loginTestSession(t, srv)
+
+	if err := st.UpsertFile(&types.File{
+		FileID:     "rename-me",
+		Name:       "old.txt",
+		Path:       "/old.txt",
+		SizeBytes:  1,
+		VersionID:  "v1",
+		ChunkIDs:   nil,
+		CreatedAt:  time.Now(),
+		ModifiedAt: time.Now(),
+		ModifiedBy: "local",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodPatch, "/api/files/rename", strings.NewReader(`{"path":"/old.txt","new_path":"//folder//new.txt/"}`)), session)
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("rename status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if _, err := st.GetFile("/old.txt"); err == nil {
+		t.Fatal("old path still exists after rename")
+	}
+	f, err := st.GetFile("/folder/new.txt")
+	if err != nil {
+		t.Fatalf("canonicalized path not found: %v", err)
+	}
+	if f.Name != "new.txt" {
+		t.Fatalf("renamed file name = %q, want %q", f.Name, "new.txt")
 	}
 }
 

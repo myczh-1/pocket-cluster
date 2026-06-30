@@ -9,6 +9,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -70,6 +71,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	targetPath := r.FormValue("path")
 	if targetPath == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path is required")
+		return
+	}
+	targetPath, err := normalizePoolFilePath(targetPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_PATH", err.Error())
 		return
 	}
 	file, header, err := r.FormFile("file")
@@ -247,7 +253,8 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path and new_path are required")
 		return
 	}
-	if err := validateRenamePath(req.NewPath); err != nil {
+	newPath, err := normalizePoolFilePath(req.NewPath)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_PATH", err.Error())
 		return
 	}
@@ -257,12 +264,12 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
-	if err := s.store.RenameFile(f.FileID, req.Path, req.NewPath, s.cfg.NodeID, now); err != nil {
+	if err := s.store.RenameFile(f.FileID, req.Path, newPath, s.cfg.NodeID, now); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
 	if f.IsDir {
-		if err := s.store.RenameChildren(req.Path, req.NewPath, s.cfg.NodeID, now); err != nil {
+		if err := s.store.RenameChildren(req.Path, newPath, s.cfg.NodeID, now); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
@@ -270,7 +277,7 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.appendEvent(types.EventFileRename, map[string]string{
 		"file_id":  f.FileID,
 		"old_path": req.Path,
-		"new_path": req.NewPath,
+		"new_path": newPath,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -278,33 +285,37 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, http.StatusOK, map[string]string{
 		"file_id":  f.FileID,
 		"old_path": req.Path,
-		"new_path": req.NewPath,
+		"new_path": newPath,
 	})
 }
 
-// validateRenamePath rejects hidden names (dot-prefixed) and relative path components.
-func validateRenamePath(p string) error {
+// normalizePoolFilePath validates and canonicalizes a pool file path.
+func normalizePoolFilePath(p string) (string, error) {
 	if p == "" {
-		return fmt.Errorf("path cannot be empty")
+		return "", fmt.Errorf("path cannot be empty")
 	}
 	if !strings.HasPrefix(p, "/") {
-		return fmt.Errorf("path %q must be absolute", p)
+		return "", fmt.Errorf("path %q must be absolute", p)
 	}
 	for _, seg := range strings.Split(p, "/") {
 		if seg == "" {
 			continue
 		}
 		if seg == "." || seg == ".." {
-			return fmt.Errorf("path %q cannot contain relative components", p)
+			return "", fmt.Errorf("path %q cannot contain relative components", p)
 		}
 		if strings.HasPrefix(seg, ".") {
-			return fmt.Errorf("name %q is not allowed: hidden files and relative paths are forbidden", seg)
+			return "", fmt.Errorf("name %q is not allowed: hidden files and relative paths are forbidden", seg)
 		}
 	}
-	// Reject paths that resolve outside root (e.g. contain ".." traversal).
-	cleaned := filepath.Clean(p)
-	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return fmt.Errorf("path %q resolves outside the pool root", p)
+	cleaned := path.Clean(p)
+	if cleaned == "." || cleaned == "/" {
+		return "", fmt.Errorf("path %q must point to a file or directory name under the pool root", p)
 	}
-	return nil
+	return cleaned, nil
+}
+
+func validateRenamePath(p string) error {
+	_, err := normalizePoolFilePath(p)
+	return err
 }

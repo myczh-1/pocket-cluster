@@ -88,6 +88,12 @@ func (s *Server) handleMigrateLocalFile(w http.ResponseWriter, r *http.Request) 
 	if req.TargetPath == "" {
 		req.TargetPath = "/" + filepath.Base(req.Path)
 	}
+	normalizedTargetPath, err := normalizePoolFilePath(req.TargetPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_PATH", err.Error())
+		return
+	}
+	req.TargetPath = normalizedTargetPath
 	abs, err := filepath.Abs(req.Path)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())

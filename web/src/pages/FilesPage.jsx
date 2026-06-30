@@ -108,6 +108,10 @@ function FilePreview({ file, onClose }) {
 
 function isInvalidRenamePath(p) {
   if (!p || !p.trim()) return "路径不能为空";
+  if (!p.startsWith("/")) return "路径必须以 / 开头";
+  if (p === "/") return "不能重命名到根目录";
+  if (p.includes("//")) return "路径不能包含连续的 /";
+  if (p.length > 1 && p.endsWith("/")) return "路径不能以 / 结尾";
   const base = p.split("/").filter(Boolean).pop() || "";
   if (base === "." || base === "..") return "名称不能是 '.' 或 '..'";
   if (base.startsWith(".")) return "名称不能以点开头（不允许隐藏文件）";
