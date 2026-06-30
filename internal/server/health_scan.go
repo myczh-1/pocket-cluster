@@ -237,31 +237,42 @@ func (s *Server) CleanupTombstones() error {
 }
 
 func (s *Server) CleanupTombstonesContext(ctx context.Context) error {
+	_, err := s.cleanupDeletedFiles(ctx, false)
+	return err
+}
+
+func (s *Server) PurgeRetainedDataContext(ctx context.Context) (int, error) {
+	return s.cleanupDeletedFiles(ctx, true)
+}
+
+func (s *Server) cleanupDeletedFiles(ctx context.Context, ignoreRetention bool) (int, error) {
 	deleted, err := s.store.ListAllFilesIncludingDeleted()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	cutoff := time.Now().Add(-s.cfg.TombstoneRetentionDuration())
+	purged := 0
 	for _, f := range deleted {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return purged, ctx.Err()
 		default:
 		}
 		if !f.Deleted {
 			continue
 		}
-		if f.ModifiedAt.After(cutoff) {
+		if !ignoreRetention && f.ModifiedAt.After(cutoff) {
 			continue
 		}
 		if err := s.store.PurgeFile(f.FileID); err != nil {
 			log.Printf("tombstone cleanup: purge %s: %v", f.Path, err)
 			continue
 		}
+		purged++
 		// Clean up unreferenced chunks
 		s.cleanupUnreferencedChunks(ctx, f.ChunkIDs)
 	}
-	return nil
+	return purged, nil
 }
 
 // DrainUnderReplicated returns and clears the under-replicated chunk list from the last scan.

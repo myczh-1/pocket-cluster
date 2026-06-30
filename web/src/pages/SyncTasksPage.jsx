@@ -19,6 +19,8 @@ function kindLabel(kind) {
       return "副本修复";
     case "integrity_check":
       return "完整性校验";
+    case "retention_purge":
+      return "立即清理保留数据";
     default:
       return kind || "任务";
   }

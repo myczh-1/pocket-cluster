@@ -250,3 +250,70 @@ func TestJobIntegrityCheckDetectsMissingChunk(t *testing.T) {
 	got, _ := srv.jobs.get(job.ID)
 	t.Fatalf("job did not finish: %+v", got)
 }
+
+func TestJobPurgeRetainedDataPurgesDeletedFilesImmediately(t *testing.T) {
+	srv := newJobsTestServer(t)
+	session := loginTestSession(t, srv)
+
+	hash, _, err := srv.chunks.Store(bytes.NewReader([]byte("retained payload")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := srv.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: 16, StoredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.UpsertReplica(&types.Replica{ChunkID: hash, NodeID: srv.cfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.UpsertFile(&types.File{
+		FileID:     "deleted-file",
+		Name:       "old.txt",
+		Path:       "/old.txt",
+		SizeBytes:  16,
+		VersionID:  "v1",
+		ChunkIDs:   []string{hash},
+		CreatedAt:  now,
+		ModifiedAt: now,
+		ModifiedBy: srv.cfg.NodeID,
+		Deleted:    true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/jobs/purge-retained-data", nil), session)
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusAccepted, res.Body.String())
+	}
+
+	var envelope types.APIResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var job types.Job
+	if err := json.Unmarshal(envelope.Data, &job); err != nil {
+		t.Fatal(err)
+	}
+	if job.Kind != types.JobPurgeRetainedData {
+		t.Fatalf("job kind = %q, want %q", job.Kind, types.JobPurgeRetainedData)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got, ok := srv.jobs.get(job.ID)
+		if ok && got.Status == types.JobDone {
+			if _, err := srv.store.GetFileByID("deleted-file"); err == nil {
+				t.Fatal("deleted file tombstone still exists after purge job")
+			}
+			if srv.chunks.Exists(hash) {
+				t.Fatal("retained chunk file still exists after purge job")
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	got, _ := srv.jobs.get(job.ID)
+	t.Fatalf("purge job did not finish: %+v", got)
+}

@@ -113,6 +113,7 @@ const (
 	SyncTaskMetadataPush   SyncTaskKind = "metadata_push"
 	SyncTaskReplicaRepair  SyncTaskKind = "replica_repair"
 	SyncTaskIntegrityCheck SyncTaskKind = "integrity_check"
+	SyncTaskRetentionPurge SyncTaskKind = "retention_purge"
 )
 
 type SyncTask struct {
@@ -145,6 +146,7 @@ const (
 	JobRescan                JobKind = "rescan"
 	JobRepairUnderReplicated JobKind = "repair_under_replicated"
 	JobIntegrityCheck        JobKind = "integrity_check"
+	JobPurgeRetainedData     JobKind = "purge_retained_data"
 )
 
 type Job struct {

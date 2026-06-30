@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-
 	"github.com/google/uuid"
 	"github.com/pocketcluster/agent/internal/types"
 )
@@ -143,6 +142,7 @@ func (s *Server) handleJobRepairUnderReplicated(w http.ResponseWriter, r *http.R
 	})
 	writeOK(w, http.StatusAccepted, job)
 }
+
 // handleJobIntegrityCheck re-verifies every locally stored chunk by recomputing
 // its SHA-256 hash on disk and comparing against the recorded chunk ID. Chunks
 // whose file is absent are reported as missing; chunks whose hash no longer
@@ -210,6 +210,27 @@ func (s *Server) handleJobIntegrityCheck(w http.ResponseWriter, r *http.Request)
 			s.finishSyncTask(taskID, types.SyncTaskIntegrityCheck, "Verifying chunk integrity", "local", msg)
 			return types.JobDone, msg, nil
 		}
+	})
+	writeOK(w, http.StatusAccepted, job)
+}
+
+func (s *Server) handleJobPurgeRetainedData(w http.ResponseWriter, r *http.Request) {
+	job := s.startJob(types.JobPurgeRetainedData, "Purging retained deleted data", "Removing tombstoned file metadata immediately and reclaiming unreferenced chunk replicas.", func(ctx context.Context, jobID string) (types.JobStatus, string, error) {
+		taskID := "job:" + jobID + ":retention-purge"
+		s.trackSyncTask(taskID, types.SyncTaskRetentionPurge, types.SyncTaskRunning, "Purging retained deleted data", "retained-data", "Force-cleaning deleted file tombstones and unreferenced chunks.", "")
+		purged, err := s.PurgeRetainedDataContext(ctx)
+		if err != nil {
+			s.failSyncTask(taskID, types.SyncTaskRetentionPurge, types.SyncTaskFailed, "Purging retained deleted data", "retained-data", "Immediate cleanup failed.", err.Error())
+			return types.JobFailed, "Immediate cleanup failed.", err
+		}
+		s.runHealthScan(ctx)
+		if purged == 0 {
+			s.finishSyncTask(taskID, types.SyncTaskRetentionPurge, "Purging retained deleted data", "retained-data", "No retained deleted files needed cleanup.")
+			return types.JobDone, "No retained deleted files needed cleanup.", nil
+		}
+		msg := fmt.Sprintf("Purged %d deleted file tombstone(s) and triggered immediate chunk reclamation.", purged)
+		s.finishSyncTask(taskID, types.SyncTaskRetentionPurge, "Purging retained deleted data", "retained-data", msg)
+		return types.JobDone, msg, nil
 	})
 	writeOK(w, http.StatusAccepted, job)
 }

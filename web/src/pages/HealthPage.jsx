@@ -23,6 +23,9 @@ export default function HealthPage() {
   const [showRetainedChunks, setShowRetainedChunks] = useState(false);
   const [retentionHours, setRetentionHours] = useState("168");
   const [savingRetention, setSavingRetention] = useState(false);
+  const [retentionSaved, setRetentionSaved] = useState(false);
+  const [purgingRetained, setPurgingRetained] = useState(false);
+  const [purgeDone, setPurgeDone] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(0);
@@ -83,6 +86,7 @@ export default function HealthPage() {
     const hours = Number(retentionHours);
     if (!Number.isFinite(hours) || hours < 1) return;
     setSavingRetention(true);
+    setRetentionSaved(false);
     try {
       const res = await api("/settings", {
         method: "POST",
@@ -91,9 +95,26 @@ export default function HealthPage() {
       });
       if (res.ok) {
         await load({ background: true });
+        setRetentionSaved(true);
+        setTimeout(() => setRetentionSaved(false), 1400);
       }
     } finally {
       setSavingRetention(false);
+    }
+  }
+
+  async function purgeRetainedNow() {
+    setPurgingRetained(true);
+    setPurgeDone(false);
+    try {
+      const res = await api("/jobs/purge-retained-data", { method: "POST" });
+      if (res.ok) {
+        await load({ background: true });
+        setPurgeDone(true);
+        setTimeout(() => setPurgeDone(false), 1600);
+      }
+    } finally {
+      setPurgingRetained(false);
     }
   }
   return (
@@ -143,6 +164,19 @@ export default function HealthPage() {
             <p className="mt-1 text-xs leading-5 text-amber-700">
               这些 Chunk 当前没有被活文件引用，通常来自已删除文件的保留期。现有 {storage?.retained_unique_chunk_count || 0} 个待回收唯一 Chunk，{storage?.retained_physical_replica_count || 0} 个物理副本。
             </p>
+            <div className="mt-3">
+              <button
+                onClick={purgeRetainedNow}
+                disabled={purgingRetained}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                  purgeDone
+                    ? "bg-green-600 text-white"
+                    : "bg-amber-600 text-white hover:bg-amber-700"
+                } disabled:opacity-50`}
+              >
+                {purgingRetained ? "清理中..." : purgeDone ? "已提交 ✓" : "立即清理待回收 Chunk"}
+              </button>
+            </div>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <div className="text-xs font-semibold uppercase text-slate-500">删除保留期</div>
@@ -159,9 +193,13 @@ export default function HealthPage() {
               <button
                 onClick={saveRetention}
                 disabled={savingRetention}
-                className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50"
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                  retentionSaved
+                    ? "bg-green-600 text-white"
+                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                } disabled:opacity-50`}
               >
-                {savingRetention ? "保存中..." : "保存"}
+                {savingRetention ? "保存中..." : retentionSaved ? "已保存 ✓" : "保存"}
               </button>
             </div>
             <p className="mt-2 text-xs leading-5 text-slate-500">
