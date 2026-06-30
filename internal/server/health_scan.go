@@ -162,8 +162,8 @@ func (s *Server) runHealthScan(ctx context.Context) {
 			} else if isOnline && !s.health.skipRemoteVerify {
 				if nodeChunks, ok := remotePresence[r.NodeID]; ok {
 					hasChunk = nodeChunks[c.ChunkID]
-				} else if n, _ := s.store.GetNode(r.NodeID); n != nil && len(nodeDialAddresses(*n)) > 0 {
-					hasChunk = s.verifyRemoteChunkExists(ctx, nodeDialAddresses(*n)[0], c.ChunkID)
+				} else if n, _ := s.store.GetNode(r.NodeID); n != nil {
+					hasChunk = s.verifyRemoteChunkExistsOnNode(ctx, *n, c.ChunkID)
 				}
 			} else if isOnline {
 				// Test mode: assume remote node has chunk
@@ -398,25 +398,45 @@ func (s *Server) verifyRemoteChunksExist(ctx context.Context, nodes []types.Node
 		}
 		presence := make(map[string]bool, len(chunkIDs))
 		failed := false
+		var workingAddress string
 		for start := 0; start < len(chunkIDs); start += healthRemoteVerifyBatchSize {
 			end := start + healthRemoteVerifyBatchSize
 			if end > len(chunkIDs) {
 				end = len(chunkIDs)
 			}
-			batchPresence, err := s.verifyRemoteChunkBatch(ctx, addresses[0], chunkIDs[start:end])
+			batchPresence, address, err := s.verifyRemoteChunkBatchAcrossAddresses(ctx, addresses, chunkIDs[start:end])
 			if err != nil {
 				failed = true
 				break
 			}
+			workingAddress = address
 			for chunkID, exists := range batchPresence {
 				presence[chunkID] = exists
 			}
 		}
 		if !failed {
+			if workingAddress != "" {
+				_ = s.store.UpdateNodeLastWorkingAddress(nodeID, workingAddress, time.Now())
+			}
 			result[nodeID] = presence
 		}
 	}
 	return result
+}
+
+func (s *Server) verifyRemoteChunkBatchAcrossAddresses(ctx context.Context, addresses []string, chunkIDs []string) (map[string]bool, string, error) {
+	var lastErr error
+	for _, address := range addresses {
+		presence, err := s.verifyRemoteChunkBatch(ctx, address, chunkIDs)
+		if err == nil {
+			return presence, address, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no candidate address available")
+	}
+	return nil, "", lastErr
 }
 
 func (s *Server) verifyRemoteChunkBatch(ctx context.Context, nodeAddress string, chunkIDs []string) (map[string]bool, error) {
@@ -473,4 +493,14 @@ func (s *Server) verifyRemoteChunkExists(ctx context.Context, nodeAddress, chunk
 	}
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+func (s *Server) verifyRemoteChunkExistsOnNode(ctx context.Context, n types.Node, chunkID string) bool {
+	for _, address := range nodeDialAddresses(n) {
+		if s.verifyRemoteChunkExists(ctx, address, chunkID) {
+			_ = s.store.UpdateNodeLastWorkingAddress(n.NodeID, address, time.Now())
+			return true
+		}
+	}
+	return false
 }

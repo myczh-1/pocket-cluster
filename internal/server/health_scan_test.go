@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -572,5 +574,104 @@ func TestPurgeFile(t *testing.T) {
 		if f.FileID == "purge1" {
 			t.Fatal("expected file to be purged")
 		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) Do(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestHealthScanRemoteVerifyFallsBackToWorkingAddress(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	chunks := chunk.New(t.TempDir())
+	if err := chunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := newTestConfig(t, "selfNode")
+	hash, size, err := chunks.Store(strings.NewReader("shared payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(cfg, st, chunks, WithPeerHTTPClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "bad.example:7788":
+			return nil, io.ErrUnexpectedEOF
+		case "good.example:7788":
+			body := `{"ok":true,"data":{"exists":{"` + hash + `":true}}}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		default:
+			t.Fatalf("unexpected host %q", req.URL.Host)
+			return nil, nil
+		}
+	})))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	remoteNode := &types.Node{
+		NodeID:             "nodeA",
+		Name:               "Node A",
+		Platform:           "linux",
+		Address:            "bad.example:7788",
+		AddressCandidates:  []string{"good.example:7788"},
+		LastWorkingAddress: "bad.example:7788",
+		Status:             "online",
+		Trusted:            true,
+		LastSeen:           time.Now(),
+	}
+	if err := s.store.UpdateNodeFull(remoteNode); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.recordLocalChunkReplica(hash, size, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertFile(&types.File{
+		FileID:     "f1",
+		Name:       "a.bin",
+		Path:       "/a.bin",
+		SizeBytes:  100,
+		VersionID:  "v1",
+		ChunkIDs:   []string{hash},
+		CreatedAt:  time.Now(),
+		ModifiedAt: time.Now(),
+		ModifiedBy: "selfNode",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertReplica(&types.Replica{
+		ChunkID:    hash,
+		NodeID:     "nodeA",
+		Status:     "available",
+		StoredAt:   time.Now(),
+		VerifiedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.runHealthScan(ctx)
+
+	detail := s.ChunkHealthSnapshot()[hash]
+	if detail.Status != types.ReplicaHealthy {
+		t.Fatalf("chunk status = %s, want %s", detail.Status, types.ReplicaHealthy)
+	}
+	if detail.OnlineReplicas != 2 {
+		t.Fatalf("online replicas = %d, want 2", detail.OnlineReplicas)
+	}
+	updated, err := s.store.GetNode("nodeA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.LastWorkingAddress != "good.example:7788" {
+		t.Fatalf("last working address = %q, want %q", updated.LastWorkingAddress, "good.example:7788")
 	}
 }
