@@ -99,6 +99,9 @@ func (s *Server) cleanupUnreferencedChunks(ctx context.Context, chunkIDs []strin
 				log.Printf("cleanup chunk %s: append replica remove event: %v", chunkID, err)
 			}
 		}
+		if err := s.store.DeleteChunkIfUnreferenced(chunkID); err != nil {
+			log.Printf("cleanup chunk %s: delete chunk metadata: %v", chunkID, err)
+		}
 	}
 }
 

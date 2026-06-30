@@ -24,3 +24,13 @@ func (s *Store) GetChunk(chunkID string) (*types.Chunk, error) {
 	c.StoredAt = time.UnixMilli(ts)
 	return &c, nil
 }
+
+func (s *Store) DeleteChunkIfUnreferenced(chunkID string) error {
+	_, err := s.db.Exec(`
+		DELETE FROM chunks
+		WHERE chunk_id = ?
+		  AND NOT EXISTS (SELECT 1 FROM file_chunks WHERE chunk_id = ?)
+		  AND NOT EXISTS (SELECT 1 FROM replicas WHERE chunk_id = ? AND status = 'available')
+	`, chunkID, chunkID, chunkID)
+	return err
+}

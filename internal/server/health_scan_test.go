@@ -641,6 +641,9 @@ func TestApplyFilePurgeRemovesDeletedFileAndReplica(t *testing.T) {
 	if s.chunks.Exists(hash) {
 		t.Fatal("retained chunk file still exists after file purge event")
 	}
+	if _, err := s.store.GetChunk(hash); err == nil {
+		t.Fatal("retained chunk metadata still exists after file purge event")
+	}
 	replicas, err := s.store.GetReplicas(hash)
 	if err != nil {
 		t.Fatal(err)

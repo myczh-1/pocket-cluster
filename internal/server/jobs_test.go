@@ -310,6 +310,9 @@ func TestJobPurgeRetainedDataPurgesDeletedFilesImmediately(t *testing.T) {
 			if srv.chunks.Exists(hash) {
 				t.Fatal("retained chunk file still exists after purge job")
 			}
+			if _, err := srv.store.GetChunk(hash); err == nil {
+				t.Fatal("retained chunk metadata still exists after purge job")
+			}
 			events, err := srv.store.GetEventsSince("", 20)
 			if err != nil {
 				t.Fatal(err)
