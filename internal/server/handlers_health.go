@@ -130,6 +130,9 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 				nodeRepairingCounts[replica.NodeID]++
 			}
 		}
+		if detail.Status == types.ReplicaHealthy {
+			continue
+		}
 		for _, p := range detail.ReferencingFiles {
 			affected[p] = struct{}{}
 		}

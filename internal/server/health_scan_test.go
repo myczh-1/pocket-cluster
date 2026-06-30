@@ -217,6 +217,84 @@ func TestHealthInsightsReportsEfficiencyAndRisk(t *testing.T) {
 	}
 }
 
+func TestHealthInsightsHealthyChunkDoesNotFlagAffectedFiles(t *testing.T) {
+	s := newTestHealthServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for _, nodeID := range []string{"nodeA", "nodeB"} {
+		if err := s.store.UpdateNodeFull(&types.Node{
+			NodeID:   nodeID,
+			Name:     nodeID,
+			Platform: "linux",
+			Address:  "127.0.0.1:7788",
+			Status:   "online",
+			Trusted:  true,
+			LastSeen: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.store.UpsertChunk(&types.Chunk{ChunkID: "shared", SizeBytes: 100, StoredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertFile(&types.File{
+		FileID:     "f1",
+		Name:       "test.png",
+		Path:       "/test.png",
+		SizeBytes:  100,
+		VersionID:  "v1",
+		ChunkIDs:   []string{"shared"},
+		CreatedAt:  time.Now(),
+		ModifiedAt: time.Now(),
+		ModifiedBy: "nodeA",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, nodeID := range []string{"nodeA", "nodeB"} {
+		if err := s.store.UpsertReplica(&types.Replica{
+			ChunkID:    "shared",
+			NodeID:     nodeID,
+			Status:     "available",
+			StoredAt:   time.Now(),
+			VerifiedAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.runHealthScan(ctx)
+
+	session := loginTestSession(t, s)
+	res := httptest.NewRecorder()
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/health/insights", nil), session)
+	s.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("insights status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	var envelope types.APIResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Risk struct {
+			AffectedFileCount int      `json:"affected_file_count"`
+			AffectedFiles     []string `json:"affected_files"`
+			Files             []struct {
+				Path string `json:"path"`
+			} `json:"files"`
+		} `json:"risk"`
+	}
+	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Risk.AffectedFileCount != 0 {
+		t.Fatalf("affected file count = %d, want 0 (%+v)", payload.Risk.AffectedFileCount, payload.Risk.AffectedFiles)
+	}
+	if len(payload.Risk.AffectedFiles) != 0 || len(payload.Risk.Files) != 0 {
+		t.Fatalf("expected no healthy file risk entries, got %+v", payload.Risk)
+	}
+}
+
 func TestHealthScanHealthyChunks(t *testing.T) {
 	s := newTestHealthServer(t)
 	ctx, cancel := context.WithCancel(context.Background())
