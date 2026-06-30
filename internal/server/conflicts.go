@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"path"
 	"strings"
 	"time"
@@ -85,9 +86,47 @@ func (s *Server) cleanupUnreferencedChunks(ctx context.Context, chunkIDs []strin
 		if err != nil || ref {
 			continue
 		}
-		_ = s.chunks.Remove(chunkID)
-		_ = s.store.MarkReplicaRemoved(chunkID, s.cfg.NodeID, time.Now())
+		removed, err := s.removeLocalReplica(chunkID, time.Now())
+		if err != nil {
+			log.Printf("cleanup chunk %s: %v", chunkID, err)
+			continue
+		}
+		if removed {
+			if _, err := s.appendEvent(types.EventChunkReplicaRemove, map[string]string{
+				"chunk_id": chunkID,
+				"node_id":  s.cfg.NodeID,
+			}); err != nil {
+				log.Printf("cleanup chunk %s: append replica remove event: %v", chunkID, err)
+			}
+		}
 	}
+}
+
+func (s *Server) removeLocalReplica(chunkID string, now time.Time) (bool, error) {
+	replicas, err := s.store.GetReplicas(chunkID)
+	if err != nil {
+		return false, err
+	}
+	hadAvailableReplica := false
+	for _, replica := range replicas {
+		if replica.NodeID == s.cfg.NodeID && replica.Status == "available" {
+			hadAvailableReplica = true
+			break
+		}
+	}
+	hadChunkFile := s.chunks.Exists(chunkID)
+	if hadChunkFile {
+		if err := s.chunks.Remove(chunkID); err != nil {
+			return false, err
+		}
+	}
+	if !hadAvailableReplica && !hadChunkFile {
+		return false, nil
+	}
+	if err := s.store.MarkReplicaRemoved(chunkID, s.cfg.NodeID, now); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Server) nextConflictPath(originalPath, nodeID string, modifiedAt time.Time) (string, error) {

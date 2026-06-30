@@ -264,15 +264,30 @@ func (s *Server) cleanupDeletedFiles(ctx context.Context, ignoreRetention bool) 
 		if !ignoreRetention && f.ModifiedAt.After(cutoff) {
 			continue
 		}
-		if err := s.store.PurgeFile(f.FileID); err != nil {
+		if err := s.purgeDeletedFile(f); err != nil {
 			log.Printf("tombstone cleanup: purge %s: %v", f.Path, err)
 			continue
 		}
 		purged++
-		// Clean up unreferenced chunks
-		s.cleanupUnreferencedChunks(ctx, f.ChunkIDs)
 	}
 	return purged, nil
+}
+
+func (s *Server) purgeDeletedFile(f types.File) error {
+	if err := s.store.PurgeFile(f.FileID); err != nil {
+		return err
+	}
+	s.cleanupUnreferencedChunks(context.Background(), f.ChunkIDs)
+	_, err := s.appendEvent(types.EventFilePurge, struct {
+		FileID   string   `json:"file_id"`
+		Path     string   `json:"path"`
+		ChunkIDs []string `json:"chunk_ids"`
+	}{
+		FileID:   f.FileID,
+		Path:     f.Path,
+		ChunkIDs: append([]string(nil), f.ChunkIDs...),
+	})
+	return err
 }
 
 // DrainUnderReplicated returns and clears the under-replicated chunk list from the last scan.

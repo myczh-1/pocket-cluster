@@ -310,6 +310,21 @@ func TestJobPurgeRetainedDataPurgesDeletedFilesImmediately(t *testing.T) {
 			if srv.chunks.Exists(hash) {
 				t.Fatal("retained chunk file still exists after purge job")
 			}
+			events, err := srv.store.GetEventsSince("", 20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var eventTypes []string
+			for _, event := range events {
+				eventTypes = append(eventTypes, string(event.Type))
+			}
+			gotTypes := strings.Join(eventTypes, ",")
+			if !strings.Contains(gotTypes, string(types.EventFilePurge)) {
+				t.Fatalf("expected %s event, got %s", types.EventFilePurge, gotTypes)
+			}
+			if !strings.Contains(gotTypes, string(types.EventChunkReplicaRemove)) {
+				t.Fatalf("expected %s event, got %s", types.EventChunkReplicaRemove, gotTypes)
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

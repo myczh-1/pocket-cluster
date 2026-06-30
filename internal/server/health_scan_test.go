@@ -581,6 +581,75 @@ func TestPurgeFile(t *testing.T) {
 	}
 }
 
+func TestApplyFilePurgeRemovesDeletedFileAndReplica(t *testing.T) {
+	s := newTestHealthServer(t)
+
+	hash, _, err := s.chunks.Store(strings.NewReader("retained payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := s.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: 16, StoredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertReplica(&types.Replica{
+		ChunkID:    hash,
+		NodeID:     s.cfg.NodeID,
+		Status:     "available",
+		StoredAt:   now,
+		VerifiedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertFile(&types.File{
+		FileID:     "deleted-file",
+		Name:       "old.txt",
+		Path:       "/old.txt",
+		SizeBytes:  16,
+		VersionID:  "v1",
+		ChunkIDs:   []string{hash},
+		CreatedAt:  now,
+		ModifiedAt: now,
+		ModifiedBy: s.cfg.NodeID,
+		Deleted:    true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"file_id":   "deleted-file",
+		"path":      "/old.txt",
+		"chunk_ids": []string{hash},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyEvent(types.Event{
+		EventID:   "nodeB:1",
+		Type:      types.EventFilePurge,
+		NodeID:    "nodeB",
+		Seq:       1,
+		Timestamp: now,
+		Payload:   payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.store.GetFileByID("deleted-file"); err == nil {
+		t.Fatal("deleted file tombstone still exists after file purge event")
+	}
+	if s.chunks.Exists(hash) {
+		t.Fatal("retained chunk file still exists after file purge event")
+	}
+	replicas, err := s.store.GetReplicas(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replicas) != 1 || replicas[0].Status != "removed" {
+		t.Fatalf("replicas = %+v, want single removed replica", replicas)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) Do(req *http.Request) (*http.Response, error) {

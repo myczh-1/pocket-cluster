@@ -60,6 +60,7 @@ const (
 	EventNodeUpdate         EventType = "NODE_UPDATE"
 	EventFilePut            EventType = "FILE_PUT"
 	EventFileDelete         EventType = "FILE_DELETE"
+	EventFilePurge          EventType = "FILE_PURGE"
 	EventFileRename         EventType = "FILE_RENAME"
 	EventFileMove           EventType = "FILE_MOVE"
 	EventFileConflict       EventType = "FILE_CONFLICT"

@@ -1,11 +1,12 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 	"github.com/google/uuid"
 	"github.com/pocketcluster/agent/internal/types"
+	"time"
 )
 
 func (s *Server) appendEvent(eventType types.EventType, payload any) (*types.Event, error) {
@@ -58,6 +59,23 @@ func (s *Server) applyEvent(e types.Event) error {
 		// Only tombstone the file. Physical chunk cleanup is deferred
 		// to CleanupTombstones to avoid deleting data before peers sync.
 		return s.store.MarkFileDeleted(payload.Path, payload.DeletedBy)
+	case types.EventFilePurge:
+		var payload struct {
+			FileID   string   `json:"file_id"`
+			Path     string   `json:"path"`
+			ChunkIDs []string `json:"chunk_ids"`
+		}
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			return err
+		}
+		f, err := s.store.GetFileByID(payload.FileID)
+		if err == nil && f.Deleted {
+			if err := s.store.PurgeFile(payload.FileID); err != nil {
+				return err
+			}
+		}
+		s.cleanupUnreferencedChunks(context.Background(), payload.ChunkIDs)
+		return nil
 	case types.EventChunkReplicaAdd:
 		var r types.Replica
 		if err := json.Unmarshal(e.Payload, &r); err != nil {
