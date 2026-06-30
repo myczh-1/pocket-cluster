@@ -21,10 +21,15 @@ export default function HealthPage() {
   const [chunks, setChunks] = useState([]);
   const [selectedChunk, setSelectedChunk] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(0);
   const pageSize = 100;
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ background = false } = {}) => {
+    if (background) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const [sumRes, insightsRes, chunkRes] = await Promise.all([
         api("/health/summary"),
@@ -38,12 +43,13 @@ export default function HealthPage() {
       // API failure — keep previous state
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [page]);
   useEffect(() => { load(); }, [load]);
   // Auto-refresh every 10 seconds
   useEffect(() => {
-    const id = setInterval(load, 10_000);
+    const id = setInterval(() => load({ background: true }), 10_000);
     return () => clearInterval(id);
   }, [load]);
   if (loading) return <div className="py-16 text-center text-sm text-slate-400">健康数据加载中...</div>;
@@ -145,6 +151,7 @@ export default function HealthPage() {
         最近扫描：<span className="font-medium text-slate-700">{summary.last_scan_at ? new Date(summary.last_scan_at).toLocaleString() : "从未"}</span>
         {summary.last_repair_at && <> · 最近修复：<span className="font-medium text-slate-700">{new Date(summary.last_repair_at).toLocaleString()}</span></>}
         {repair?.next_retry_seconds > 0 && <> · 下一轮修复：<span className="font-medium text-slate-700">约 {repair.next_retry_seconds} 秒后</span></>}
+        {refreshing && <> · <span className="font-medium text-slate-700">刷新中...</span></>}
       </div>
       {risk?.affected_file_count > 0 && (
         <div className="rounded-lg border border-amber-200 bg-white p-4 shadow-sm">
