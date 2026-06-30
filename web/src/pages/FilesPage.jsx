@@ -169,8 +169,10 @@ export default function FilesPage() {
   const [message, setMessage] = useState(null);
   const [renameFile, setRenameFile] = useState(null);
   const [deleteFile, setDeleteFile] = useState(null);
-  const [actionBusy, setActionBusy] = useState(false);
-  const [actionError, setActionError] = useState(null);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(id);
@@ -248,8 +250,8 @@ export default function FilesPage() {
   };
   const handleDelete = async () => {
     if (!deleteFile) return;
-    setActionBusy(true);
-    setActionError(null);
+    setDeleteBusy(true);
+    setDeleteError(null);
     try {
       const res = await fetch(`${API}/files?path=${encodeURIComponent(deleteFile.path)}`, { method: "DELETE", credentials: "same-origin" });
       if (!res.ok) {
@@ -260,16 +262,16 @@ export default function FilesPage() {
       setDeleteFile(null);
       loadFiles();
     } catch (err) {
-      setActionError(err.message || "删除失败");
+      setDeleteError(err.message || "删除失败");
     } finally {
-      setActionBusy(false);
+      setDeleteBusy(false);
     }
   };
   const handleRename = async (newPath) => {
     if (!renameFile) return;
     if (!newPath || newPath === renameFile.path) return;
-    setActionBusy(true);
-    setActionError(null);
+    setRenameBusy(true);
+    setRenameError(null);
     try {
       const res = await fetch(`${API}/files/rename`, {
         method: "PATCH",
@@ -285,9 +287,9 @@ export default function FilesPage() {
       setRenameFile(null);
       loadFiles();
     } catch (err) {
-      setActionError(err.message || "重命名失败");
+      setRenameError(err.message || "重命名失败");
     } finally {
-      setActionBusy(false);
+      setRenameBusy(false);
     }
   };
   const totalSize = files.reduce((sum, f) => sum + (f.is_dir ? 0 : (f.size_bytes || 0)), 0);
@@ -363,8 +365,8 @@ export default function FilesPage() {
               key={f.file_id || f.path}
               file={f}
               onDownload={handleDownload}
-              onDelete={(file) => { setActionError(null); setDeleteFile(file); }}
-              onRename={(file) => { setActionError(null); setRenameFile(file); }}
+              onDelete={(file) => { setDeleteError(null); setDeleteFile(file); }}
+              onRename={(file) => { setRenameError(null); setRenameFile(file); }}
               onPreview={setPreviewFile}
             />
           ))
@@ -379,26 +381,24 @@ export default function FilesPage() {
       {renameFile && (
         <RenameDialog
           file={renameFile}
-          busy={actionBusy}
-          error={actionError}
-          onCancel={() => { setRenameFile(null); setActionError(null); }}
+          busy={renameBusy}
+          error={renameError}
+          onCancel={() => { setRenameFile(null); setRenameError(null); }}
           onSubmit={handleRename}
         />
       )}
       {deleteFile && (
         <ConfirmDialog
-          title="删除文件？"
-          message={`这会从存储池中移除“${deleteFile.name}”，且无法撤销。`}
+          title={deleteFile.is_dir ? "删除目录？" : "删除文件？"}
+          message={deleteFile.is_dir
+            ? `这会把“${deleteFile.name}”及其子内容标记为已删除。相关 Chunk 会按保留期延后回收。`
+            : `这会把“${deleteFile.name}”标记为已删除。相关 Chunk 会按保留期延后回收。`}
           confirmLabel="确认删除"
-          busy={actionBusy}
-          onCancel={() => { setDeleteFile(null); setActionError(null); }}
+          busy={deleteBusy}
+          error={deleteError}
+          onCancel={() => { setDeleteFile(null); setDeleteError(null); }}
           onConfirm={handleDelete}
         />
-      )}
-      {deleteFile && actionError && (
-        <div className="fixed bottom-24 left-4 right-4 z-50 mx-auto max-w-md lg:bottom-6">
-          <InlineMessage tone="error">{actionError}</InlineMessage>
-        </div>
       )}
     </div>
   );

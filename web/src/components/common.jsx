@@ -108,7 +108,7 @@ export function ProgressBar({ value, tone = "blue" }) {
   );
 }
 
-export function ConfirmDialog({ title, message, confirmLabel = "确认", tone = "danger", busy, onConfirm, onCancel }) {
+export function ConfirmDialog({ title, message, confirmLabel = "确认", tone = "danger", busy, error, onConfirm, onCancel }) {
   const confirmClass = tone === "danger"
     ? "bg-red-600 text-white hover:bg-red-700"
     : "bg-blue-600 text-white hover:bg-blue-700";
@@ -117,6 +117,7 @@ export function ConfirmDialog({ title, message, confirmLabel = "确认", tone = 
       <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
         <h3 className="text-base font-semibold text-slate-950">{title}</h3>
         <p className="mt-2 text-sm leading-6 text-slate-600">{message}</p>
+        {error && <div className="mt-3"><InlineMessage tone="error">{error}</InlineMessage></div>}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100">
             取消

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { cx, formatBytes, formatLastSeen } from "../utils";
-import { EmptyState, PageHeader, StatusBadge, statusLabel } from "../components/common";
+import { EmptyState, PageHeader, Section, StatusBadge, statusLabel } from "../components/common";
 
 function ProgressLine({ value }) {
   const clamped = Math.min(100, Math.max(0, value || 0));
@@ -20,15 +20,17 @@ export default function HealthPage() {
   const [insights, setInsights] = useState(null);
   const [chunks, setChunks] = useState([]);
   const [selectedChunk, setSelectedChunk] = useState(null);
+  const [showChunkExplorer, setShowChunkExplorer] = useState(false);
+  const [showMaintenance, setShowMaintenance] = useState(false);
   const [showRetainedChunks, setShowRetainedChunks] = useState(false);
   const [retentionHours, setRetentionHours] = useState("168");
+  const [retentionDirty, setRetentionDirty] = useState(false);
   const [savingRetention, setSavingRetention] = useState(false);
   const [retentionSaved, setRetentionSaved] = useState(false);
   const [purgingRetained, setPurgingRetained] = useState(false);
   const [purgeDone, setPurgeDone] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [page, setPage] = useState(0);
   const pageSize = 100;
   const load = useCallback(async ({ background = false } = {}) => {
     if (background) {
@@ -40,7 +42,7 @@ export default function HealthPage() {
       const [sumRes, insightsRes, chunkRes] = await Promise.all([
         api("/health/summary"),
         api("/health/insights"),
-        api(`/health/chunks?limit=${pageSize}&offset=${page * pageSize}`),
+        api(`/health/chunks?limit=${pageSize}&offset=0`),
       ]);
       if (sumRes.ok) setSummary(sumRes.data);
       if (insightsRes.ok) setInsights(insightsRes.data);
@@ -51,7 +53,7 @@ export default function HealthPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [page]);
+  }, []);
   useEffect(() => { load(); }, [load]);
   // Auto-refresh every 10 seconds
   useEffect(() => {
@@ -68,10 +70,10 @@ export default function HealthPage() {
   const retainedChunks = chunks.filter((c) => (c.referencing_files || []).length === 0);
   const dedupPercent = storage?.dedup_ratio ? Math.round(storage.dedup_ratio * 100) : 0;
   useEffect(() => {
-    if (storage?.tombstone_retention_hours) {
+    if (!retentionDirty && storage?.tombstone_retention_hours) {
       setRetentionHours(String(storage.tombstone_retention_hours));
     }
-  }, [storage?.tombstone_retention_hours]);
+  }, [retentionDirty, storage?.tombstone_retention_hours]);
   useEffect(() => {
     if (!selectedChunk) return;
     const updated = chunks.find((chunk) => chunk.chunk_id === selectedChunk.chunk_id);
@@ -100,6 +102,7 @@ export default function HealthPage() {
       });
       if (res.ok) {
         await load({ background: true });
+        setRetentionDirty(false);
         setRetentionSaved(true);
         setTimeout(() => setRetentionSaved(false), 1400);
       }
@@ -127,111 +130,27 @@ export default function HealthPage() {
       <PageHeader
         eyebrow="副本"
         title="健康"
-        description="查看当前数据是否安全、节省了多少空间，以及修复流程下一步在做什么。"
+        description="先看当前数据是否安全，再定位受影响的文件和节点；维护动作收进高级区，避免和诊断信息混在一起。"
       />
-      {insights && (
-        <div className="grid gap-3 lg:grid-cols-3">
-          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-xs font-semibold uppercase text-slate-500">空间效率</div>
-            <div className="mt-1 text-2xl font-bold text-slate-950">{formatBytes(storage?.dedup_saved_bytes || 0)}</div>
-            <p className="mt-1 text-xs leading-5 text-slate-500">
-              仅统计活文件。覆盖 {storage?.file_count || 0} 个文件，逻辑大小 {formatBytes(storage?.logical_bytes || 0)}，唯一 Chunk 存储 {formatBytes(storage?.unique_chunk_bytes || 0)}，物理副本占用 {formatBytes(storage?.physical_replica_bytes || 0)}。
-            </p>
-            <div className="mt-3">
-              <ProgressLine value={dedupPercent} />
-            </div>
-          </div>
-          <div className={`rounded-lg border p-4 shadow-sm ${risk?.affected_file_count > 0 ? "border-amber-200 bg-amber-50" : "border-green-200 bg-green-50"}`}>
-            <div className="text-xs font-semibold uppercase text-slate-500">风险文件</div>
-            <div className={`mt-1 text-2xl font-bold ${risk?.affected_file_count > 0 ? "text-amber-700" : "text-green-700"}`}>
-              {risk?.affected_file_count || 0}
-            </div>
-            <p className="mt-1 text-xs leading-5 text-slate-600">
-              {risk?.affected_file_count > 0 ? "有些文件引用了需要关注的 Chunk。" : "当前没有文件引用异常 Chunk。"}
-            </p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-xs font-semibold uppercase text-slate-500">修复循环</div>
-            <div className="mt-1 text-lg font-bold capitalize text-slate-950">{statusLabel(repair?.status || "idle")}</div>
-            <p className="mt-1 text-xs leading-5 text-slate-500">{repair?.message || "当前副本覆盖状态稳定。"}</p>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500">
-              <span>等待中：<strong className="text-slate-800">{repair?.queued_chunks || 0}</strong></span>
-              <span>修复中：<strong className="text-slate-800">{repair?.repairing_chunks || 0}</strong></span>
-            </div>
-          </div>
-        </div>
-      )}
-      {insights && (
-        <div className="grid gap-3 lg:grid-cols-2">
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
-            <div className="text-xs font-semibold uppercase text-amber-700">待回收占用</div>
-            <div className="mt-1 text-2xl font-bold text-amber-800">{formatBytes(storage?.retained_physical_replica_bytes || 0)}</div>
-            <p className="mt-1 text-xs leading-5 text-amber-700">
-              这些 Chunk 当前没有被活文件引用，通常来自已删除文件的保留期。现有 {storage?.retained_unique_chunk_count || 0} 个待回收唯一 Chunk，{storage?.retained_physical_replica_count || 0} 个物理副本。
-            </p>
-            <div className="mt-3">
-              <button
-                onClick={purgeRetainedNow}
-                disabled={purgingRetained}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
-                  purgeDone
-                    ? "bg-green-600 text-white"
-                    : "bg-amber-600 text-white hover:bg-amber-700"
-                } disabled:opacity-50`}
-              >
-                {purgingRetained ? "清理中..." : purgeDone ? "已提交 ✓" : "立即清理待回收 Chunk"}
-              </button>
-            </div>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-xs font-semibold uppercase text-slate-500">删除保留期</div>
-            <div className="mt-1 flex items-end gap-2">
-              <input
-                type="number"
-                min="1"
-                max="2160"
-                value={retentionHours}
-                onChange={(e) => setRetentionHours(e.target.value)}
-                className="w-24 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
-              />
-              <span className="pb-2 text-sm text-slate-500">小时</span>
-              <button
-                onClick={saveRetention}
-                disabled={savingRetention}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
-                  retentionSaved
-                    ? "bg-green-600 text-white"
-                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                } disabled:opacity-50`}
-              >
-                {savingRetention ? "保存中..." : retentionSaved ? "已保存 ✓" : "保存"}
-              </button>
-            </div>
-            <p className="mt-2 text-xs leading-5 text-slate-500">
-              删除文件后不会立即删 Chunk。超过这个保留期，后台清理轮询会回收未被引用的 Chunk。
-            </p>
-          </div>
-        </div>
-      )}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <div className={`rounded-lg border p-4 shadow-sm ${statusColor[coverage?.overall_status || summary.overall_status] || "border-slate-200 bg-white text-slate-700"}`}>
           <div className="text-xs font-semibold uppercase opacity-70">总体状态</div>
           <div className="mt-1 text-lg font-bold capitalize">{statusLabel(coverage?.overall_status || summary.overall_status)}</div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">文件</div>
-          <div className="mt-1 text-lg font-bold text-slate-950">{summary.total_files}</div>
+          <div className="text-xs font-semibold uppercase text-slate-500">风险文件</div>
+          <div className={`mt-1 text-lg font-bold ${(risk?.affected_file_count || 0) > 0 ? "text-amber-700" : "text-green-700"}`}>{risk?.affected_file_count || 0}</div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">唯一 Chunk 数</div>
-          <div className="mt-1 text-lg font-bold text-slate-950">{storage?.unique_chunk_count ?? coverage?.total_chunks ?? summary.total_chunks}</div>
+          <div className="text-xs font-semibold uppercase text-slate-500">修复循环</div>
+          <div className="mt-1 text-lg font-bold text-slate-950">{statusLabel(repair?.status || "idle")}</div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">物理副本数</div>
-          <div className="mt-1 text-lg font-bold text-slate-950">{storage?.physical_replica_count ?? 0}</div>
+          <div className="text-xs font-semibold uppercase text-slate-500">空间节省</div>
+          <div className="mt-1 text-lg font-bold text-slate-950">{formatBytes(storage?.dedup_saved_bytes || 0)}</div>
         </div>
       </div>
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">健康</div>
           <div className="mt-1 text-lg font-bold text-green-700">{coverage?.healthy_chunks ?? summary.healthy_chunks}</div>
@@ -261,6 +180,40 @@ export default function HealthPage() {
         {repair?.next_retry_seconds > 0 && <> · 下一轮修复：<span className="font-medium text-slate-700">约 {repair.next_retry_seconds} 秒后</span></>}
         {refreshing && <> · <span className="font-medium text-slate-700">刷新中...</span></>}
       </div>
+      {insights && (
+        <Section title="概览" description="先看当前覆盖情况、修复压力和空间利用率。">
+          <div className="grid gap-3 lg:grid-cols-3">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase text-slate-500">空间效率</div>
+              <div className="mt-1 text-2xl font-bold text-slate-950">{formatBytes(storage?.dedup_saved_bytes || 0)}</div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                活文件 {storage?.file_count || 0} 个，逻辑大小 {formatBytes(storage?.logical_bytes || 0)}，唯一 Chunk {formatBytes(storage?.unique_chunk_bytes || 0)}。
+              </p>
+              <div className="mt-3">
+                <ProgressLine value={dedupPercent} />
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase text-slate-500">修复循环</div>
+              <div className="mt-1 text-lg font-bold text-slate-950">{statusLabel(repair?.status || "idle")}</div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">{repair?.message || "当前副本覆盖状态稳定。"}</p>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500">
+                <span>等待中：<strong className="text-slate-800">{repair?.queued_chunks || 0}</strong></span>
+                <span>修复中：<strong className="text-slate-800">{repair?.repairing_chunks || 0}</strong></span>
+              </div>
+            </div>
+            <div className={`rounded-lg border p-4 ${risk?.affected_file_count > 0 ? "border-amber-200 bg-amber-50" : "border-green-200 bg-green-50"}`}>
+              <div className="text-xs font-semibold uppercase text-slate-500">风险摘要</div>
+              <div className={`mt-1 text-2xl font-bold ${risk?.affected_file_count > 0 ? "text-amber-700" : "text-green-700"}`}>
+                {risk?.affected_file_count || 0}
+              </div>
+              <p className="mt-1 text-xs leading-5 text-slate-600">
+                {risk?.affected_file_count > 0 ? "先处理这些受影响文件，再进入 Chunk 明细排障。" : "当前没有文件引用异常 Chunk。"}
+              </p>
+            </div>
+          </div>
+        </Section>
+      )}
       {risk?.affected_file_count > 0 && (
         <div className="rounded-lg border border-amber-200 bg-white p-4 shadow-sm">
           <div className="mb-2 text-sm font-semibold text-slate-950">受影响文件</div>
@@ -274,6 +227,7 @@ export default function HealthPage() {
           </div>
         </div>
       )}
+      <Section title="风险定位" description="这里优先按文件和节点定位问题，不把 Chunk 细节放到主视线里。">
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
@@ -335,6 +289,87 @@ export default function HealthPage() {
           </div>
         </div>
       </div>
+      </Section>
+      <Section
+        title="高级维护"
+        description="删除保留期和待回收清理属于维护动作，默认收起，避免和健康诊断混在一起。"
+        action={(
+          <button
+            onClick={() => setShowMaintenance((v) => !v)}
+            className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+          >
+            {showMaintenance ? "收起" : "展开"}
+          </button>
+        )}
+      >
+        {showMaintenance ? (
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <div className="text-xs font-semibold uppercase text-amber-700">待回收占用</div>
+              <div className="mt-1 text-2xl font-bold text-amber-800">{formatBytes(storage?.retained_physical_replica_bytes || 0)}</div>
+              <p className="mt-1 text-xs leading-5 text-amber-700">
+                当前有 {storage?.retained_unique_chunk_count || 0} 个待回收唯一 Chunk，{storage?.retained_physical_replica_count || 0} 个物理副本。
+              </p>
+              <div className="mt-3">
+                <button
+                  onClick={purgeRetainedNow}
+                  disabled={purgingRetained}
+                  className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                    purgeDone ? "bg-green-600 text-white" : "bg-amber-600 text-white hover:bg-amber-700"
+                  } disabled:opacity-50`}
+                >
+                  {purgingRetained ? "清理中..." : purgeDone ? "已提交 ✓" : "立即清理待回收 Chunk"}
+                </button>
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
+              <div className="text-xs font-semibold uppercase text-slate-500">删除保留期</div>
+              <div className="mt-1 flex items-end gap-2">
+                <input
+                  type="number"
+                  min="1"
+                  max="2160"
+                  value={retentionHours}
+                  onChange={(e) => {
+                    setRetentionHours(e.target.value);
+                    setRetentionDirty(true);
+                  }}
+                  className="w-24 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
+                />
+                <span className="pb-2 text-sm text-slate-500">小时</span>
+                <button
+                  onClick={saveRetention}
+                  disabled={savingRetention}
+                  className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                    retentionSaved ? "bg-green-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  } disabled:opacity-50`}
+                >
+                  {savingRetention ? "保存中..." : retentionSaved ? "已保存 ✓" : "保存"}
+                </button>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                删除文件后不会立即删 Chunk。超过这个保留期，后台清理轮询会回收未被引用的 Chunk。
+              </p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">默认隐藏维护动作，避免和日常健康判断混在一起。</p>
+        )}
+      </Section>
+      <Section
+        title="Chunk 明细"
+        description="只在需要深挖时展开，避免把低层诊断细节和高层健康摘要混在一起。"
+        action={(
+          <button
+            onClick={() => setShowChunkExplorer((v) => !v)}
+            className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+          >
+            {showChunkExplorer ? "收起" : "展开"}
+          </button>
+        )}
+      >
+        {showChunkExplorer ? (
+          <>
       {selectedChunk && (
         <div className="rounded-lg border border-blue-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
@@ -417,6 +452,11 @@ export default function HealthPage() {
           )}
         </div>
       </div>
+          </>
+        ) : (
+          <p className="text-sm text-slate-500">先从文件和节点定位问题，再按需进入 Chunk 级别排障。</p>
+        )}
+      </Section>
     </div>
   );
 }
