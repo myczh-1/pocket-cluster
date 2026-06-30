@@ -112,6 +112,7 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 	}
 	fileRisks := make([]fileRiskItem, 0)
 	nodeReplicaCounts := make(map[string]int)
+	nodeRetainedReplicaCounts := make(map[string]int)
 	nodeRiskCounts := make(map[string]int)
 	nodeRepairingCounts := make(map[string]int)
 	activeHealthyChunks := 0
@@ -135,10 +136,13 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 		if replica.Status != "available" {
 			continue
 		}
-		if _, ok := liveChunkIDs[replica.ChunkID]; !ok {
+		if _, ok := liveChunkIDs[replica.ChunkID]; ok {
+			nodeReplicaCounts[replica.NodeID]++
 			continue
 		}
-		nodeReplicaCounts[replica.NodeID]++
+		if _, ok := retainedChunkIDs[replica.ChunkID]; ok {
+			nodeRetainedReplicaCounts[replica.NodeID]++
+		}
 	}
 	for _, detail := range chunkHealth {
 		_, isLiveChunk := liveChunkIDs[detail.ChunkID]
@@ -231,16 +235,17 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 	})
 
 	type nodeRiskItem struct {
-		NodeID          string    `json:"node_id"`
-		Name            string    `json:"name"`
-		Platform        string    `json:"platform"`
-		Status          string    `json:"status"`
-		LastSeen        time.Time `json:"last_seen"`
-		UsedBytes       int64     `json:"used_bytes"`
-		TotalBytes      int64     `json:"total_bytes"`
-		ReplicaCount    int       `json:"replica_count"`
-		RiskChunkCount  int       `json:"risk_chunk_count"`
-		RepairingChunks int       `json:"repairing_chunks"`
+		NodeID               string    `json:"node_id"`
+		Name                 string    `json:"name"`
+		Platform             string    `json:"platform"`
+		Status               string    `json:"status"`
+		LastSeen             time.Time `json:"last_seen"`
+		UsedBytes            int64     `json:"used_bytes"`
+		TotalBytes           int64     `json:"total_bytes"`
+		ReplicaCount         int       `json:"replica_count"`
+		RetainedReplicaCount int       `json:"retained_replica_count"`
+		RiskChunkCount       int       `json:"risk_chunk_count"`
+		RepairingChunks      int       `json:"repairing_chunks"`
 	}
 	nodeRisks := make([]nodeRiskItem, 0, len(nodes))
 	for _, n := range nodes {
@@ -248,16 +253,17 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		nodeRisks = append(nodeRisks, nodeRiskItem{
-			NodeID:          n.NodeID,
-			Name:            n.Name,
-			Platform:        n.Platform,
-			Status:          n.Status,
-			LastSeen:        n.LastSeen,
-			UsedBytes:       n.UsedBytes,
-			TotalBytes:      n.TotalBytes,
-			ReplicaCount:    nodeReplicaCounts[n.NodeID],
-			RiskChunkCount:  nodeRiskCounts[n.NodeID],
-			RepairingChunks: nodeRepairingCounts[n.NodeID],
+			NodeID:               n.NodeID,
+			Name:                 n.Name,
+			Platform:             n.Platform,
+			Status:               n.Status,
+			LastSeen:             n.LastSeen,
+			UsedBytes:            n.UsedBytes,
+			TotalBytes:           n.TotalBytes,
+			ReplicaCount:         nodeReplicaCounts[n.NodeID],
+			RetainedReplicaCount: nodeRetainedReplicaCounts[n.NodeID],
+			RiskChunkCount:       nodeRiskCounts[n.NodeID],
+			RepairingChunks:      nodeRepairingCounts[n.NodeID],
 		})
 	}
 	sort.Slice(nodeRisks, func(i, j int) bool {
@@ -298,6 +304,16 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 		repairMessage = "Some chunks have no online replica; repair is blocked until a replica node returns."
 	}
 
+	coverageOverallStatus := types.ReplicaHealthy
+	switch {
+	case activeUnavailableChunks > 0:
+		coverageOverallStatus = types.ReplicaUnavailable
+	case activeUnderReplicatedChunks > 0:
+		coverageOverallStatus = types.ReplicaUnderReplicated
+	case activeRepairingChunks > 0:
+		coverageOverallStatus = types.ReplicaRepairing
+	}
+
 	writeOK(w, http.StatusOK, map[string]any{
 		"storage": map[string]any{
 			"file_count":                      fileCount,
@@ -315,6 +331,7 @@ func (s *Server) handleHealthInsights(w http.ResponseWriter, r *http.Request) {
 			"tombstone_retention_hours":       int(s.cfg.TombstoneRetentionDuration().Hours()),
 		},
 		"coverage": map[string]any{
+			"overall_status":          coverageOverallStatus,
 			"total_chunks":            activeUniqueChunkCount,
 			"healthy_chunks":          activeHealthyChunks,
 			"under_replicated_chunks": activeUnderReplicatedChunks,

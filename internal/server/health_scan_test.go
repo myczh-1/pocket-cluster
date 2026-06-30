@@ -386,8 +386,9 @@ func TestHealthInsightsSeparatesRetainedChunksFromActiveStorage(t *testing.T) {
 			RetainedPhysicalReplicaBytes int64 `json:"retained_physical_replica_bytes"`
 		} `json:"storage"`
 		Coverage struct {
-			TotalChunks   int `json:"total_chunks"`
-			HealthyChunks int `json:"healthy_chunks"`
+			OverallStatus string `json:"overall_status"`
+			TotalChunks   int    `json:"total_chunks"`
+			HealthyChunks int    `json:"healthy_chunks"`
 		} `json:"coverage"`
 	}
 	if err := json.Unmarshal(envelope.Data, &payload); err != nil {
@@ -408,6 +409,9 @@ func TestHealthInsightsSeparatesRetainedChunksFromActiveStorage(t *testing.T) {
 	}
 	if payload.Coverage.TotalChunks != 1 || payload.Coverage.HealthyChunks != 1 {
 		t.Fatalf("unexpected active coverage: %+v", payload.Coverage)
+	}
+	if payload.Coverage.OverallStatus != string(types.ReplicaHealthy) {
+		t.Fatalf("coverage overall status = %q, want %q", payload.Coverage.OverallStatus, types.ReplicaHealthy)
 	}
 }
 

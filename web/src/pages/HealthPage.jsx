@@ -214,9 +214,9 @@ export default function HealthPage() {
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className={`rounded-lg border p-4 shadow-sm ${statusColor[summary.overall_status] || "border-slate-200 bg-white text-slate-700"}`}>
+        <div className={`rounded-lg border p-4 shadow-sm ${statusColor[coverage?.overall_status || summary.overall_status] || "border-slate-200 bg-white text-slate-700"}`}>
           <div className="text-xs font-semibold uppercase opacity-70">总体状态</div>
-          <div className="mt-1 text-lg font-bold capitalize">{statusLabel(summary.overall_status)}</div>
+          <div className="mt-1 text-lg font-bold capitalize">{statusLabel(coverage?.overall_status || summary.overall_status)}</div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">文件</div>
@@ -316,7 +316,10 @@ export default function HealthPage() {
                       {node.platform} · 最近在线 {formatLastSeen(node.last_seen)}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
-                      {node.replica_count} 个副本 · {node.risk_chunk_count} 个风险 · {node.repairing_chunks} 个修复中
+                      活文件副本 {node.replica_count} · 待回收副本 {node.retained_replica_count || 0}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {node.risk_chunk_count} 个风险 · {node.repairing_chunks} 个修复中
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
                       {formatBytes(node.used_bytes || 0)} used / {formatBytes(node.total_bytes || 0)} total
