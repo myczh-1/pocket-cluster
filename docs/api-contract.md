@@ -84,7 +84,7 @@ Returns this node's own info.
     "used_bytes": 120000000000,
     "available_bytes": 380000000000,
     "status": "online",
-    "version": "0.1.0"
+    "version": "0.7.0"
   }
 }
 ```
