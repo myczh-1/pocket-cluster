@@ -92,7 +92,14 @@ func (s *Storage) Path(hash string) string {
 }
 
 func (s *Storage) Remove(hash string) error {
-	return os.Remove(s.Path(hash))
+	chunkPath := s.Path(hash)
+	if err := os.Remove(chunkPath); err != nil {
+		return err
+	}
+	// Best-effort cleanup for the two-character shard directory.
+	// Leave the root chunks directory intact.
+	_ = os.Remove(filepath.Dir(chunkPath))
+	return nil
 }
 
 func (s *Storage) Verify(hash string) error {
