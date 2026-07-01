@@ -66,6 +66,7 @@ const (
 	EventFileConflict       EventType = "FILE_CONFLICT"
 	EventDirCreate          EventType = "DIR_CREATE"
 	EventDirDelete          EventType = "DIR_DELETE"
+	EventDirPurge           EventType = "DIR_PURGE"
 	EventChunkReplicaAdd    EventType = "CHUNK_REPLICA_ADD"
 	EventChunkReplicaRemove EventType = "CHUNK_REPLICA_REMOVE"
 	EventSnapshotCreated    EventType = "SNAPSHOT_CREATED"

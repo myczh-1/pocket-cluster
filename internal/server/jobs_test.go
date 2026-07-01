@@ -335,3 +335,100 @@ func TestJobPurgeRetainedDataPurgesDeletedFilesImmediately(t *testing.T) {
 	got, _ := srv.jobs.get(job.ID)
 	t.Fatalf("purge job did not finish: %+v", got)
 }
+
+func TestJobPurgeRetainedDataPurgesDeletedDirectoriesImmediately(t *testing.T) {
+	srv := newJobsTestServer(t)
+	session := loginTestSession(t, srv)
+
+	hash, _, err := srv.chunks.Store(bytes.NewReader([]byte("nested payload")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := srv.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: 14, StoredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.UpsertReplica(&types.Replica{ChunkID: hash, NodeID: srv.cfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []types.File{
+		{
+			FileID:     "dir",
+			Name:       "photos",
+			Path:       "/photos",
+			IsDir:      true,
+			CreatedAt:  now,
+			ModifiedAt: now,
+			ModifiedBy: srv.cfg.NodeID,
+			Deleted:    true,
+		},
+		{
+			FileID:     "child",
+			Name:       "cat.jpg",
+			Path:       "/photos/cat.jpg",
+			SizeBytes:  14,
+			VersionID:  "v1",
+			ChunkIDs:   []string{hash},
+			CreatedAt:  now,
+			ModifiedAt: now,
+			ModifiedBy: srv.cfg.NodeID,
+			Deleted:    true,
+		},
+	} {
+		entry := entry
+		if err := srv.store.UpsertFile(&entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/jobs/purge-retained-data", nil), session)
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusAccepted, res.Body.String())
+	}
+
+	var envelope types.APIResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var job types.Job
+	if err := json.Unmarshal(envelope.Data, &job); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got, ok := srv.jobs.get(job.ID)
+		if ok && got.Status == types.JobDone {
+			if _, err := srv.store.GetFileByID("dir"); err == nil {
+				t.Fatal("deleted directory tombstone still exists after purge job")
+			}
+			if _, err := srv.store.GetFileByID("child"); err == nil {
+				t.Fatal("deleted child file tombstone still exists after purge job")
+			}
+			if srv.chunks.Exists(hash) {
+				t.Fatal("retained chunk file still exists after directory purge job")
+			}
+			events, err := srv.store.GetEventsSince("", 20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var eventTypes []string
+			for _, event := range events {
+				eventTypes = append(eventTypes, string(event.Type))
+			}
+			gotTypes := strings.Join(eventTypes, ",")
+			if !strings.Contains(gotTypes, string(types.EventDirPurge)) {
+				t.Fatalf("expected %s event, got %s", types.EventDirPurge, gotTypes)
+			}
+			if !strings.Contains(gotTypes, string(types.EventFilePurge)) {
+				t.Fatalf("expected %s event, got %s", types.EventFilePurge, gotTypes)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	got, _ := srv.jobs.get(job.ID)
+	t.Fatalf("directory purge job did not finish: %+v", got)
+}

@@ -148,7 +148,22 @@ func (s *Server) applyEvent(e types.Event) error {
 		if err := json.Unmarshal(e.Payload, &payload); err != nil {
 			return err
 		}
-		return s.store.MarkFileDeleted(payload.Path, payload.DeletedBy)
+		return s.store.MarkChildrenDeleted(payload.Path, payload.DeletedBy)
+	case types.EventDirPurge:
+		var payload struct {
+			FileID string `json:"file_id"`
+			Path   string `json:"path"`
+		}
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			return err
+		}
+		f, err := s.store.GetFileByID(payload.FileID)
+		if err == nil && f.Deleted {
+			if err := s.store.PurgeFile(payload.FileID); err != nil {
+				return err
+			}
+		}
+		return nil
 	case types.EventSnapshotCreated:
 		return nil
 	default:

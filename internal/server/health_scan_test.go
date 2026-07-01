@@ -653,6 +653,89 @@ func TestApplyFilePurgeRemovesDeletedFileAndReplica(t *testing.T) {
 	}
 }
 
+func TestApplyDirDeleteMarksChildrenDeleted(t *testing.T) {
+	s := newTestHealthServer(t)
+	now := time.Now()
+
+	for _, entry := range []types.File{
+		{FileID: "dir", Name: "photos", Path: "/photos", IsDir: true, CreatedAt: now, ModifiedAt: now, ModifiedBy: s.cfg.NodeID},
+		{FileID: "subdir", Name: "sub", Path: "/photos/sub", IsDir: true, CreatedAt: now, ModifiedAt: now, ModifiedBy: s.cfg.NodeID},
+		{FileID: "file", Name: "cat.jpg", Path: "/photos/sub/cat.jpg", CreatedAt: now, ModifiedAt: now, ModifiedBy: s.cfg.NodeID},
+	} {
+		entry := entry
+		if err := s.store.UpsertFile(&entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"path":       "/photos",
+		"deleted_by": "nodeB",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyEvent(types.Event{
+		EventID:   "nodeB:1",
+		Type:      types.EventDirDelete,
+		NodeID:    "nodeB",
+		Seq:       1,
+		Timestamp: now,
+		Payload:   payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, fileID := range []string{"dir", "subdir", "file"} {
+		f, err := s.store.GetFileByID(fileID)
+		if err != nil {
+			t.Fatalf("GetFileByID(%s): %v", fileID, err)
+		}
+		if !f.Deleted {
+			t.Fatalf("expected %s to be marked deleted", fileID)
+		}
+	}
+}
+
+func TestApplyDirPurgeRemovesDeletedDirectory(t *testing.T) {
+	s := newTestHealthServer(t)
+	now := time.Now()
+	if err := s.store.UpsertFile(&types.File{
+		FileID:     "dir",
+		Name:       "photos",
+		Path:       "/photos",
+		IsDir:      true,
+		CreatedAt:  now,
+		ModifiedAt: now,
+		ModifiedBy: s.cfg.NodeID,
+		Deleted:    true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"file_id": "dir",
+		"path":    "/photos",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyEvent(types.Event{
+		EventID:   "nodeB:2",
+		Type:      types.EventDirPurge,
+		NodeID:    "nodeB",
+		Seq:       2,
+		Timestamp: now,
+		Payload:   payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.store.GetFileByID("dir"); err == nil {
+		t.Fatal("deleted directory tombstone still exists after dir purge event")
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) Do(req *http.Request) (*http.Response, error) {

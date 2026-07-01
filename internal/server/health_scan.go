@@ -277,6 +277,16 @@ func (s *Server) purgeDeletedFile(f types.File) error {
 	if err := s.store.PurgeFile(f.FileID); err != nil {
 		return err
 	}
+	if f.IsDir {
+		_, err := s.appendEvent(types.EventDirPurge, struct {
+			FileID string `json:"file_id"`
+			Path   string `json:"path"`
+		}{
+			FileID: f.FileID,
+			Path:   f.Path,
+		})
+		return err
+	}
 	s.cleanupUnreferencedChunks(context.Background(), f.ChunkIDs)
 	_, err := s.appendEvent(types.EventFilePurge, struct {
 		FileID   string   `json:"file_id"`
