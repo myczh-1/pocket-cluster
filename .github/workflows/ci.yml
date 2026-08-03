@@ -34,6 +34,11 @@ jobs:
       - name: Build binary
         run: go build ./cmd/agent
 
+      - name: Run loopback multi-node E2E scenarios
+        run: |
+          scripts/e2e/two-node-basic.sh
+          scripts/e2e/three-node-offline-delete.sh
+
   android:
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib.sh"
+
+e2e_init "three-node-offline-delete" 3 "${E2E_BASE_PORT:-17810}"
+trap e2e_cleanup EXIT
+e2e_start_cluster 3
+
+PAYLOAD_FILE="${E2E_DIR}/offline-delete.txt"
+PAYLOAD="offline deletion must converge after node recovery"
+printf '%s\n' "${PAYLOAD}" >"${PAYLOAD_FILE}"
+
+echo "Creating a directory and replicating its file to node 2..."
+curl -fsS -u "${E2E_POOL_USER}:${E2E_POOL_PASS}" -X MKCOL \
+  "http://127.0.0.1:${E2E_PORTS[0]}/dav/offline-delete" >/dev/null
+e2e_upload 0 "/offline-delete/payload.txt" "${PAYLOAD_FILE}"
+e2e_wait_for_download 1 "/offline-delete/payload.txt" "${PAYLOAD}" || {
+  echo "Node 2 never received the file before going offline" >&2
+  exit 1
+}
+
+CHUNKS_BEFORE="$(e2e_chunk_count 1)"
+e2e_stop_node 1
+
+echo "Deleting and purging while node 2 is offline..."
+curl -fsS -b "${E2E_COOKIES[0]}" -X DELETE \
+  "http://127.0.0.1:${E2E_PORTS[0]}/api/files?path=/offline-delete" >/dev/null
+PURGE_JOB_ID="$(e2e_start_purge 0)"
+e2e_wait_for_job 0 "${PURGE_JOB_ID}" || {
+  echo "Immediate purge did not finish on node 1" >&2
+  exit 1
+}
+e2e_wait_for_not_found 2 "/offline-delete/payload.txt" || {
+  echo "Online node 3 did not receive the deletion" >&2
+  exit 1
+}
+
+echo "Restarting node 2 and waiting for deletion convergence..."
+e2e_start_node 1
+curl -fsS -c "${E2E_COOKIES[1]}" -H "Content-Type: application/json" \
+  -d "{\"username\":\"${E2E_POOL_USER}\",\"password\":\"${E2E_POOL_PASS}\"}" \
+  "http://127.0.0.1:${E2E_PORTS[1]}/api/auth/login" >/dev/null
+e2e_wait_for_not_found 1 "/offline-delete/payload.txt" || {
+  echo "Recovered node 2 still exposes the deleted file" >&2
+  exit 1
+}
+
+for _ in $(seq 1 45); do
+  if [[ "$(e2e_chunk_count 1)" -lt "${CHUNKS_BEFORE}" ]]; then
+    echo "SUCCESS"
+    echo "Artifacts retained: ${E2E_DIR}"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "Recovered node 2 kept its unreferenced chunk after receiving purge events" >&2
+exit 1
