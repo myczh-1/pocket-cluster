@@ -236,7 +236,12 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeOK(w, http.StatusOK, map[string]string{"path": path, "status": "deleted"})
+	writeOK(w, http.StatusOK, map[string]any{
+		"path":                      path,
+		"status":                    "deleted",
+		"reclaim_status":            "retained",
+		"tombstone_retention_hours": int(s.cfg.TombstoneRetentionDuration().Hours()),
+	})
 	go s.runHealthScan(context.Background())
 }
 

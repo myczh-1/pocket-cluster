@@ -3,18 +3,6 @@ import { api } from "../api";
 import { cx, formatBytes, formatLastSeen } from "../utils";
 import { EmptyState, PageHeader, Section, StatusBadge, statusLabel } from "../components/common";
 
-function ProgressLine({ value }) {
-  const clamped = Math.min(100, Math.max(0, value || 0));
-  return (
-    <div>
-      <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-        <div className="h-full rounded-full bg-green-600 transition-all" style={{ width: `${clamped}%` }} />
-      </div>
-      <p className="mt-1 text-xs font-medium text-slate-500">通过 Chunk 复用节省了 {clamped}% 空间</p>
-    </div>
-  );
-}
-
 export default function HealthPage() {
   const [summary, setSummary] = useState(null);
   const [insights, setInsights] = useState(null);
@@ -27,11 +15,14 @@ export default function HealthPage() {
   const [retentionDirty, setRetentionDirty] = useState(false);
   const [savingRetention, setSavingRetention] = useState(false);
   const [retentionSaved, setRetentionSaved] = useState(false);
-  const [purgingRetained, setPurgingRetained] = useState(false);
-  const [purgeDone, setPurgeDone] = useState(false);
+  const [purgeJob, setPurgeJob] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const pageSize = 100;
+  const loadChunks = useCallback(async () => {
+    const res = await api(`/health/chunks?limit=${pageSize}&offset=0`);
+    if (res.ok) setChunks(res.data?.chunks || []);
+  }, []);
   const load = useCallback(async ({ background = false } = {}) => {
     if (background) {
       setRefreshing(true);
@@ -39,14 +30,12 @@ export default function HealthPage() {
       setLoading(true);
     }
     try {
-      const [sumRes, insightsRes, chunkRes] = await Promise.all([
+      const [sumRes, insightsRes] = await Promise.all([
         api("/health/summary"),
         api("/health/insights"),
-        api(`/health/chunks?limit=${pageSize}&offset=0`),
       ]);
       if (sumRes.ok) setSummary(sumRes.data);
       if (insightsRes.ok) setInsights(insightsRes.data);
-      if (chunkRes.ok) setChunks(chunkRes.data?.chunks || []);
     } catch {
       // API failure — keep previous state
     } finally {
@@ -68,7 +57,6 @@ export default function HealthPage() {
   const riskyNodes = risk?.nodes || [];
   const visibleChunks = showRetainedChunks ? chunks : chunks.filter((c) => (c.referencing_files || []).length > 0);
   const retainedChunks = chunks.filter((c) => (c.referencing_files || []).length === 0);
-  const dedupPercent = storage?.dedup_ratio ? Math.round(storage.dedup_ratio * 100) : 0;
   useEffect(() => {
     if (!retentionDirty && storage?.tombstone_retention_hours) {
       setRetentionHours(String(storage.tombstone_retention_hours));
@@ -79,6 +67,23 @@ export default function HealthPage() {
     const updated = chunks.find((chunk) => chunk.chunk_id === selectedChunk.chunk_id);
     setSelectedChunk(updated || null);
   }, [chunks, selectedChunk]);
+  useEffect(() => {
+    if (!showChunkExplorer) return;
+    loadChunks();
+  }, [showChunkExplorer, loadChunks]);
+  useEffect(() => {
+    if (!purgeJob || purgeJob.finished_at || ["done", "failed", "blocked"].includes(purgeJob.status)) return;
+    const id = setTimeout(async () => {
+      const res = await api(`/jobs/${purgeJob.id}`);
+      if (res.ok) setPurgeJob(res.data);
+    }, 800);
+    return () => clearTimeout(id);
+  }, [purgeJob]);
+  useEffect(() => {
+    if (purgeJob?.status !== "done") return;
+    load({ background: true });
+    if (showChunkExplorer) loadChunks();
+  }, [purgeJob?.status, showChunkExplorer, load, loadChunks]);
 
   if (loading) return <div className="py-16 text-center text-sm text-slate-400">健康数据加载中...</div>;
   if (!summary) return <div className="py-16 text-center text-sm text-slate-400">健康数据暂不可用</div>;
@@ -88,6 +93,7 @@ export default function HealthPage() {
     unavailable: "border-red-200 bg-red-50 text-red-700",
     repairing: "border-blue-200 bg-blue-50 text-blue-700",
   };
+  const purgeActive = purgeJob && !purgeJob.finished_at && !["done", "failed", "blocked"].includes(purgeJob.status);
 
   async function saveRetention() {
     const hours = Number(retentionHours);
@@ -112,18 +118,9 @@ export default function HealthPage() {
   }
 
   async function purgeRetainedNow() {
-    setPurgingRetained(true);
-    setPurgeDone(false);
-    try {
-      const res = await api("/jobs/purge-retained-data", { method: "POST" });
-      if (res.ok) {
-        await load({ background: true });
-        setPurgeDone(true);
-        setTimeout(() => setPurgeDone(false), 1600);
-      }
-    } finally {
-      setPurgingRetained(false);
-    }
+    const res = await api("/jobs/purge-retained-data", { method: "POST" });
+    if (res.ok) setPurgeJob(res.data);
+    else setPurgeJob({ status: "failed", message: "无法启动立即清理。", error: res.error?.message });
   }
   return (
     <div className="space-y-5">
@@ -132,7 +129,7 @@ export default function HealthPage() {
         title="健康"
         description="先看当前数据是否安全，再定位受影响的文件和节点；维护动作收进高级区，避免和诊断信息混在一起。"
       />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div className={`rounded-lg border p-4 shadow-sm ${statusColor[coverage?.overall_status || summary.overall_status] || "border-slate-200 bg-white text-slate-700"}`}>
           <div className="text-xs font-semibold uppercase opacity-70">总体状态</div>
           <div className="mt-1 text-lg font-bold capitalize">{statusLabel(coverage?.overall_status || summary.overall_status)}</div>
@@ -144,34 +141,7 @@ export default function HealthPage() {
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">修复循环</div>
           <div className="mt-1 text-lg font-bold text-slate-950">{statusLabel(repair?.status || "idle")}</div>
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">空间节省</div>
-          <div className="mt-1 text-lg font-bold text-slate-950">{formatBytes(storage?.dedup_saved_bytes || 0)}</div>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">健康</div>
-          <div className="mt-1 text-lg font-bold text-green-700">{coverage?.healthy_chunks ?? summary.healthy_chunks}</div>
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">副本不足</div>
-          <div className={`mt-1 text-lg font-bold ${(coverage?.under_replicated_chunks ?? summary.under_replicated_chunks) > 0 ? "text-amber-600" : "text-slate-400"}`}>
-            {coverage?.under_replicated_chunks ?? summary.under_replicated_chunks}
-          </div>
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">不可用</div>
-          <div className={`mt-1 text-lg font-bold ${(coverage?.unavailable_chunks ?? summary.unavailable_chunks) > 0 ? "text-red-600" : "text-slate-400"}`}>
-            {coverage?.unavailable_chunks ?? summary.unavailable_chunks}
-          </div>
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase text-slate-500">修复中</div>
-          <div className={`mt-1 text-lg font-bold ${(coverage?.repairing_chunks ?? summary.repairing_chunks) > 0 ? "text-blue-600" : "text-slate-400"}`}>
-            {coverage?.repairing_chunks ?? summary.repairing_chunks}
-          </div>
+          <p className="mt-1 text-xs leading-5 text-slate-500">{repair?.message || "当前副本覆盖状态稳定。"}</p>
         </div>
       </div>
       <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 shadow-sm">
@@ -180,40 +150,6 @@ export default function HealthPage() {
         {repair?.next_retry_seconds > 0 && <> · 下一轮修复：<span className="font-medium text-slate-700">约 {repair.next_retry_seconds} 秒后</span></>}
         {refreshing && <> · <span className="font-medium text-slate-700">刷新中...</span></>}
       </div>
-      {insights && (
-        <Section title="概览" description="先看当前覆盖情况、修复压力和空间利用率。">
-          <div className="grid gap-3 lg:grid-cols-3">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="text-xs font-semibold uppercase text-slate-500">空间效率</div>
-              <div className="mt-1 text-2xl font-bold text-slate-950">{formatBytes(storage?.dedup_saved_bytes || 0)}</div>
-              <p className="mt-1 text-xs leading-5 text-slate-500">
-                活文件 {storage?.file_count || 0} 个，逻辑大小 {formatBytes(storage?.logical_bytes || 0)}，唯一 Chunk {formatBytes(storage?.unique_chunk_bytes || 0)}。
-              </p>
-              <div className="mt-3">
-                <ProgressLine value={dedupPercent} />
-              </div>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="text-xs font-semibold uppercase text-slate-500">修复循环</div>
-              <div className="mt-1 text-lg font-bold text-slate-950">{statusLabel(repair?.status || "idle")}</div>
-              <p className="mt-1 text-xs leading-5 text-slate-500">{repair?.message || "当前副本覆盖状态稳定。"}</p>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500">
-                <span>等待中：<strong className="text-slate-800">{repair?.queued_chunks || 0}</strong></span>
-                <span>修复中：<strong className="text-slate-800">{repair?.repairing_chunks || 0}</strong></span>
-              </div>
-            </div>
-            <div className={`rounded-lg border p-4 ${risk?.affected_file_count > 0 ? "border-amber-200 bg-amber-50" : "border-green-200 bg-green-50"}`}>
-              <div className="text-xs font-semibold uppercase text-slate-500">风险摘要</div>
-              <div className={`mt-1 text-2xl font-bold ${risk?.affected_file_count > 0 ? "text-amber-700" : "text-green-700"}`}>
-                {risk?.affected_file_count || 0}
-              </div>
-              <p className="mt-1 text-xs leading-5 text-slate-600">
-                {risk?.affected_file_count > 0 ? "先处理这些受影响文件，再进入 Chunk 明细排障。" : "当前没有文件引用异常 Chunk。"}
-              </p>
-            </div>
-          </div>
-        </Section>
-      )}
       {risk?.affected_file_count > 0 && (
         <div className="rounded-lg border border-amber-200 bg-white p-4 shadow-sm">
           <div className="mb-2 text-sm font-semibold text-slate-950">受影响文件</div>
@@ -313,13 +249,18 @@ export default function HealthPage() {
               <div className="mt-3">
                 <button
                   onClick={purgeRetainedNow}
-                  disabled={purgingRetained}
-                  className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
-                    purgeDone ? "bg-green-600 text-white" : "bg-amber-600 text-white hover:bg-amber-700"
-                  } disabled:opacity-50`}
+                  disabled={purgeActive}
+                  className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:opacity-50"
                 >
-                  {purgingRetained ? "清理中..." : purgeDone ? "已提交 ✓" : "立即清理待回收 Chunk"}
+                  {purgeActive ? "正在清理..." : "立即清理待回收数据"}
                 </button>
+                {purgeJob && (
+                  <p className={`mt-3 text-xs leading-5 ${purgeJob.status === "done" ? "text-green-700" : purgeJob.status === "failed" || purgeJob.status === "blocked" ? "text-red-700" : "text-amber-700"}`}>
+                    {purgeJob.status === "done" ? "清理完成：" : purgeJob.status === "failed" || purgeJob.status === "blocked" ? "清理未完成：" : "清理任务："}
+                    {purgeJob.message || "正在等待任务结果。"}
+                    {purgeJob.error && ` ${purgeJob.error}`}
+                  </p>
+                )}
               </div>
             </div>
             <div className="rounded-lg border border-slate-200 bg-white p-4">

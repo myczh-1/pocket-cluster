@@ -445,6 +445,19 @@ func TestDeleteRemovesChunks(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("delete status = %d: %s", res.Code, res.Body.String())
 	}
+	var envelope struct {
+		Data struct {
+			Status                  string `json:"status"`
+			ReclaimStatus           string `json:"reclaim_status"`
+			TombstoneRetentionHours int    `json:"tombstone_retention_hours"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Data.Status != "deleted" || envelope.Data.ReclaimStatus != "retained" || envelope.Data.TombstoneRetentionHours != 168 {
+		t.Fatalf("unexpected delete lifecycle response: %+v", envelope.Data)
+	}
 
 	// Chunks are no longer removed immediately on delete.
 	// They are tombstoned and cleaned up later by CleanupTombstones.

@@ -329,11 +329,13 @@ Delete a file or directory. Directories are recursively deleted (all children ar
   "ok": true,
   "data": {
     "path": "/report.pdf",
-    "status": "deleted"
+    "status": "deleted",
+    "reclaim_status": "retained",
+    "tombstone_retention_hours": 168
   }
 }
 ```
-Deleted files are tombstoned (soft-deleted) and retained for 7 days before permanent removal.
+`reclaim_status: retained` means the entry is no longer visible, but its data remains during the configured retention window so deletion can propagate through the cluster. The Health page can trigger an immediate reclamation job.
 ### PATCH /api/files/rename
 Rename or move a file.
 **Request body (JSON):**

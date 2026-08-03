@@ -11,6 +11,7 @@ NODE_B_PORT="${NODE_B_PORT:-17789}"
 POOL_USER="${POOL_USER:-admin}"
 POOL_PASS="${POOL_PASS:-testpass}"
 TEST_FILE="${TMP_DIR}/sample.txt"
+DELETE_TEST_FILE="${TMP_DIR}/delete-sample.txt"
 COOKIE_A="${TMP_DIR}/cookie-a.txt"
 COOKIE_B="${TMP_DIR}/cookie-b.txt"
 JOIN_OUT="${TMP_DIR}/join-response.json"
@@ -121,6 +122,7 @@ curl -fsS -c "${COOKIE_B}" -H "Content-Type: application/json" \
   "http://127.0.0.1:${NODE_B_PORT}/api/auth/login" >/dev/null
 
 printf 'PocketCluster E2E sample\n' >"${TEST_FILE}"
+printf 'PocketCluster retained-delete sample\n' >"${DELETE_TEST_FILE}"
 
 echo "Uploading test file to node A..."
 curl -fsS -b "${COOKIE_A}" -F "path=/sample.txt" -F "file=@${TEST_FILE}" \
@@ -146,6 +148,96 @@ if [[ "${READABLE_BEFORE_FAILOVER}" != "1" ]]; then
   echo "Root cause: node B never became readable before the failover step"
   echo "Warnings: metadata sync or replica repair did not converge in time"
   echo "Next action: inspect ${NODE_A_LOG}, ${NODE_B_LOG}, and /api/health/summary on both nodes"
+  exit 1
+fi
+
+echo "Creating and replicating a directory scheduled for deletion..."
+curl -fsS -u "${POOL_USER}:${POOL_PASS}" -X MKCOL \
+  "http://127.0.0.1:${NODE_A_PORT}/dav/retained-dir" >/dev/null
+curl -fsS -b "${COOKIE_A}" -F "path=/retained-dir/delete-sample.txt" -F "file=@${DELETE_TEST_FILE}" \
+  "http://127.0.0.1:${NODE_A_PORT}/api/files/upload" >/dev/null
+
+DELETE_FILE_READABLE=0
+for _ in $(seq 1 45); do
+  if DOWNLOADED_DELETE_FILE="$(curl -fsS -b "${COOKIE_B}" "http://127.0.0.1:${NODE_B_PORT}/api/files/download?path=/retained-dir/delete-sample.txt" 2>/dev/null || true)"; then
+    if [[ "${DOWNLOADED_DELETE_FILE}" == "PocketCluster retained-delete sample" ]]; then
+      DELETE_FILE_READABLE=1
+      break
+    fi
+  fi
+  sleep 1
+done
+
+if [[ "${DELETE_FILE_READABLE}" != "1" ]]; then
+  echo "FAILED"
+  echo "Root cause: node B never received the file used for the deletion propagation check"
+  echo "Warnings: metadata sync or replica repair did not converge in time"
+  echo "Next action: inspect ${NODE_A_LOG}, ${NODE_B_LOG}, and /api/sync/tasks"
+  exit 1
+fi
+
+CHUNKS_BEFORE_PURGE="$(find "${NODE_B_DIR}/chunks" -type f | wc -l | tr -d ' ')"
+
+echo "Deleting the replicated directory and waiting for the tombstone to reach node B..."
+curl -fsS -b "${COOKIE_A}" -X DELETE \
+  "http://127.0.0.1:${NODE_A_PORT}/api/files?path=/retained-dir" >/dev/null
+
+DELETE_PROPAGATED=0
+for _ in $(seq 1 45); do
+  STATUS_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b "${COOKIE_B}" "http://127.0.0.1:${NODE_B_PORT}/api/files/download?path=/retained-dir/delete-sample.txt" || true)"
+  if [[ "${STATUS_CODE}" == "404" ]]; then
+    DELETE_PROPAGATED=1
+    break
+  fi
+  sleep 1
+done
+
+if [[ "${DELETE_PROPAGATED}" != "1" ]]; then
+  echo "FAILED"
+  echo "Root cause: deleted directory tombstone did not reach node B"
+  echo "Warnings: node B can still download a file under the deleted directory"
+  echo "Next action: inspect ${NODE_A_LOG}, ${NODE_B_LOG}, and event sync tasks"
+  exit 1
+fi
+
+echo "Immediately purging the deleted directory..."
+PURGE_JOB_ID="$(curl -fsS -b "${COOKIE_A}" -X POST "http://127.0.0.1:${NODE_A_PORT}/api/jobs/purge-retained-data" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
+PURGE_DONE=0
+for _ in $(seq 1 45); do
+  PURGE_STATUS="$(curl -fsS -b "${COOKIE_A}" "http://127.0.0.1:${NODE_A_PORT}/api/jobs/${PURGE_JOB_ID}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["status"])')"
+  if [[ "${PURGE_STATUS}" == "done" ]]; then
+    PURGE_DONE=1
+    break
+  fi
+  if [[ "${PURGE_STATUS}" == "failed" || "${PURGE_STATUS}" == "blocked" ]]; then
+    break
+  fi
+  sleep 1
+done
+
+if [[ "${PURGE_DONE}" != "1" ]]; then
+  echo "FAILED"
+  echo "Root cause: immediate purge job did not finish successfully (${PURGE_STATUS})"
+  echo "Warnings: inspect ${NODE_A_LOG} and the purge job ${PURGE_JOB_ID}"
+  echo "Next action: inspect /api/jobs/${PURGE_JOB_ID} and /api/sync/tasks on node A"
+  exit 1
+fi
+
+PURGE_PROPAGATED=0
+for _ in $(seq 1 45); do
+  CHUNKS_AFTER_PURGE="$(find "${NODE_B_DIR}/chunks" -type f | wc -l | tr -d ' ')"
+  if [[ "${CHUNKS_AFTER_PURGE}" -lt "${CHUNKS_BEFORE_PURGE}" ]]; then
+    PURGE_PROPAGATED=1
+    break
+  fi
+  sleep 1
+done
+
+if [[ "${PURGE_PROPAGATED}" != "1" ]]; then
+  echo "FAILED"
+  echo "Root cause: node B kept the unreferenced chunk after directory purge propagated"
+  echo "Warnings: chunk count stayed at ${CHUNKS_BEFORE_PURGE}"
+  echo "Next action: inspect ${NODE_B_LOG} and the FILE_PURGE / DIR_PURGE events"
   exit 1
 fi
 

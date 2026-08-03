@@ -253,12 +253,15 @@ export default function FilesPage() {
     setDeleteBusy(true);
     setDeleteError(null);
     try {
-      const res = await fetch(`${API}/files?path=${encodeURIComponent(deleteFile.path)}`, { method: "DELETE", credentials: "same-origin" });
+      const res = await api(`/files?path=${encodeURIComponent(deleteFile.path)}`, { method: "DELETE" });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || res.statusText);
+        throw new Error(res.error?.message || "删除失败");
       }
-      setMessage({ tone: "success", text: `已删除 ${deleteFile.name}` });
+      const hours = res.data?.tombstone_retention_hours;
+      setMessage({
+        tone: "success",
+        text: `已删除 ${deleteFile.name}。内容将保留 ${hours || 168} 小时以等待集群同步，之后自动回收；可在健康页立即清理。`,
+      });
       setDeleteFile(null);
       loadFiles();
     } catch (err) {
