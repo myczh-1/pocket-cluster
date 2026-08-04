@@ -27,6 +27,22 @@ e2e_stop_node 1
 echo "Deleting and purging while node 2 is offline..."
 curl -fsS -b "${E2E_COOKIES[0]}" -X DELETE \
   "http://127.0.0.1:${E2E_PORTS[0]}/api/files?path=/offline-delete" >/dev/null
+
+RETAINED_DATA_IDLE=0
+for _ in $(seq 1 45); do
+  REPAIR_STATE="$(curl -fsS -b "${E2E_COOKIES[0]}" "http://127.0.0.1:${E2E_PORTS[0]}/api/health/insights" \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("{}:{}".format(d["repair"]["status"], d["repair"]["queued_chunks"]))')"
+  if [[ "${REPAIR_STATE}" == "idle:0" ]]; then
+    RETAINED_DATA_IDLE=1
+    break
+  fi
+  sleep 1
+done
+if [[ "${RETAINED_DATA_IDLE}" != "1" ]]; then
+  echo "Retained deleted data was incorrectly queued for replica repair (${REPAIR_STATE})" >&2
+  exit 1
+fi
+
 PURGE_JOB_ID="$(e2e_start_purge 0)"
 e2e_wait_for_job 0 "${PURGE_JOB_ID}" || {
   echo "Immediate purge did not finish on node 1" >&2
