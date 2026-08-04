@@ -415,6 +415,52 @@ func TestHealthInsightsSeparatesRetainedChunksFromActiveStorage(t *testing.T) {
 	}
 }
 
+func TestHealthScanDoesNotQueueRetainedChunksForRepair(t *testing.T) {
+	s := newTestHealthServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	hash, size, err := s.chunks.Store(strings.NewReader("retained payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := s.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: size, StoredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertReplica(&types.Replica{ChunkID: hash, NodeID: s.cfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertFile(&types.File{
+		FileID:     "deleted-file",
+		Name:       "deleted.txt",
+		Path:       "/deleted.txt",
+		SizeBytes:  size,
+		VersionID:  "v1",
+		ChunkIDs:   []string{hash},
+		CreatedAt:  now,
+		ModifiedAt: now,
+		ModifiedBy: s.cfg.NodeID,
+		Deleted:    true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.runHealthScan(ctx)
+
+	summary := s.HealthSummarySnapshot()
+	if summary.UnderReplicated != 0 || summary.Unavailable != 0 || summary.OverallStatus != types.ReplicaHealthy {
+		t.Fatalf("retained chunk polluted health summary: %+v", summary)
+	}
+	if queued := s.DrainUnderReplicated(); len(queued) != 0 {
+		t.Fatalf("retained chunk queued for repair: %v", queued)
+	}
+	detail := s.ChunkHealthSnapshot()[hash]
+	if detail.Status != types.ReplicaHealthy || len(detail.ReferencingFiles) != 0 {
+		t.Fatalf("unexpected retained chunk detail: %+v", detail)
+	}
+}
+
 func TestHealthScanHealthyChunks(t *testing.T) {
 	s := newTestHealthServer(t)
 	ctx, cancel := context.WithCancel(context.Background())

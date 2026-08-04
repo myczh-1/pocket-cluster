@@ -140,6 +140,9 @@ func (s *Server) runHealthScan(ctx context.Context) {
 	var underReplicated []string
 
 	for _, c := range chunks {
+		// Tombstoned files intentionally keep their chunks during the retention
+		// window. They are no longer durable user data, so never repair them.
+		isLiveChunk := len(chunkFiles[c.ChunkID]) > 0
 		replicas, err := s.store.GetReplicas(c.ChunkID)
 		if err != nil {
 			continue
@@ -181,21 +184,23 @@ func (s *Server) runHealthScan(ctx context.Context) {
 		}
 
 		status := types.ReplicaHealthy
-		if onlineReplicaCount == 0 {
-			status = types.ReplicaUnavailable
-			summary.Unavailable++
-		} else if onlineReplicaCount < targetReplicaCount {
-			status = types.ReplicaUnderReplicated
-			summary.UnderReplicated++
-			underReplicated = append(underReplicated, c.ChunkID)
-		} else {
-			summary.HealthyChunks++
+		if isLiveChunk {
+			if onlineReplicaCount == 0 {
+				status = types.ReplicaUnavailable
+				summary.Unavailable++
+			} else if onlineReplicaCount < targetReplicaCount {
+				status = types.ReplicaUnderReplicated
+				summary.UnderReplicated++
+				underReplicated = append(underReplicated, c.ChunkID)
+			} else {
+				summary.HealthyChunks++
+			}
 		}
 
 		s.health.mu.RLock()
 		isRepairing := s.health.repairing[c.ChunkID]
 		s.health.mu.RUnlock()
-		if isRepairing {
+		if isLiveChunk && isRepairing {
 			status = types.ReplicaRepairing
 			summary.RepairingChunks++
 		}
