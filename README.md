@@ -155,6 +155,7 @@ Scenario-based E2E scripts live in `scripts/e2e/` and cover:
 
 - **Two-node basic** — join, replicate, read-after-node-loss (`two-node-basic.sh`)
 - **Three-node offline deletion** — delete and immediately reclaim data while one replica node is offline, then verify it converges after recovery (`three-node-offline-delete.sh`)
+- **Three-node offline rename** — rename while one replica node is offline, then verify recovery converges without stale or duplicate paths (`three-node-offline-rename.sh`)
 - **WebDAV smoke** — upload, list, download, delete (`webdav-smoke-test.sh`)
 - **Android manual** — join and carry checklist (`android-manual-test.md`)
 

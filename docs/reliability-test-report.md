@@ -25,6 +25,7 @@ Fill this section for each run:
 |---|---|---|---|---|
 | Two-node basic | Verify join, replicate, and read-after-node-loss | `scripts/e2e/two-node-basic.sh` | Passed locally | loopback-only validation |
 | Three-node offline deletion | Verify delete, immediate purge, and recovered-node chunk cleanup | `scripts/e2e/three-node-offline-delete.sh` | Passed locally | loopback-only validation |
+| Three-node offline rename | Verify rename convergence and no stale path after a node recovers | `scripts/e2e/three-node-offline-rename.sh` | Passed locally | loopback-only validation |
 | WebDAV smoke | Verify upload, list, download, delete on one node | `scripts/e2e/webdav-smoke-test.sh` | Passed locally | single-node local validation |
 | Android manual | Verify Android join and carry behavior | `scripts/e2e/android-manual-test.md` | Pending |  |
 
@@ -59,6 +60,16 @@ Fill this section for each run:
   - node 1 deleted the containing directory and completed an immediate purge while node 3 remained online
   - node 3 converged to the deletion while node 2 was offline
   - after node 2 restarted, the deleted file stayed unavailable and its local unreferenced Chunk was removed
+- Failure mode if any:
+  - none in the loopback scenario
+
+### Three-node offline rename
+
+- Status: Passed locally
+- Evidence:
+  - node 2 received the original file, then was stopped before the rename
+  - node 3 converged to the new path while node 2 remained offline
+  - after node 2 restarted, it read the new path, rejected the old path, and listed exactly one live entry
 - Failure mode if any:
   - none in the loopback scenario
 

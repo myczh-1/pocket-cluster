@@ -38,6 +38,7 @@ jobs:
         run: |
           scripts/e2e/two-node-basic.sh
           scripts/e2e/three-node-offline-delete.sh
+          scripts/e2e/three-node-offline-rename.sh
 
   android:
     runs-on: ubuntu-latest

@@ -124,6 +124,11 @@ e2e_join_node() {
     "http://127.0.0.1:${E2E_PORTS[0]}/api/join/approve/${node_id}" >/dev/null
   wait "${join_pid}"
 
+  e2e_login_node "${index}"
+}
+
+e2e_login_node() {
+  local index=$1
   curl -fsS -c "${E2E_COOKIES[index]}" -H "Content-Type: application/json" \
     -d "{\"username\":\"${E2E_POOL_USER}\",\"password\":\"${E2E_POOL_PASS}\"}" \
     "http://127.0.0.1:${E2E_PORTS[index]}/api/auth/login" >/dev/null
@@ -146,6 +151,15 @@ e2e_upload() {
   local source_file=$3
   curl -fsS -b "${E2E_COOKIES[index]}" -F "path=${pool_path}" -F "file=@${source_file}" \
     "http://127.0.0.1:${E2E_PORTS[index]}/api/files/upload" >/dev/null
+}
+
+e2e_rename() {
+  local index=$1
+  local old_path=$2
+  local new_path=$3
+  curl -fsS -b "${E2E_COOKIES[index]}" -X PATCH -H "Content-Type: application/json" \
+    -d "{\"path\":\"${old_path}\",\"new_path\":\"${new_path}\"}" \
+    "http://127.0.0.1:${E2E_PORTS[index]}/api/files/rename" >/dev/null
 }
 
 e2e_wait_for_download() {
