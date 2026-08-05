@@ -121,6 +121,7 @@ func (d *davFS) RemoveAll(_ context.Context, name string) error {
 	return nil
 }
 
+
 func (d *davFS) Rename(_ context.Context, oldName, newName string) error {
 	oldName = normPath(oldName)
 	newName = normPath(newName)
@@ -397,13 +398,6 @@ func (f *davWriteFile) Close() error {
 		CreatedAt:  now,
 		ModifiedAt: now,
 		ModifiedBy: f.nodeID,
-	}
-	// A WebDAV overwrite continues the existing object history. This lets peers
-	// distinguish a later version from two offline edits based on the same file.
-	if existing, err := f.store.GetFile(f.name); err == nil && !existing.IsDir {
-		file.FileID = existing.FileID
-		file.ParentVersionID = existing.VersionID
-		file.CreatedAt = existing.CreatedAt
 	}
 	if f.srv != nil {
 		if err := f.srv.commitFilePut(file, filePutOptions{}); err != nil {

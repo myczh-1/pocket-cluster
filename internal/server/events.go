@@ -44,7 +44,10 @@ func (s *Server) applyEvent(e types.Event) error {
 		if err := json.Unmarshal(e.Payload, &f); err != nil {
 			return err
 		}
-		return s.applyRemoteFilePut(&f)
+		if err := s.prepareFilePut(&f); err != nil {
+			return err
+		}
+		return s.store.UpsertFile(&f)
 	case types.EventFileDelete:
 		var payload struct {
 			Path      string `json:"path"`

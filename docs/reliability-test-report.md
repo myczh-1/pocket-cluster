@@ -26,7 +26,6 @@ Fill this section for each run:
 | Two-node basic | Verify join, replicate, and read-after-node-loss | `scripts/e2e/two-node-basic.sh` | Passed locally | loopback-only validation |
 | Three-node offline deletion | Verify delete, immediate purge, and recovered-node chunk cleanup | `scripts/e2e/three-node-offline-delete.sh` | Passed locally | loopback-only validation |
 | Three-node offline rename | Verify rename convergence and no stale path after a node recovers | `scripts/e2e/three-node-offline-rename.sh` | Passed locally | loopback-only validation |
-| Three-node concurrent update | Verify offline same-path updates converge independently of recovery order | `scripts/e2e/three-node-offline-concurrent-update.sh` | Passed locally | loopback test exercises WebDAV version lineage, restart, and post-conflict updates |
 | WebDAV smoke | Verify upload, list, download, delete on one node | `scripts/e2e/webdav-smoke-test.sh` | Passed locally | single-node local validation |
 | Android manual | Verify Android join and carry behavior | `scripts/e2e/android-manual-test.md` | Pending |  |
 
@@ -71,18 +70,6 @@ Fill this section for each run:
   - node 2 received the original file, then was stopped before the rename
   - node 3 converged to the new path while node 2 remained offline
   - after node 2 restarted, it read the new path, rejected the old path, and listed exactly one live entry
-- Failure mode if any:
-  - none in the loopback scenario
-
-### Three-node concurrent update
-
-- Status: Passed locally
-- Evidence:
-  - A and B each overwrote the same WebDAV file from the shared base version while the other writer was unavailable
-  - restoring A then B and B then A produced identical metadata on all three nodes for each fixed event set
-  - each convergence retained one main entry and one conflict copy, with both contents and the shared parent version preserved
-  - an additional stable sync pass and a full node restart did not change the normalized state
-  - a later conditional overwrite on node C replicated to A and B without creating another conflict copy
 - Failure mode if any:
   - none in the loopback scenario
 
