@@ -135,6 +135,41 @@ func TestRemoteFilePutConflictDoesNotOverwriteLocalFile(t *testing.T) {
 	}
 }
 
+func TestRemoteSequentialFileUpdateKeepsMainPath(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "local")
+	defer st.Close()
+
+	existing := &types.File{
+		FileID: "shared-file", Name: "shared.txt", Path: "/shared.txt",
+		VersionID: "version-1", CreatedAt: time.UnixMilli(1000), ModifiedAt: time.UnixMilli(1000), ModifiedBy: "node-a",
+	}
+	if err := st.UpsertFile(existing); err != nil {
+		t.Fatal(err)
+	}
+	incoming := &types.File{
+		FileID: "shared-file", Name: "shared.txt", Path: "/shared.txt",
+		VersionID: "version-2", ParentVersionID: "version-1", CreatedAt: existing.CreatedAt, ModifiedAt: time.UnixMilli(2000), ModifiedBy: "node-b",
+	}
+	if err := srv.applyEvent(types.Event{Type: types.EventFilePut, NodeID: "node-b", Payload: mustJSON(t, incoming)}); err != nil {
+		t.Fatal(err)
+	}
+
+	current, err := st.GetFile(existing.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.FileID != existing.FileID || current.VersionID != incoming.VersionID || current.ParentVersionID != existing.VersionID {
+		t.Fatalf("sequential update metadata = %+v", current)
+	}
+	files, err := st.ListFiles("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("sequential update created %d entries, want 1", len(files))
+	}
+}
+
 func uploadRequest(t *testing.T, targetPath, filename string, content []byte) *http.Request {
 	t.Helper()
 	var body bytes.Buffer

@@ -58,7 +58,7 @@ func (s *Server) commitFilePut(f *types.File, opts filePutOptions) error {
 			if err != sql.ErrNoRows {
 				return err
 			}
-		} else if !existing.Deleted && existing.FileID != f.FileID && existing.VersionID != f.VersionID {
+		} else if !existing.Deleted && existing.VersionID != f.VersionID {
 			overwrittenChunkIDs = append([]string(nil), existing.ChunkIDs...)
 		}
 	}

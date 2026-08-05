@@ -399,6 +399,16 @@ func (f *davWriteFile) Close() error {
 		ModifiedAt: now,
 		ModifiedBy: f.nodeID,
 	}
+	existing, err := f.store.GetFile(f.name)
+	if err == nil && !existing.IsDir {
+		file.FileID = existing.FileID
+		file.ParentVersionID = existing.VersionID
+		file.CreatedAt = existing.CreatedAt
+	} else if err != nil && err != sql.ErrNoRows {
+		f.cleanupStagedChunks()
+		f.closeErr = err
+		return err
+	}
 	if f.srv != nil {
 		if err := f.srv.commitFilePut(file, filePutOptions{}); err != nil {
 			f.cleanupStagedChunks()

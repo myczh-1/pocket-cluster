@@ -172,6 +172,22 @@ func TestWebDAVOverwriteRequiresCurrentETag(t *testing.T) {
 	if string(readWebDAVFile(t, handler, "/dav/overwrite.txt")) != "second" {
 		t.Fatal("conditional overwrite did not update file content")
 	}
+	updated, err := st.GetFile("/overwrite.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.FileID != first.FileID {
+		t.Fatalf("overwrite file id = %q, want %q", updated.FileID, first.FileID)
+	}
+	if updated.ParentVersionID != first.VersionID {
+		t.Fatalf("overwrite parent version = %q, want %q", updated.ParentVersionID, first.VersionID)
+	}
+	if updated.VersionID == first.VersionID {
+		t.Fatalf("overwrite kept old version %q", first.VersionID)
+	}
+	if !updated.CreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("overwrite created at = %s, want %s", updated.CreatedAt, first.CreatedAt)
+	}
 }
 
 func TestDavWriteFileCloseCleansStagedChunksOnError(t *testing.T) {
