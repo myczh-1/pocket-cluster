@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +133,63 @@ func TestRemoteFilePutConflictDoesNotOverwriteLocalFile(t *testing.T) {
 	}
 	if !strings.Contains(conflict.Path, "sync-conflict-remote-n") {
 		t.Fatalf("conflict path = %q, want remote marker", conflict.Path)
+	}
+}
+
+func TestConcurrentSameFileUpdatesConvergeRegardlessOfArrivalOrder(t *testing.T) {
+	base := &types.File{
+		FileID: "report", Name: "report.txt", Path: "/docs/report.txt", VersionID: "v1",
+		CreatedAt: time.UnixMilli(1000), ModifiedAt: time.UnixMilli(1000), ModifiedBy: "base",
+	}
+	updates := []*types.File{
+		{FileID: "report", Name: "report.txt", Path: base.Path, VersionID: "version-a", ParentVersionID: "v1", ChunkIDs: []string{"chunk-a"}, CreatedAt: base.CreatedAt, ModifiedAt: time.UnixMilli(2000), ModifiedBy: "node-a"},
+		{FileID: "report", Name: "report.txt", Path: base.Path, VersionID: "version-b", ParentVersionID: "v1", ChunkIDs: []string{"chunk-b"}, CreatedAt: base.CreatedAt, ModifiedAt: time.UnixMilli(3000), ModifiedBy: "node-b"},
+	}
+
+	states := make([][]types.File, 2)
+	for i, order := range [][2]int{{0, 1}, {1, 0}} {
+		_, st, srv := newJoinTestServer(t, "local")
+		if err := st.UpsertFile(base); err != nil {
+			t.Fatal(err)
+		}
+		for _, index := range order {
+			body := mustJSON(t, updates[index])
+			if err := srv.applyEvent(types.Event{Type: types.EventFilePut, NodeID: updates[index].ModifiedBy, Payload: body}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		files, err := st.ListAllFilesIncludingDeleted()
+		st.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		states[i] = files
+	}
+
+	for i, files := range states {
+		if len(files) != 2 {
+			t.Fatalf("order %d file count = %d, want main and one conflict", i, len(files))
+		}
+		var main, conflict *types.File
+		for j := range files {
+			if files[j].Path == base.Path {
+				main = &files[j]
+			} else {
+				conflict = &files[j]
+			}
+		}
+		if main == nil || conflict == nil {
+			t.Fatalf("order %d did not retain one main and one conflict: %+v", i, files)
+		}
+		if main.VersionID != "version-a" || conflict.VersionID != "version-b" {
+			t.Fatalf("order %d resolved versions = main %q, conflict %q", i, main.VersionID, conflict.VersionID)
+		}
+		if conflict.ConflictOf != base.FileID || conflict.FileID != conflictFileID(base.FileID, "version-b") {
+			t.Fatalf("order %d conflict metadata = %+v", i, conflict)
+		}
+	}
+	if !reflect.DeepEqual(states[0], states[1]) {
+		t.Fatalf("arrival order changed normalized state: first=%+v second=%+v", states[0], states[1])
 	}
 }
 

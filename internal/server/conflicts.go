@@ -42,6 +42,65 @@ func (s *Server) prepareFilePut(f *types.File) error {
 	return nil
 }
 
+// applyRemoteFilePut preserves the documented version-chain semantics for
+// WebDAV overwrites. Legacy uploads still use the path-based conflict behavior
+// because they have independent file IDs and no shared parent version.
+func (s *Server) applyRemoteFilePut(incoming *types.File) error {
+	existing, err := s.store.GetFile(incoming.Path)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return s.store.UpsertFile(incoming)
+		}
+		return err
+	}
+	if existing.FileID != incoming.FileID {
+		if err := s.prepareFilePut(incoming); err != nil {
+			return err
+		}
+		return s.store.UpsertFile(incoming)
+	}
+	if existing.VersionID == incoming.VersionID {
+		return nil
+	}
+	if incoming.ParentVersionID == existing.VersionID {
+		return s.store.UpsertFile(incoming)
+	}
+	if existing.ParentVersionID == incoming.VersionID {
+		return nil
+	}
+	if incoming.ParentVersionID != "" && incoming.ParentVersionID == existing.ParentVersionID {
+		return s.resolveConcurrentFilePut(existing, incoming)
+	}
+	return s.store.UpsertFile(incoming)
+}
+
+func (s *Server) resolveConcurrentFilePut(existing, incoming *types.File) error {
+	winner, loser := existing, incoming
+	if incoming.VersionID < existing.VersionID {
+		winner, loser = incoming, existing
+	}
+	conflict := *loser
+	conflict.FileID = conflictFileID(existing.FileID, loser.VersionID)
+	conflict.ConflictOf = existing.FileID
+	conflict.Path = conflictPath(existing.Path, loser.ModifiedBy, loser.ModifiedAt)
+	conflict.Name = path.Base(conflict.Path)
+
+	if stored, err := s.store.GetFileByID(conflict.FileID); err == nil {
+		if stored.VersionID != conflict.VersionID || stored.Path != conflict.Path {
+			return fmt.Errorf("conflict file %s does not match version %s", conflict.FileID, conflict.VersionID)
+		}
+	} else if err != sql.ErrNoRows {
+		return err
+	} else if err := s.store.UpsertFile(&conflict); err != nil {
+		return err
+	}
+	return s.store.UpsertFile(winner)
+}
+
+func conflictFileID(originalFileID, versionID string) string {
+	return originalFileID + ".conflict." + versionID
+}
+
 type filePutOptions struct {
 	ConflictOnExisting bool
 }
@@ -58,7 +117,7 @@ func (s *Server) commitFilePut(f *types.File, opts filePutOptions) error {
 			if err != sql.ErrNoRows {
 				return err
 			}
-		} else if !existing.Deleted && existing.FileID != f.FileID && existing.VersionID != f.VersionID {
+		} else if !existing.Deleted && existing.VersionID != f.VersionID {
 			overwrittenChunkIDs = append([]string(nil), existing.ChunkIDs...)
 		}
 	}
