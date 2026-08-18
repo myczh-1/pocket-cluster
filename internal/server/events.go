@@ -56,6 +56,15 @@ func (s *Server) applyEvent(e types.Event) error {
 		// Only tombstone the file. Physical chunk cleanup is deferred
 		// to CleanupTombstones to avoid deleting data before peers sync.
 		return s.store.MarkFileDeleted(payload.Path, payload.DeletedBy)
+	case types.EventFileRestore:
+		var payload struct {
+			FileID     string `json:"file_id"`
+			RestoredBy string `json:"restored_by"`
+		}
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			return err
+		}
+		return s.store.RestoreDeleted(payload.FileID, false, payload.RestoredBy, e.Timestamp)
 	case types.EventFilePurge:
 		var payload struct {
 			FileID   string   `json:"file_id"`
@@ -122,14 +131,19 @@ func (s *Server) applyEvent(e types.Event) error {
 		return s.store.UpdateNodeFull(&n)
 	case types.EventDirCreate:
 		var payload struct {
+			FileID    string `json:"file_id"`
 			Path      string `json:"path"`
 			CreatedBy string `json:"created_by"`
 		}
 		if err := json.Unmarshal(e.Payload, &payload); err != nil {
 			return err
 		}
+		fileID := payload.FileID
+		if fileID == "" {
+			fileID = uuid.New().String()
+		}
 		return s.store.UpsertFile(&types.File{
-			FileID:     uuid.New().String(),
+			FileID:     fileID,
 			Name:       payload.Path,
 			Path:       payload.Path,
 			IsDir:      true,
@@ -146,6 +160,16 @@ func (s *Server) applyEvent(e types.Event) error {
 			return err
 		}
 		return s.store.MarkChildrenDeleted(payload.Path, payload.DeletedBy)
+	case types.EventDirRestore:
+		var payload struct {
+			FileID     string `json:"file_id"`
+			Path       string `json:"path"`
+			RestoredBy string `json:"restored_by"`
+		}
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			return err
+		}
+		return s.store.RestoreDeletedPath(payload.Path, payload.RestoredBy, e.Timestamp)
 	case types.EventDirPurge:
 		var payload struct {
 			FileID string `json:"file_id"`

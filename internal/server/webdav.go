@@ -46,20 +46,21 @@ func (d *davFS) Mkdir(_ context.Context, name string, _ os.FileMode) error {
 	if name == "/" {
 		return nil
 	}
+	now := time.Now()
 	dir := &types.File{
 		FileID:     uuid.New().String(),
 		Name:       path.Base(name),
 		Path:       name,
 		IsDir:      true,
-		CreatedAt:  time.Now(),
-		ModifiedAt: time.Now(),
+		CreatedAt:  now,
+		ModifiedAt: now,
 		ModifiedBy: d.nodeID,
 	}
 	if err := d.store.UpsertFile(dir); err != nil {
 		return err
 	}
 	if d.srv != nil {
-		d.srv.appendEvent(types.EventDirCreate, map[string]string{"path": name, "created_by": d.nodeID})
+		d.srv.appendEvent(types.EventDirCreate, map[string]string{"file_id": dir.FileID, "path": name, "created_by": d.nodeID})
 	}
 	return nil
 }
@@ -120,7 +121,6 @@ func (d *davFS) RemoveAll(_ context.Context, name string) error {
 	}
 	return nil
 }
-
 
 func (d *davFS) Rename(_ context.Context, oldName, newName string) error {
 	oldName = normPath(oldName)

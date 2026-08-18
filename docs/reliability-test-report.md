@@ -27,6 +27,7 @@ Fill this section for each run:
 | Three-node offline deletion | Verify delete, immediate purge, and recovered-node chunk cleanup | `scripts/e2e/three-node-offline-delete.sh` | Passed locally | loopback-only validation |
 | Three-node offline rename | Verify rename convergence and no stale path after a node recovers | `scripts/e2e/three-node-offline-rename.sh` | Passed locally | loopback-only validation |
 | Three-node concurrent update | Verify two offline WebDAV edits converge regardless of recovery order | `scripts/e2e/three-node-offline-concurrent-update.sh` | Passed locally | main plus conflict, restart, continued edit |
+| Three-node offline restore | Verify trash restore converges after an offline node recovers | `scripts/e2e/three-node-offline-restore.sh` | Passed locally | directory tree and retained chunks |
 | WebDAV smoke | Verify upload, list, download, delete on one node | `scripts/e2e/webdav-smoke-test.sh` | Passed locally | single-node local validation |
 | Android manual | Verify Android join and carry behavior | `scripts/e2e/android-manual-test.md` | Pending |  |
 
@@ -83,6 +84,18 @@ Fill this section for each run:
   - one deterministic main file and one conflict copy preserved both contents
   - a full-cluster restart kept the same projection
   - a later update on the winning branch stayed on the main path
+- Failure mode if any:
+  - none in the loopback scenario
+
+### Three-node offline restore
+
+- Status: Passed locally
+- Evidence:
+  - node 2 received a replicated directory and file, then was stopped
+  - node 1 deleted the directory and restored it from the trash while node 2 was offline
+  - node 3 applied both events while remaining online
+  - after node 2 restarted, the full directory tree and original content were readable again
+  - the trash entry disappeared on all three nodes
 - Failure mode if any:
   - none in the loopback scenario
 

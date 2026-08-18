@@ -65,6 +65,30 @@ function FileCard({ file, onDownload, onDelete, onRename, onPreview }) {
     </div>
   );
 }
+
+function TrashCard({ file, busy, onRestore }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{file.is_dir ? "目录" : "文件"}</span>
+          <p className="truncate text-sm font-semibold text-slate-950">{file.name}</p>
+        </div>
+        <p className="mt-2 truncate font-mono text-xs text-slate-500">{file.path}</p>
+        <p className="mt-1 text-xs text-slate-500">
+          {file.expires_at ? `将在 ${new Date(file.expires_at).toLocaleString()} 后清理` : "等待自动清理"}
+        </p>
+      </div>
+      <button
+        onClick={() => onRestore(file)}
+        disabled={busy}
+        className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+      >
+        {busy ? "恢复中..." : "恢复"}
+      </button>
+    </div>
+  );
+}
 function FilePreview({ file, onClose }) {
   const [content, setContent] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -157,6 +181,7 @@ function RenameDialog({ file, busy, error, onSubmit, onCancel }) {
 }
 
 export default function FilesPage() {
+  const [viewMode, setViewMode] = useState("files");
   const [path, setPath] = useState("/");
   const [files, setFiles] = useState([]);
   const [search, setSearch] = useState("");
@@ -173,6 +198,7 @@ export default function FilesPage() {
   const [renameError, setRenameError] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+  const [restoreBusy, setRestoreBusy] = useState("");
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(id);
@@ -180,20 +206,20 @@ export default function FilesPage() {
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
-    const q = debouncedSearch ? `?q=${encodeURIComponent(debouncedSearch)}` : `?path=${encodeURIComponent(path)}`;
     try {
-      const res = await api(`/files${q}`);
+      const q = debouncedSearch ? `?q=${encodeURIComponent(debouncedSearch)}` : `?path=${encodeURIComponent(path)}`;
+      const res = await api(viewMode === "trash" ? "/trash" : `/files${q}`);
       if (res.ok) {
         setFiles(res.data?.entries || []);
       } else {
-        setMessage({ tone: "error", text: res.error?.message || "加载文件失败" });
+        setMessage({ tone: "error", text: res.error?.message || (viewMode === "trash" ? "加载回收站失败" : "加载文件失败") });
       }
     } catch (err) {
-      setMessage({ tone: "error", text: err.message || "加载文件失败" });
+      setMessage({ tone: "error", text: err.message || (viewMode === "trash" ? "加载回收站失败" : "加载文件失败") });
     } finally {
       setLoading(false);
     }
-  }, [path, debouncedSearch]);
+  }, [path, debouncedSearch, viewMode]);
   useEffect(() => { loadFiles(); }, [loadFiles]);
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -260,7 +286,7 @@ export default function FilesPage() {
       const hours = res.data?.tombstone_retention_hours;
       setMessage({
         tone: "success",
-        text: `已删除 ${deleteFile.name}。内容将保留 ${hours || 168} 小时以等待集群同步，之后自动回收；可在健康页立即清理。`,
+        text: `已删除 ${deleteFile.name}。可在 ${hours || 168} 小时内从回收站恢复。`,
       });
       setDeleteFile(null);
       loadFiles();
@@ -295,24 +321,52 @@ export default function FilesPage() {
       setRenameBusy(false);
     }
   };
+  const handleRestore = async (file) => {
+    setRestoreBusy(file.file_id);
+    setMessage(null);
+    try {
+      const res = await api("/trash/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_id: file.file_id }),
+      });
+      if (!res.ok) throw new Error(res.error?.message || "恢复失败");
+      setMessage({ tone: "success", text: `已恢复 ${file.name}` });
+      await loadFiles();
+    } catch (err) {
+      setMessage({ tone: "error", text: err.message || "恢复失败" });
+    } finally {
+      setRestoreBusy("");
+    }
+  };
   const totalSize = files.reduce((sum, f) => sum + (f.is_dir ? 0 : (f.size_bytes || 0)), 0);
   const folders = files.filter((f) => f.is_dir).length;
   return (
     <div className="space-y-4">
       <PageHeader
         eyebrow="存储池"
-        title="文件"
-        description="上传、预览、重命名和下载存储池中的文件。"
+        title={viewMode === "trash" ? "回收站" : "文件"}
+        description={viewMode === "trash" ? "恢复保留期内尚未永久清理的文件和目录。" : "上传、预览、重命名和下载存储池中的文件。"}
         action={
-          <label className="block">
-            <span className="inline-flex cursor-pointer items-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 active:bg-blue-800">
-              {uploading ? `上传中 ${uploadProgress ?? 0}%` : "上传文件"}
-            </span>
-            <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
-          </label>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { setViewMode(viewMode === "trash" ? "files" : "trash"); setSearch(""); setMessage(null); }}
+              className="rounded-lg bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-200"
+            >
+              {viewMode === "trash" ? "返回文件" : "回收站"}
+            </button>
+            {viewMode === "files" && (
+              <label className="block">
+                <span className="inline-flex cursor-pointer items-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 active:bg-blue-800">
+                  {uploading ? `上传中 ${uploadProgress ?? 0}%` : "上传文件"}
+                </span>
+                <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
+              </label>
+            )}
+          </div>
         }
       />
-      <div className="grid gap-3 sm:grid-cols-3">
+      {viewMode === "files" && <div className="grid gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase text-slate-500">当前项目数</p>
           <p className="mt-1 text-2xl font-semibold text-slate-950">{files.length}</p>
@@ -325,8 +379,8 @@ export default function FilesPage() {
           <p className="text-xs font-semibold uppercase text-slate-500">当前可见文件大小</p>
           <p className="mt-1 text-2xl font-semibold text-slate-950">{formatBytes(totalSize)}</p>
         </div>
-      </div>
-      <Section>
+      </div>}
+      {viewMode === "files" && <Section>
         <div className="flex flex-col gap-3 lg:flex-row">
           <div className="flex flex-1 items-center rounded-lg border border-slate-300 bg-white px-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
             <span className="text-sm text-slate-400">搜索</span>
@@ -357,13 +411,20 @@ export default function FilesPage() {
             <p className="text-xs font-medium text-slate-500">正在上传到 {path}</p>
           </div>
         )}
-      </Section>
+      </Section>}
       {message && <InlineMessage tone={message.tone}>{message.text}</InlineMessage>}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {loading ? (
           <EmptyState title="文件加载中..." description="正在读取当前存储池路径。" />
         ) : files.length > 0 ? (
-          files.map((f) => (
+          files.map((f) => viewMode === "trash" ? (
+            <TrashCard
+              key={f.file_id}
+              file={f}
+              busy={restoreBusy === f.file_id}
+              onRestore={handleRestore}
+            />
+          ) : (
             <FileCard
               key={f.file_id || f.path}
               file={f}
@@ -375,8 +436,8 @@ export default function FilesPage() {
           ))
         ) : (
           <EmptyState
-            title={search ? "没有匹配的文件" : "还没有文件"}
-            description={search ? "试试更短的关键词，或清空搜索条件。" : "上传一个文件，开始往存储池里放内容。"}
+            title={viewMode === "trash" ? "回收站是空的" : search ? "没有匹配的文件" : "还没有文件"}
+            description={viewMode === "trash" ? "删除的内容会在保留期内显示在这里。" : search ? "试试更短的关键词，或清空搜索条件。" : "上传一个文件，开始往存储池里放内容。"}
           />
         )}
       </div>

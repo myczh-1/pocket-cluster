@@ -40,6 +40,7 @@ jobs:
           scripts/e2e/three-node-offline-delete.sh
           scripts/e2e/three-node-offline-rename.sh
           scripts/e2e/three-node-offline-concurrent-update.sh
+          scripts/e2e/three-node-offline-restore.sh
 
   android:
     runs-on: ubuntu-latest

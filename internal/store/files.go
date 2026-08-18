@@ -35,6 +35,11 @@ func (s *Store) GetFileByID(fileID string) (*types.File, error) {
 	return scanFile(row)
 }
 
+func (s *Store) GetFileIncludingDeleted(path string) (*types.File, error) {
+	row := s.db.QueryRow(`SELECT file_id, name, path, is_dir, size_bytes, mime_type, version_id, parent_version_id, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of FROM files WHERE path = ?`, path)
+	return scanFile(row)
+}
+
 func (s *Store) ListFiles(dirPath string) ([]types.File, error) {
 	var rows *sql.Rows
 	var err error
@@ -59,6 +64,7 @@ func (s *Store) ListFiles(dirPath string) ([]types.File, error) {
 	}
 	return files, rows.Err()
 }
+
 // ListDescendants returns all non-deleted files under dirPath (recursively).
 func (s *Store) ListDescendants(dirPath string) ([]types.File, error) {
 	prefix := strings.TrimRight(dirPath, "/") + "/"
@@ -77,7 +83,6 @@ func (s *Store) ListDescendants(dirPath string) ([]types.File, error) {
 	}
 	return files, rows.Err()
 }
-
 
 // escapeLike escapes % and _ for SQLite LIKE patterns.
 func escapeLike(s string) string {
@@ -108,6 +113,98 @@ func (s *Store) MarkChildrenDeleted(dirPath string, deletedBy string) error {
 	}
 	_, err = s.db.Exec(`DELETE FROM files_fts WHERE file_id IN (SELECT file_id FROM files WHERE deleted = 1 AND (path = ? OR path LIKE ? || '%'))`, dirPath, prefix)
 	return err
+}
+
+// ListDeletedRoots returns recoverable tombstones without repeating children
+// of a deleted directory as separate trash entries.
+func (s *Store) ListDeletedRoots() ([]types.File, error) {
+	rows, err := s.db.Query(`SELECT f.file_id, f.name, f.path, f.is_dir, f.size_bytes, f.mime_type, f.version_id, f.parent_version_id, f.chunk_ids, f.created_at, f.modified_at, f.modified_by, f.deleted, f.conflict_of
+		FROM files f
+		WHERE f.deleted = 1 AND NOT EXISTS (
+			SELECT 1 FROM files parent
+			WHERE parent.deleted = 1 AND parent.path <> f.path
+			AND substr(f.path, 1, length(rtrim(parent.path, '/')) + 1) = rtrim(parent.path, '/') || '/'
+		)
+		ORDER BY f.modified_at DESC, f.path ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var files []types.File
+	for rows.Next() {
+		f, err := scanFileRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, *f)
+	}
+	return files, rows.Err()
+}
+
+// RestoreDeleted restores one file or a deleted directory subtree by stable
+// identity. Chunk references remain intact throughout the retention window.
+func (s *Store) RestoreDeleted(fileID string, isDir bool, restoredBy string, restoredAt time.Time) error {
+	f, err := s.GetFileByID(fileID)
+	if err != nil {
+		return err
+	}
+	return s.restoreDeletedRecord(f, isDir, restoredBy, restoredAt)
+}
+
+// RestoreDeletedPath is used for directories because legacy DIR_CREATE events
+// assigned a different directory file ID on each node.
+func (s *Store) RestoreDeletedPath(path string, restoredBy string, restoredAt time.Time) error {
+	f, err := s.GetFileIncludingDeleted(path)
+	if err != nil {
+		return err
+	}
+	return s.restoreDeletedRecord(f, true, restoredBy, restoredAt)
+}
+
+func (s *Store) restoreDeletedRecord(f *types.File, isDir bool, restoredBy string, restoredAt time.Time) error {
+	if !f.Deleted {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var rows *sql.Rows
+	if isDir {
+		prefix := strings.TrimSuffix(f.Path, "/") + "/"
+		rows, err = tx.Query(`SELECT file_id, name, path FROM files WHERE deleted = 1 AND (path = ? OR substr(path, 1, ?) = ?) ORDER BY length(path) ASC`, f.Path, len(prefix), prefix)
+	} else {
+		rows, err = tx.Query(`SELECT file_id, name, path FROM files WHERE deleted = 1 AND file_id = ?`, f.FileID)
+	}
+	if err != nil {
+		return err
+	}
+	type restoredFile struct{ fileID, name, path string }
+	var restored []restoredFile
+	for rows.Next() {
+		var item restoredFile
+		if err := rows.Scan(&item.fileID, &item.name, &item.path); err != nil {
+			rows.Close()
+			return err
+		}
+		restored = append(restored, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(restored) == 0 {
+		return sql.ErrNoRows
+	}
+	for _, item := range restored {
+		if _, err := tx.Exec(`UPDATE files SET deleted = 0, modified_by = ?, modified_at = ? WHERE file_id = ? AND deleted = 1`, restoredBy, timeMillis(restoredAt), item.fileID); err != nil {
+			return err
+		}
+		if err := indexFileTx(tx, &types.File{FileID: item.fileID, Name: item.name, Path: item.path}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) PurgeFile(fileID string) error {

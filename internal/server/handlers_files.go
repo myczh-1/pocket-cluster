@@ -245,6 +245,78 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	go s.runHealthScan(context.Background())
 }
 
+func (s *Server) handleListTrash(w http.ResponseWriter, _ *http.Request) {
+	deleted, err := s.store.ListDeletedRoots()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	type trashEntry struct {
+		types.File
+		DeletedAt time.Time `json:"deleted_at"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	entries := make([]trashEntry, 0, len(deleted))
+	retention := s.cfg.TombstoneRetentionDuration()
+	for _, file := range deleted {
+		entries = append(entries, trashEntry{
+			File:      file,
+			DeletedAt: file.ModifiedAt,
+			ExpiresAt: file.ModifiedAt.Add(retention),
+		})
+	}
+	writeOK(w, http.StatusOK, map[string]any{
+		"entries":                   entries,
+		"tombstone_retention_hours": int(retention.Hours()),
+	})
+}
+
+func (s *Server) handleRestoreTrash(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FileID string `json:"file_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if req.FileID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "file_id is required")
+		return
+	}
+	file, err := s.store.GetFileByID(req.FileID)
+	if err != nil || !file.Deleted {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "recoverable item not found")
+		return
+	}
+	now := time.Now()
+	if err := s.store.RestoreDeleted(file.FileID, file.IsDir, s.cfg.NodeID, now); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	eventType := types.EventFileRestore
+	if file.IsDir {
+		eventType = types.EventDirRestore
+	}
+	if _, err := s.appendEvent(eventType, struct {
+		FileID     string `json:"file_id"`
+		Path       string `json:"path"`
+		RestoredBy string `json:"restored_by"`
+	}{
+		FileID:     file.FileID,
+		Path:       file.Path,
+		RestoredBy: s.cfg.NodeID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	writeOK(w, http.StatusOK, map[string]any{
+		"file_id": file.FileID,
+		"path":    file.Path,
+		"status":  "restored",
+	})
+	go s.runHealthScan(context.Background())
+}
+
 // PATCH /api/files/rename — rename or move a file
 func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	var req struct {

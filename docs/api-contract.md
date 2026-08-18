@@ -336,6 +336,58 @@ Delete a file or directory. Directories are recursively deleted (all children ar
 }
 ```
 `reclaim_status: retained` means the entry is no longer visible, but its data remains during the configured retention window so deletion can propagate through the cluster. The Health page can trigger an immediate reclamation job.
+
+### GET /api/trash
+
+List recoverable deleted files and directory roots. Children of a deleted directory are restored with the directory and are not listed separately.
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "entries": [
+      {
+        "file_id": "f-001",
+        "path": "/Documents",
+        "is_dir": true,
+        "deleted_at": "2026-08-18T10:00:00Z",
+        "expires_at": "2026-08-25T10:00:00Z"
+      }
+    ],
+    "tombstone_retention_hours": 168
+  }
+}
+```
+
+### POST /api/trash/restore
+
+Restore a deleted file or directory tree before its tombstone expires.
+
+**Request body (JSON):**
+
+```json
+{
+  "file_id": "f-001"
+}
+```
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "file_id": "f-001",
+    "path": "/Documents",
+    "status": "restored"
+  }
+}
+```
+
+Restore is propagated to peers through `FILE_RESTORE` or `DIR_RESTORE`. Directory restore uses the path as a compatibility key for directories created by older releases whose internal IDs may differ between nodes.
+
 ### PATCH /api/files/rename
 Rename or move a file.
 **Request body (JSON):**

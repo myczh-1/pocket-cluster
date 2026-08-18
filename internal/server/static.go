@@ -24,6 +24,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/join/approve/{nodeId}", s.handleJoinApprove)
 	mux.HandleFunc("GET /api/join/pending", s.handleListPendingJoins)
 	mux.HandleFunc("GET /api/files", s.handleListFiles)
+	mux.HandleFunc("GET /api/trash", s.handleListTrash)
+	mux.HandleFunc("POST /api/trash/restore", s.handleRestoreTrash)
 	mux.HandleFunc("POST /api/files/upload", s.handleUpload)
 	mux.HandleFunc("DELETE /api/files", s.handleDelete)
 	mux.HandleFunc("PATCH /api/files/rename", s.handleRename)
