@@ -45,7 +45,11 @@ func (s *Server) StartSync(ctx context.Context, interval time.Duration) {
 	}
 }
 func (s *Server) SyncOnce(ctx context.Context) error {
-	if _, err := s.store.MarkStaleNodesOffline(time.Now().Add(-nodeOfflineAfter)); err != nil {
+	now := time.Now()
+	if err := s.store.UpdateNodeStatus(s.cfg.NodeID, "online", now); err != nil {
+		log.Printf("refresh local node heartbeat: %v", err)
+	}
+	if _, err := s.store.MarkStaleNodesOffline(now.Add(-nodeOfflineAfter)); err != nil {
 		log.Printf("mark stale nodes: %v", err)
 	}
 	// Periodically ping offline nodes with a short timeout to detect recovery.

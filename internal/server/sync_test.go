@@ -682,7 +682,7 @@ func nonLoopbackIPv4() (net.IP, bool) {
 	return nil, false
 }
 
-func TestSyncOnceMarksStaleNodesOffline(t *testing.T) {
+func TestSyncOnceRefreshesSelfAndMarksStalePeersOffline(t *testing.T) {
 	localStore, err := store.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -694,6 +694,15 @@ func TestSyncOnceMarksStaleNodesOffline(t *testing.T) {
 	}
 	localSrv := New(newTestConfig(t, "local"), localStore, localChunks)
 	now := time.Now()
+	if err := localStore.UpsertNode(&types.Node{
+		NodeID:    "local",
+		Status:    "online",
+		Trusted:   true,
+		LastSeen:  now.Add(-60 * time.Second),
+		PublicKey: "local-key",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := localStore.UpsertNode(&types.Node{
 		NodeID:    "stale-peer",
 		Address:   "127.0.0.1:1",
@@ -711,5 +720,15 @@ func TestSyncOnceMarksStaleNodesOffline(t *testing.T) {
 	}
 	if n.Status != "offline" {
 		t.Fatalf("stale-peer status = %q, want offline", n.Status)
+	}
+	self, err := localStore.GetNode("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if self.Status != "online" {
+		t.Fatalf("local status = %q, want online", self.Status)
+	}
+	if self.LastSeen.Before(now) {
+		t.Fatalf("local last_seen = %s, want refreshed after %s", self.LastSeen, now)
 	}
 }

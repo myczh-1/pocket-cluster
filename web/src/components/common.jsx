@@ -37,7 +37,7 @@ export function StatusBadge({ status }) {
   };
   return (
     <span className={cx(
-      "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold capitalize",
+      "inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold capitalize",
       colors[status] || "border-slate-200 bg-slate-100 text-slate-600"
     )}>
       {statusLabel(status)}

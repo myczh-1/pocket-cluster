@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -12,6 +13,32 @@ import (
 	"github.com/pocketcluster/agent/internal/store"
 	"github.com/pocketcluster/agent/internal/types"
 )
+
+func TestEvacuateNodeRejectsOfflineNode(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	chunks := chunk.New(t.TempDir())
+	if err := chunks.Init(); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(newTestConfig(t, "local"), st, chunks)
+	if err := st.UpsertNode(&types.Node{NodeID: "offline", Status: "offline", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+	session := loginTestSession(t, srv)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/nodes/offline/evacuate", nil), session)
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusConflict, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "NODE_OFFLINE") {
+		t.Fatalf("response = %s, want NODE_OFFLINE", res.Body.String())
+	}
+}
 
 func TestEvacuateNodeCreatesTwoVerifiedReplacementReplicas(t *testing.T) {
 	localCfg := newTestConfig(t, "leaving")

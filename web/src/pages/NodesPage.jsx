@@ -7,6 +7,17 @@ function NodeCard({ node, evacuation, evacuating, onEvacuate }) {
   const usedPct = node.total_bytes > 0 ? Math.round((node.used_bytes / node.total_bytes) * 100) : 0;
   const safeToExit = evacuation?.safe_to_exit;
   const blocked = evacuation?.state === "blocked";
+  const offline = node.status !== "online";
+  const missingDestinations = evacuation
+    ? Math.max(0, evacuation.required_other_replicas - evacuation.eligible_destination_nodes)
+    : 0;
+  const evacuationTone = offline
+    ? "bg-slate-100 text-slate-700"
+    : safeToExit
+      ? "bg-emerald-50 text-emerald-700"
+      : blocked
+        ? "bg-amber-50 text-amber-700"
+        : "bg-blue-50 text-blue-700";
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -27,24 +38,36 @@ function NodeCard({ node, evacuation, evacuating, onEvacuate }) {
           <span>总计 {formatBytes(node.total_bytes)}</span>
         </div>
         {evacuation && (
-          <div className={`mt-3 rounded-lg p-3 ${safeToExit ? "bg-emerald-50 text-emerald-700" : blocked ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700"}`}>
+          <div className={`mt-3 rounded-lg p-3 ${evacuationTone}`}>
             <p className="font-semibold">
-              {safeToExit ? "可以安全退出" : blocked ? "暂时不能退出" : evacuating ? "正在准备安全退出" : "尚未准备退出"}
+              {offline
+                ? "设备已离线"
+                : safeToExit
+                  ? "可以安全退出"
+                  : blocked
+                    ? "还不能退出"
+                    : evacuating
+                      ? "正在迁出数据"
+                      : "需要迁出数据"}
             </p>
             <p className="mt-1 leading-5">
-              {safeToExit
-                ? `本设备的 ${evacuation.total_chunks} 个数据块均已在其他设备留有安全副本。`
-                : blocked
-                  ? `还需要更多在线设备，当前仍有 ${evacuation.pending_chunks} 个数据块不能安全迁出。`
-                  : `已有 ${evacuation.safe_chunks}/${evacuation.total_chunks} 个数据块完成迁出。`}
+              {offline
+                ? safeToExit
+                  ? "其他在线设备已有完整安全副本，不需要再执行迁出。"
+                  : `仍有 ${evacuation.pending_chunks} 个数据块未安全迁出，请先让这台设备上线。`
+                : safeToExit
+                  ? `本设备的 ${evacuation.total_chunks} 个数据块均已在其他设备留有安全副本。`
+                  : blocked
+                    ? `还需连接 ${missingDestinations} 台设备，才能迁出剩余 ${evacuation.pending_chunks} 个数据块。`
+                    : `已有 ${evacuation.safe_chunks}/${evacuation.total_chunks} 个数据块完成迁出。`}
             </p>
-            {!safeToExit && (
+            {!offline && !safeToExit && !blocked && (
               <button
                 onClick={() => onEvacuate(node)}
-                disabled={evacuating || blocked}
+                disabled={evacuating}
                 className="mt-2 w-full rounded-md bg-white px-3 py-2 font-semibold shadow-sm ring-1 ring-current/15 hover:bg-white/70 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {evacuating ? "迁移中..." : blocked ? "需要更多在线设备" : "准备安全退出"}
+                {evacuating ? "迁移中..." : "迁出这台设备的数据"}
               </button>
             )}
           </div>

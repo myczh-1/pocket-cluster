@@ -79,6 +79,9 @@ func (s *Server) nodeEvacuationStatus(nodeID string) (NodeEvacuationStatus, erro
 	status.PendingChunks = status.TotalChunks - status.SafeChunks
 	status.SafeToExit = status.PendingChunks == 0
 	switch {
+	case node.Status != "online" && !status.SafeToExit:
+		status.State = "offline"
+		status.Message = "Reconnect this node before migrating its remaining chunks."
 	case status.SafeToExit && status.TotalChunks == 0:
 		status.State = "ready"
 		status.Message = "This node holds no pool chunks and can be stopped safely."
@@ -121,8 +124,21 @@ func (s *Server) handleEvacuateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "nodeId required")
 		return
 	}
-	if _, err := s.nodeEvacuationStatus(nodeID); err != nil {
+	node, err := s.store.GetNode(nodeID)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		return
+	}
+	if !node.Trusted {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "trusted node not found")
+		return
+	}
+	if node.Status != "online" {
+		writeError(w, http.StatusConflict, "NODE_OFFLINE", "node must be online before evacuation can start")
+		return
+	}
+	if _, err := s.nodeEvacuationStatus(nodeID); err != nil {
+		writeError(w, http.StatusInternalServerError, "STATUS_ERROR", err.Error())
 		return
 	}
 	if !s.beginNodeEvacuation(nodeID) {

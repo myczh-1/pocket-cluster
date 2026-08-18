@@ -164,18 +164,18 @@ export default function HealthPage() {
         </div>
       )}
       <Section title="风险定位" description="这里优先按文件和节点定位问题，不把 Chunk 细节放到主视线里。">
-      <div className="grid gap-4 xl:grid-cols-2">
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+        <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-slate-950">需要关注的文件</h3>
             <span className="text-xs text-slate-500">{riskyFiles.length} 个文件</span>
           </div>
-          <div className="space-y-2">
+          <div className="min-w-0 space-y-2">
             {riskyFiles.slice(0, 8).map((file) => (
               <div key={file.file_id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate font-mono text-xs text-slate-600">{file.path}</div>
+                <div className="flex min-w-0 max-w-full flex-col items-start gap-2 sm:flex-row sm:justify-between sm:gap-3">
+                  <div className="w-full min-w-0 max-w-full">
+                    <div className="max-w-full truncate font-mono text-xs text-slate-600">{file.path}</div>
                     <div className="mt-1 text-xs text-slate-500">
                       {file.readable_chunks}/{file.chunk_count} 可读
                       {file.unavailable_chunks > 0 && ` · ${file.unavailable_chunks} 不可用`}
@@ -191,16 +191,16 @@ export default function HealthPage() {
             )}
           </div>
         </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-slate-950">节点贡献</h3>
             <span className="text-xs text-slate-500">{riskyNodes.length} 个节点</span>
           </div>
-          <div className="space-y-2">
+          <div className="min-w-0 space-y-2">
             {riskyNodes.slice(0, 8).map((node) => (
               <div key={node.node_id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
+                <div className="flex min-w-0 max-w-full flex-col items-start gap-2 sm:flex-row sm:justify-between sm:gap-3">
+                  <div className="w-full min-w-0 max-w-full">
                     <div className="truncate text-sm font-semibold text-slate-950">{node.name || node.node_id}</div>
                     <div className="mt-1 text-xs text-slate-500">
                       {node.platform} · 最近在线 {formatLastSeen(node.last_seen)}
@@ -212,7 +212,7 @@ export default function HealthPage() {
                       {node.risk_chunk_count} 个风险 · {node.repairing_chunks} 个修复中
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
-                      {formatBytes(node.used_bytes || 0)} used / {formatBytes(node.total_bytes || 0)} total
+                      已用 {formatBytes(node.used_bytes || 0)} / 总计 {formatBytes(node.total_bytes || 0)}
                     </div>
                   </div>
                   <StatusBadge status={node.status} />
