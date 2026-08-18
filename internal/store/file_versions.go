@@ -5,10 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"time"
 
 	"github.com/pocketcluster/agent/internal/types"
 )
+
+type FileVersionHistoryEntry struct {
+	File         types.File
+	SupersededAt time.Time
+}
 
 // RecordFileVersion stores an immutable file version. Replaying the same
 // version is idempotent, while reusing a version ID for different metadata is
@@ -92,6 +98,104 @@ func (s *Store) ListFileVersions(fileID string) ([]types.File, error) {
 		versions = append(versions, *f)
 	}
 	return versions, rows.Err()
+}
+
+// ListRecoverableFileVersions returns superseded content versions whose
+// recovery window has not expired. Version metadata remains in the ledger
+// after expiry because it is still needed for deterministic convergence.
+func (s *Store) ListRecoverableFileVersions(fileID string, cutoff time.Time) ([]FileVersionHistoryEntry, error) {
+	versions, err := s.ListFileVersions(fileID)
+	if err != nil {
+		return nil, err
+	}
+	entries := fileVersionHistoryEntries(versions)
+	result := entries[:0]
+	for _, entry := range entries {
+		if !entry.SupersededAt.Before(cutoff) {
+			result = append(result, entry)
+		}
+	}
+	return result, nil
+}
+
+func (s *Store) GetRecoverableFileVersion(fileID, versionID string, cutoff time.Time) (*FileVersionHistoryEntry, error) {
+	entries, err := s.ListRecoverableFileVersions(fileID, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		if entries[i].File.VersionID == versionID {
+			return &entries[i], nil
+		}
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (s *Store) IsChunkInRecoverableVersion(chunkID string, cutoff time.Time) (bool, error) {
+	versions, err := s.ListAllFileVersions()
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range fileVersionHistoryEntries(versions) {
+		if entry.SupersededAt.Before(cutoff) {
+			continue
+		}
+		for _, candidate := range entry.File.ChunkIDs {
+			if candidate == chunkID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (s *Store) ListExpiredVersionChunkIDs(cutoff time.Time) ([]string, error) {
+	versions, err := s.ListAllFileVersions()
+	if err != nil {
+		return nil, err
+	}
+	unique := make(map[string]struct{})
+	for _, entry := range fileVersionHistoryEntries(versions) {
+		if !entry.SupersededAt.Before(cutoff) {
+			continue
+		}
+		for _, chunkID := range entry.File.ChunkIDs {
+			unique[chunkID] = struct{}{}
+		}
+	}
+	chunkIDs := make([]string, 0, len(unique))
+	for chunkID := range unique {
+		chunkIDs = append(chunkIDs, chunkID)
+	}
+	sort.Strings(chunkIDs)
+	return chunkIDs, nil
+}
+
+func fileVersionHistoryEntries(versions []types.File) []FileVersionHistoryEntry {
+	supersededAt := make(map[string]time.Time)
+	for _, version := range versions {
+		if version.ParentVersionID == "" {
+			continue
+		}
+		current, ok := supersededAt[version.ParentVersionID]
+		if !ok || version.ModifiedAt.Before(current) {
+			supersededAt[version.ParentVersionID] = version.ModifiedAt
+		}
+	}
+	entries := make([]FileVersionHistoryEntry, 0, len(supersededAt))
+	for _, version := range versions {
+		at, ok := supersededAt[version.VersionID]
+		if ok {
+			entries = append(entries, FileVersionHistoryEntry{File: version, SupersededAt: at})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].SupersededAt.Equal(entries[j].SupersededAt) {
+			return entries[i].File.VersionID < entries[j].File.VersionID
+		}
+		return entries[i].SupersededAt.After(entries[j].SupersededAt)
+	})
+	return entries
 }
 
 func (s *Store) ListAllFileVersions() ([]types.File, error) {

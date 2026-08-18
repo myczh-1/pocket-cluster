@@ -206,6 +206,99 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleListFileVersions(w http.ResponseWriter, r *http.Request) {
+	fileID := r.URL.Query().Get("file_id")
+	if fileID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "file_id is required")
+		return
+	}
+	current, err := s.store.GetFileByID(fileID)
+	if err != nil || current.Deleted || current.IsDir {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "file not found")
+		return
+	}
+	retention := s.cfg.TombstoneRetentionDuration()
+	versions, err := s.store.ListRecoverableFileVersions(fileID, time.Now().Add(-retention))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	type versionEntry struct {
+		types.File
+		SupersededAt time.Time `json:"superseded_at"`
+		ExpiresAt    time.Time `json:"expires_at"`
+	}
+	entries := make([]versionEntry, 0, len(versions))
+	for _, version := range versions {
+		entries = append(entries, versionEntry{
+			File:         version.File,
+			SupersededAt: version.SupersededAt,
+			ExpiresAt:    version.SupersededAt.Add(retention),
+		})
+	}
+	writeOK(w, http.StatusOK, map[string]any{
+		"entries":                  entries,
+		"recovery_retention_hours": int(retention.Hours()),
+	})
+}
+
+func (s *Server) handleRestoreFileVersion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FileID    string `json:"file_id"`
+		VersionID string `json:"version_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if req.FileID == "" || req.VersionID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "file_id and version_id are required")
+		return
+	}
+	current, err := s.store.GetFileByID(req.FileID)
+	if err != nil || current.Deleted || current.IsDir {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "file not found")
+		return
+	}
+	retention := s.cfg.TombstoneRetentionDuration()
+	history, err := s.store.GetRecoverableFileVersion(req.FileID, req.VersionID, time.Now().Add(-retention))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "VERSION_NOT_RECOVERABLE", "file version is no longer recoverable")
+		return
+	}
+	for _, chunkID := range history.File.ChunkIDs {
+		if !s.isChunkReadable(r.Context(), chunkID) {
+			writeError(w, http.StatusConflict, "VERSION_CONTENT_UNAVAILABLE", "file version content is unavailable")
+			return
+		}
+	}
+	now := time.Now()
+	restored := &types.File{
+		FileID:          current.FileID,
+		Name:            current.Name,
+		Path:            current.Path,
+		SizeBytes:       history.File.SizeBytes,
+		MimeType:        history.File.MimeType,
+		VersionID:       uuid.NewString(),
+		ParentVersionID: current.VersionID,
+		ChunkIDs:        append([]string(nil), history.File.ChunkIDs...),
+		CreatedAt:       current.CreatedAt,
+		ModifiedAt:      now,
+		ModifiedBy:      s.cfg.NodeID,
+	}
+	if err := s.commitFilePut(restored, filePutOptions{ConflictOnExisting: false}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	go s.repairChunksAsync(append([]string(nil), restored.ChunkIDs...))
+	writeOK(w, http.StatusOK, map[string]any{
+		"file_id":             restored.FileID,
+		"path":                restored.Path,
+		"version_id":          restored.VersionID,
+		"restored_version_id": history.File.VersionID,
+	})
+}
+
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {

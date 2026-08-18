@@ -30,6 +30,45 @@ func TestRecordFileVersionIsImmutableAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestRecoverableFileVersionsUseSupersededTime(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	base := &types.File{
+		FileID: "file", Name: "a.txt", Path: "/a.txt", VersionID: "base", ChunkIDs: []string{"old-chunk"},
+		CreatedAt: time.UnixMilli(1000), ModifiedAt: time.UnixMilli(1000), ModifiedBy: "node-a",
+	}
+	next := &types.File{
+		FileID: "file", Name: "a.txt", Path: "/a.txt", VersionID: "next", ParentVersionID: "base", ChunkIDs: []string{"new-chunk"},
+		CreatedAt: base.CreatedAt, ModifiedAt: time.UnixMilli(10_000), ModifiedBy: "node-a",
+	}
+	for _, version := range []*types.File{base, next} {
+		if err := st.RecordFileVersion(version); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := st.ListRecoverableFileVersions("file", time.UnixMilli(9_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].File.VersionID != "base" || !entries[0].SupersededAt.Equal(next.ModifiedAt) {
+		t.Fatalf("history entries = %+v", entries)
+	}
+	referenced, err := st.IsChunkInRecoverableVersion("old-chunk", time.UnixMilli(9_000))
+	if err != nil || !referenced {
+		t.Fatalf("recent old chunk referenced = %v, err = %v", referenced, err)
+	}
+	expired, err := st.ListExpiredVersionChunkIDs(time.UnixMilli(11_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expired) != 1 || expired[0] != "old-chunk" {
+		t.Fatalf("expired chunks = %v", expired)
+	}
+}
+
 func TestMigrationV7SeedsCurrentFileVersions(t *testing.T) {
 	dataDir := t.TempDir()
 	st, err := Open(dataDir)

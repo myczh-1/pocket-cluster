@@ -166,8 +166,8 @@ func TestWebDAVOverwriteRequiresCurrentETag(t *testing.T) {
 	if res.Code != http.StatusCreated && res.Code != http.StatusOK {
 		t.Fatalf("conditional overwrite status = %d, want 200/201: %s", res.Code, res.Body.String())
 	}
-	if srv.chunks.Exists(oldChunkID) {
-		t.Fatalf("old chunk %s still exists after overwrite", oldChunkID)
+	if !srv.chunks.Exists(oldChunkID) {
+		t.Fatalf("old chunk %s was removed before the recovery window expired", oldChunkID)
 	}
 	if string(readWebDAVFile(t, handler, "/dav/overwrite.txt")) != "second" {
 		t.Fatal("conditional overwrite did not update file content")

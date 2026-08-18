@@ -242,8 +242,16 @@ func (s *Server) CleanupTombstones() error {
 }
 
 func (s *Server) CleanupTombstonesContext(ctx context.Context) error {
-	_, err := s.cleanupDeletedFiles(ctx, false)
-	return err
+	if _, err := s.cleanupDeletedFiles(ctx, false); err != nil {
+		return err
+	}
+	cutoff := time.Now().Add(-s.cfg.TombstoneRetentionDuration())
+	chunkIDs, err := s.store.ListExpiredVersionChunkIDs(cutoff)
+	if err != nil {
+		return err
+	}
+	s.cleanupUnreferencedChunks(ctx, chunkIDs)
+	return ctx.Err()
 }
 
 func (s *Server) PurgeRetainedDataContext(ctx context.Context) (int, error) {
@@ -292,7 +300,7 @@ func (s *Server) purgeDeletedFile(f types.File) error {
 		})
 		return err
 	}
-	s.cleanupUnreferencedChunks(context.Background(), f.ChunkIDs)
+	s.cleanupChunks(context.Background(), f.ChunkIDs, false)
 	_, err := s.appendEvent(types.EventFilePurge, struct {
 		FileID   string   `json:"file_id"`
 		Path     string   `json:"path"`

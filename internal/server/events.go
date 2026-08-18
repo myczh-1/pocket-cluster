@@ -80,7 +80,7 @@ func (s *Server) applyEvent(e types.Event) error {
 				return err
 			}
 		}
-		s.cleanupUnreferencedChunks(context.Background(), payload.ChunkIDs)
+		s.cleanupChunks(context.Background(), payload.ChunkIDs, false)
 		return nil
 	case types.EventChunkReplicaAdd:
 		var r types.Replica

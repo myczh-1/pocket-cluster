@@ -30,6 +30,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/files", s.handleDelete)
 	mux.HandleFunc("PATCH /api/files/rename", s.handleRename)
 	mux.HandleFunc("GET /api/files/download", s.handleDownload)
+	mux.HandleFunc("GET /api/files/versions", s.handleListFileVersions)
+	mux.HandleFunc("POST /api/files/versions/restore", s.handleRestoreFileVersion)
 	mux.HandleFunc("GET /api/chunks-exists", s.handleChunksExist)
 	mux.HandleFunc("GET /api/chunks/{hash}", s.handleGetChunk)
 	mux.HandleFunc("HEAD /api/chunks/{hash}", s.handleHeadChunk)

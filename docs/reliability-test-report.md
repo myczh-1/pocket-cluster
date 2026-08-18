@@ -28,6 +28,7 @@ Fill this section for each run:
 | Three-node offline rename | Verify rename convergence and no stale path after a node recovers | `scripts/e2e/three-node-offline-rename.sh` | Passed locally | loopback-only validation |
 | Three-node concurrent update | Verify two offline WebDAV edits converge regardless of recovery order | `scripts/e2e/three-node-offline-concurrent-update.sh` | Passed locally | main plus conflict, restart, continued edit |
 | Three-node offline restore | Verify trash restore converges after an offline node recovers | `scripts/e2e/three-node-offline-restore.sh` | Passed locally | directory tree and retained chunks |
+| Three-node version restore | Verify superseded content restore converges after an offline node recovers | `scripts/e2e/three-node-offline-version-restore.sh` | Passed locally | bounded history retention and lineage |
 | WebDAV smoke | Verify upload, list, download, delete on one node | `scripts/e2e/webdav-smoke-test.sh` | Passed locally | single-node local validation |
 | Android manual | Verify Android join and carry behavior | `scripts/e2e/android-manual-test.md` | Pending |  |
 
@@ -96,6 +97,19 @@ Fill this section for each run:
   - node 3 applied both events while remaining online
   - after node 2 restarted, the full directory tree and original content were readable again
   - the trash entry disappeared on all three nodes
+- Failure mode if any:
+  - none in the loopback scenario
+
+### Three-node version restore
+
+- Status: Passed locally
+- Evidence:
+  - the first file version replicated to all three nodes before replacement
+  - the second version became current on all nodes while the first version's Chunks remained recoverable
+  - node 2 was stopped before node 1 restored the first content as a new version
+  - node 3 converged while online; node 2 converged after restart
+  - all three nodes agreed on the same restored current version ID and content
+  - unit coverage verifies expired historical Chunks are reclaimed after the recovery window
 - Failure mode if any:
   - none in the loopback scenario
 

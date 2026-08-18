@@ -8,6 +8,7 @@
 - Invite-based cluster join and pool-level authentication
 - Unified pool file upload, download, browsing, and search
 - Recoverable file and directory deletion through the pool trash
+- Bounded file-version history with restore-as-new-version semantics
 - Chunk splitting, SHA256 addressing, dual replicas, metadata sync, and offline recovery
 - WebDAV access for standard desktop and Android clients
 - Basic advanced diagnostics for node status, replica health, and repair progress

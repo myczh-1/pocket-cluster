@@ -91,6 +91,8 @@ Fields:
 
 `files` is the materialized current view. Immutable entries for committed content versions are stored separately in `file_versions`, allowing nodes to determine ancestry and concurrent heads without relying on event arrival order. Rename and deletion remain event-driven in the current schema.
 
+Superseded version metadata is retained because convergence may still need its ancestry. Its Chunk content is retained only for the configured recovery window, measured from the earliest child version's modification time. Restoring old content creates a new descendant of the current head; it never mutates the historical record.
+
 ### Chunk
 
 ```json

@@ -312,6 +312,60 @@ Download a file by path.
 
 Chunks are reassembled in order and streamed to the client.
 
+### GET /api/files/versions?file_id=f-003
+
+List superseded content versions that remain recoverable. The recovery window starts when a version is replaced, not when it was originally created.
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "entries": [
+      {
+        "file_id": "f-003",
+        "version_id": "v-previous",
+        "size_bytes": 1024,
+        "modified_at": "2026-08-17T09:00:00Z",
+        "superseded_at": "2026-08-18T09:00:00Z",
+        "expires_at": "2026-08-25T09:00:00Z"
+      }
+    ],
+    "recovery_retention_hours": 168
+  }
+}
+```
+
+### POST /api/files/versions/restore
+
+Restore old content as a new current version. The current path and file identity are preserved, and the new version points to the current head as its parent.
+
+**Request body (JSON):**
+
+```json
+{
+  "file_id": "f-003",
+  "version_id": "v-previous"
+}
+```
+
+The request fails without changing metadata when any required Chunk is unavailable.
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "file_id": "f-003",
+    "path": "/report.pdf",
+    "version_id": "v-restored",
+    "restored_version_id": "v-previous"
+  }
+}
+```
+
 ### GET /api/files/download?id=f-003
 
 Download a file by file_id.

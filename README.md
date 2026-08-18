@@ -22,6 +22,7 @@ No NAS. No cloud. No central server. Just your devices.
 - **Pool Auth** — shared username/password per storage pool, session-based login
 - **Invite Join** — approve new nodes from any existing member, or use one-time invite tokens
 - **Recoverable Trash** — restore deleted files or complete directory trees during the retention window
+- **Version History** — restore recently superseded file content without rewriting version lineage
 - **Cross-Platform** — single static binary for each platform, no runtime dependencies
 
 ## Example Use Cases
@@ -45,6 +46,7 @@ No NAS. No cloud. No central server. Just your devices.
 - Pool-level authentication and session login
 - Upload, download, browse, and search from the unified pool view
 - Restore deleted files and directory trees from the pool trash
+- Restore superseded file content during the configured recovery window
 - Chunked storage with SHA256 addressing and default dual replicas
 - WebDAV mount from standard desktop and Android WebDAV clients
 - Health visibility for replica summary, chunk detail, file/node risk, and sync task tracking
@@ -160,6 +162,7 @@ Scenario-based E2E scripts live in `scripts/e2e/` and cover:
 - **Three-node offline rename** — rename while one replica node is offline, then verify recovery converges without stale or duplicate paths (`three-node-offline-rename.sh`)
 - **Three-node concurrent update** — isolate two WebDAV writers, then verify both recovery orders converge to one main file plus one conflict copy (`three-node-offline-concurrent-update.sh`)
 - **Three-node offline restore** — delete and restore a directory while one node is offline, then verify the recovered node converges (`three-node-offline-restore.sh`)
+- **Three-node version restore** — restore superseded file content while one node is offline, then verify all nodes converge (`three-node-offline-version-restore.sh`)
 - **WebDAV smoke** — upload, list, download, delete (`webdav-smoke-test.sh`)
 - **Android manual** — join and carry checklist (`android-manual-test.md`)
 

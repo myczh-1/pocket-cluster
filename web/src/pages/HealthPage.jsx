@@ -228,7 +228,7 @@ export default function HealthPage() {
       </Section>
       <Section
         title="高级维护"
-        description="删除保留期和待回收清理属于维护动作，默认收起，避免和健康诊断混在一起。"
+        description="恢复保留期和待回收清理属于维护动作，默认收起，避免和健康诊断混在一起。"
         action={(
           <button
             onClick={() => setShowMaintenance((v) => !v)}
@@ -264,7 +264,7 @@ export default function HealthPage() {
               </div>
             </div>
             <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <div className="text-xs font-semibold uppercase text-slate-500">删除保留期</div>
+              <div className="text-xs font-semibold uppercase text-slate-500">恢复保留期</div>
               <div className="mt-1 flex items-end gap-2">
                 <input
                   type="number"
@@ -289,7 +289,7 @@ export default function HealthPage() {
                 </button>
               </div>
               <p className="mt-2 text-xs leading-5 text-slate-500">
-                删除文件后不会立即删 Chunk。超过这个保留期，后台清理轮询会回收未被引用的 Chunk。
+                回收站内容和被替换的旧版本会在此期限内保留。到期后，后台会回收未被当前文件引用的 Chunk。
               </p>
             </div>
           </div>

@@ -3,7 +3,7 @@ import { API, api } from "../api";
 import { cx, formatBytes } from "../utils";
 import { ConfirmDialog, EmptyState, InlineMessage, PageHeader, ProgressBar, Section } from "../components/common";
 
-function FileCard({ file, onDownload, onDelete, onRename, onPreview }) {
+function FileCard({ file, onDownload, onDelete, onRename, onPreview, onHistory }) {
   const canPreview = !file.is_dir && file.mime_type && (
     file.mime_type.startsWith("image/") || file.mime_type.startsWith("text/") || file.mime_type === "application/json"
   );
@@ -49,6 +49,14 @@ function FileCard({ file, onDownload, onDelete, onRename, onPreview }) {
             下载
           </button>
         )}
+        {!file.is_dir && !file.conflict_of && (
+          <button
+            onClick={() => onHistory(file)}
+            className="rounded-lg bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 active:bg-violet-200"
+          >
+            历史
+          </button>
+        )}
         <button
           onClick={() => onRename(file)}
           className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 active:bg-slate-300"
@@ -86,6 +94,78 @@ function TrashCard({ file, busy, onRestore }) {
       >
         {busy ? "恢复中..." : "恢复"}
       </button>
+    </div>
+  );
+}
+
+function VersionHistoryDialog({ file, onClose, onRestored }) {
+  const [versions, setVersions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    api(`/files/versions?file_id=${encodeURIComponent(file.file_id)}`)
+      .then((res) => {
+        if (!active) return;
+        if (!res.ok) throw new Error(res.error?.message || "加载历史版本失败");
+        setVersions(res.data?.entries || []);
+      })
+      .catch((err) => { if (active) setError(err.message || "加载历史版本失败"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [file.file_id]);
+  const restore = async (version) => {
+    setBusy(version.version_id);
+    setError("");
+    try {
+      const res = await api("/files/versions/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_id: file.file_id, version_id: version.version_id }),
+      });
+      if (!res.ok) throw new Error(res.error?.message || "恢复历史版本失败");
+      onRestored();
+    } catch (err) {
+      setError(err.message || "恢复历史版本失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={onClose}>
+      <div className="max-h-[80vh] w-full max-w-xl overflow-auto rounded-lg border border-slate-200 bg-white p-5 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-slate-950">历史版本</h3>
+            <p className="mt-1 truncate text-sm text-slate-500">{file.name}</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200">关闭</button>
+        </div>
+        {error && <div className="mt-4"><InlineMessage tone="error">{error}</InlineMessage></div>}
+        <div className="mt-4 space-y-2">
+          {loading ? (
+            <p className="py-6 text-center text-sm text-slate-500">加载中...</p>
+          ) : versions.length === 0 ? (
+            <p className="py-6 text-center text-sm text-slate-500">没有可恢复的旧版本</p>
+          ) : versions.map((version) => (
+            <div key={version.version_id} className="flex flex-col gap-3 rounded-lg border border-slate-200 p-3 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-slate-900">{formatBytes(version.size_bytes)}</p>
+                <p className="mt-1 text-xs text-slate-500">被替换于 {new Date(version.superseded_at).toLocaleString()}</p>
+                <p className="mt-1 text-xs text-slate-500">可恢复至 {new Date(version.expires_at).toLocaleString()}</p>
+              </div>
+              <button
+                onClick={() => restore(version)}
+                disabled={Boolean(busy)}
+                className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
+              >
+                {busy === version.version_id ? "恢复中..." : "恢复此版本"}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -199,6 +279,7 @@ export default function FilesPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
   const [restoreBusy, setRestoreBusy] = useState("");
+  const [historyFile, setHistoryFile] = useState(null);
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(id);
@@ -432,6 +513,7 @@ export default function FilesPage() {
               onDelete={(file) => { setDeleteError(null); setDeleteFile(file); }}
               onRename={(file) => { setRenameError(null); setRenameFile(file); }}
               onPreview={setPreviewFile}
+              onHistory={setHistoryFile}
             />
           ))
         ) : (
@@ -442,6 +524,17 @@ export default function FilesPage() {
         )}
       </div>
       {previewFile && <FilePreview file={previewFile} onClose={() => setPreviewFile(null)} />}
+      {historyFile && (
+        <VersionHistoryDialog
+          file={historyFile}
+          onClose={() => setHistoryFile(null)}
+          onRestored={() => {
+            setHistoryFile(null);
+            setMessage({ tone: "success", text: `已将 ${historyFile.name} 恢复为所选版本` });
+            loadFiles();
+          }}
+        />
+      )}
       {renameFile && (
         <RenameDialog
           file={renameFile}

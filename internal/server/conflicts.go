@@ -226,6 +226,11 @@ func (s *Server) commitFilePut(f *types.File, opts filePutOptions) error {
 }
 
 func (s *Server) cleanupUnreferencedChunks(ctx context.Context, chunkIDs []string) {
+	s.cleanupChunks(ctx, chunkIDs, true)
+}
+
+func (s *Server) cleanupChunks(ctx context.Context, chunkIDs []string, preserveRecoverableVersions bool) {
+	cutoff := time.Now().Add(-s.cfg.TombstoneRetentionDuration())
 	for _, chunkID := range chunkIDs {
 		select {
 		case <-ctx.Done():
@@ -235,6 +240,12 @@ func (s *Server) cleanupUnreferencedChunks(ctx context.Context, chunkIDs []strin
 		ref, err := s.store.IsChunkReferenced(chunkID)
 		if err != nil || ref {
 			continue
+		}
+		if preserveRecoverableVersions {
+			recoverable, err := s.store.IsChunkInRecoverableVersion(chunkID, cutoff)
+			if err != nil || recoverable {
+				continue
+			}
 		}
 		removed, err := s.removeLocalReplica(chunkID, time.Now())
 		if err != nil {
