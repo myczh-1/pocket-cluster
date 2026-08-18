@@ -1,6 +1,6 @@
 module github.com/pocketcluster/agent
 
-go 1.26.3
+go 1.26.6
 
 require (
 	github.com/google/uuid v1.6.0

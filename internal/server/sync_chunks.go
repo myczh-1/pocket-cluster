@@ -124,7 +124,7 @@ func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing m
 		candidates = append(candidates, candidate{node: n, availableBytes: n.AvailableBytes, isDesktop: isDesktop})
 	}
 	if len(candidates) == 0 {
-		return "", nil
+		return "", fmt.Errorf("push chunk %s: no eligible destination node", chunkID)
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].isDesktop != candidates[j].isDesktop {

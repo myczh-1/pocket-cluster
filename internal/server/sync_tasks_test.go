@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pocketcluster/agent/internal/chunk"
@@ -34,6 +35,13 @@ func TestHandleSyncTasksReturnsTrackedTasks(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
 	}
+	rawBody := res.Body.Bytes()
+	if strings.Contains(string(rawBody), `"finished_at":"0001-`) {
+		t.Fatalf("running task exposed a zero completion time: %s", rawBody)
+	}
+	if got := strings.Count(string(rawBody), `"finished_at"`); got != 1 {
+		t.Fatalf("finished_at field count = %d, want 1: %s", got, rawBody)
+	}
 
 	var body struct {
 		OK   bool `json:"ok"`
@@ -41,7 +49,7 @@ func TestHandleSyncTasksReturnsTrackedTasks(t *testing.T) {
 			Tasks []types.SyncTask `json:"tasks"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(rawBody, &body); err != nil {
 		t.Fatal(err)
 	}
 	if !body.OK {
@@ -61,6 +69,9 @@ func TestRepairFailureStatus(t *testing.T) {
 	}
 	if got := repairFailureStatus(assertErr("chunk unavailable: abc")); got != types.SyncTaskBlocked {
 		t.Fatalf("chunk unavailable status = %q, want %q", got, types.SyncTaskBlocked)
+	}
+	if got := repairFailureStatus(assertErr("push chunk abc: no eligible destination node")); got != types.SyncTaskBlocked {
+		t.Fatalf("no destination status = %q, want %q", got, types.SyncTaskBlocked)
 	}
 	if got := repairFailureStatus(assertErr("dial tcp timeout")); got != types.SyncTaskRetrying {
 		t.Fatalf("generic failure status = %q, want %q", got, types.SyncTaskRetrying)

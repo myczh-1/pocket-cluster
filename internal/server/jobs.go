@@ -133,7 +133,7 @@ func (s *Server) handleJobRepairUnderReplicated(w http.ResponseWriter, r *http.R
 		s.runHealthScan(ctx)
 		switch {
 		case blockedCount > 0 && retryCount == 0:
-			return types.JobBlocked, "Repair is blocked until missing replica nodes return online.", nil
+			return types.JobBlocked, "Repair is blocked until another eligible storage node is online.", nil
 		case blockedCount > 0 || retryCount > 0:
 			return types.JobRetrying, "Repair made partial progress, but some chunks still need another pass.", nil
 		default:

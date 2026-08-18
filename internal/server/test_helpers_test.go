@@ -44,7 +44,6 @@ func loginTestSession(t *testing.T, srv *Server) string {
 	return ""
 }
 
-
 func withAuth(req *http.Request, session string) *http.Request {
 	if session != "" {
 		req.AddCookie(&http.Cookie{Name: "pc-session", Value: session})

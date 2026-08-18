@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +77,13 @@ func TestListJobsReturnsTriggeredJobs(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
 	}
+	rawBody := res.Body.Bytes()
+	if strings.Contains(string(rawBody), `"finished_at":"0001-`) {
+		t.Fatalf("running job exposed a zero completion time: %s", rawBody)
+	}
+	if got := strings.Count(string(rawBody), `"finished_at"`); got != 1 {
+		t.Fatalf("finished_at field count = %d, want 1: %s", got, rawBody)
+	}
 
 	var envelope struct {
 		OK   bool `json:"ok"`
@@ -83,7 +91,7 @@ func TestListJobsReturnsTriggeredJobs(t *testing.T) {
 			Jobs []types.Job `json:"jobs"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&envelope); err != nil {
+	if err := json.Unmarshal(rawBody, &envelope); err != nil {
 		t.Fatal(err)
 	}
 	if len(envelope.Data.Jobs) != 2 {
@@ -91,6 +99,95 @@ func TestListJobsReturnsTriggeredJobs(t *testing.T) {
 	}
 	if envelope.Data.Jobs[0].ID != "job-2" {
 		t.Fatalf("expected latest-updated job first, got %+v", envelope.Data.Jobs)
+	}
+}
+
+func TestJobRepairUnderReplicatedBlocksWithoutDestinationNode(t *testing.T) {
+	srv := newJobsTestServer(t)
+	session := loginTestSession(t, srv)
+	srv.health.skipRemoteVerify = true
+
+	payload := []byte("single-node repair payload")
+	hash, size, err := srv.chunks.Store(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := srv.store.UpsertChunk(&types.Chunk{ChunkID: hash, SizeBytes: size, StoredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.UpsertReplica(&types.Replica{ChunkID: hash, NodeID: srv.cfg.NodeID, Status: "available", StoredAt: now, VerifiedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.store.UpsertFile(&types.File{
+		FileID:     "single-node-file",
+		Name:       "single-node.txt",
+		Path:       "/single-node.txt",
+		SizeBytes:  size,
+		ChunkIDs:   []string{hash},
+		CreatedAt:  now,
+		ModifiedAt: now,
+		ModifiedBy: srv.cfg.NodeID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.runHealthScan(context.Background())
+	if got := srv.ChunkHealthSnapshot()[hash].Status; got != types.ReplicaUnderReplicated {
+		t.Fatalf("initial health = %q, want %q", got, types.ReplicaUnderReplicated)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/jobs/repair-under-replicated", nil), session)
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusAccepted, res.Body.String())
+	}
+
+	var envelope types.APIResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var started types.Job
+	if err := json.Unmarshal(envelope.Data, &started); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		job, ok := srv.jobs.get(started.ID)
+		if ok && job.Status == types.JobBlocked {
+			if !strings.Contains(job.Message, "eligible storage node") {
+				t.Fatalf("blocked job message = %q", job.Message)
+			}
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	job, _ := srv.jobs.get(started.ID)
+	if job == nil || job.Status != types.JobBlocked {
+		t.Fatalf("repair job did not become blocked: %+v", job)
+	}
+
+	taskID := "job:" + started.ID + ":repair:" + hash
+	var repairTask *types.SyncTask
+	for _, task := range srv.syncTasks.list() {
+		if task.ID == taskID {
+			taskCopy := task
+			repairTask = &taskCopy
+			break
+		}
+	}
+	if repairTask == nil {
+		t.Fatalf("repair task %q not found", taskID)
+	}
+	if repairTask.Status != types.SyncTaskBlocked {
+		t.Fatalf("repair task status = %q, want %q", repairTask.Status, types.SyncTaskBlocked)
+	}
+	if !strings.Contains(repairTask.Error, "no eligible destination node") {
+		t.Fatalf("repair task error = %q", repairTask.Error)
+	}
+	if got := srv.ChunkHealthSnapshot()[hash].Status; got != types.ReplicaUnderReplicated {
+		t.Fatalf("health after blocked repair = %q, want %q", got, types.ReplicaUnderReplicated)
 	}
 }
 

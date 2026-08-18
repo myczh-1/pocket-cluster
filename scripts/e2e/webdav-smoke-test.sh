@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TMP_DIR="${TMPDIR:-/tmp}/pocketcluster-e2e-webdav"
+TMP_ROOT="${TMPDIR:-/tmp}"
+TMP_DIR="$(mktemp -d "${TMP_ROOT%/}/pocketcluster-e2e-webdav.XXXXXX")"
 BIN_PATH="${TMP_DIR}/agent"
 DATA_DIR="${TMP_DIR}/node"
 PORT="${PORT:-17790}"

@@ -12,16 +12,20 @@ PAYLOAD_FILE="${E2E_DIR}/offline-delete.txt"
 PAYLOAD="offline deletion must converge after node recovery"
 printf '%s\n' "${PAYLOAD}" >"${PAYLOAD_FILE}"
 
-echo "Creating a directory and replicating its file to node 2..."
+echo "Creating a directory and uploading its file through node 2..."
 curl -fsS -u "${E2E_POOL_USER}:${E2E_POOL_PASS}" -X MKCOL \
   "http://127.0.0.1:${E2E_PORTS[0]}/dav/offline-delete" >/dev/null
-e2e_upload 0 "/offline-delete/payload.txt" "${PAYLOAD_FILE}"
-e2e_wait_for_download 1 "/offline-delete/payload.txt" "${PAYLOAD}" || {
-  echo "Node 2 never received the file before going offline" >&2
+e2e_upload 1 "/offline-delete/payload.txt" "${PAYLOAD_FILE}"
+e2e_wait_for_download 0 "/offline-delete/payload.txt" "${PAYLOAD}" || {
+  echo "Node 1 never received the file metadata before node 2 went offline" >&2
   exit 1
 }
 
 CHUNKS_BEFORE="$(e2e_chunk_count 1)"
+if [[ "${CHUNKS_BEFORE}" -eq 0 ]]; then
+  echo "Node 2 did not retain its locally uploaded chunk before going offline" >&2
+  exit 1
+fi
 e2e_stop_node 1
 
 echo "Deleting and purging while node 2 is offline..."

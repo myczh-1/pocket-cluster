@@ -62,7 +62,7 @@ func repairFailureStatus(err error) types.SyncTaskStatus {
 		return types.SyncTaskDone
 	}
 	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "no available replica") || strings.Contains(msg, "chunk unavailable") {
+	if strings.Contains(msg, "no available replica") || strings.Contains(msg, "chunk unavailable") || strings.Contains(msg, "no eligible destination node") {
 		return types.SyncTaskBlocked
 	}
 	return types.SyncTaskRetrying

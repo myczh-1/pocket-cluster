@@ -130,7 +130,7 @@ type SyncTask struct {
 	Error      string         `json:"error,omitempty"`
 	StartedAt  time.Time      `json:"started_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`
-	FinishedAt time.Time      `json:"finished_at,omitempty"`
+	FinishedAt time.Time      `json:"finished_at,omitzero"`
 }
 
 type JobStatus string
@@ -163,7 +163,7 @@ type Job struct {
 	Error      string    `json:"error,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
-	FinishedAt time.Time `json:"finished_at,omitempty"`
+	FinishedAt time.Time `json:"finished_at,omitzero"`
 }
 
 type Invite struct {
