@@ -48,6 +48,7 @@ func main() {
 	iface := flag.String("iface", "", "network interface for mDNS (e.g., wlan0)")
 	advertiseIP := flag.String("advertise-ip", "", "IP address to advertise for mDNS")
 	localIP := flag.String("local-ip", "", "local IP address for network operations")
+	externalDiscovery := flag.Bool("external-discovery", false, "read discovery events from stdin instead of using native mDNS")
 	joinBootstrap := flag.String("join", "", "bootstrap base URL to join")
 	joinToken := flag.String("join-token", "", "invite token for joining an existing cluster")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -105,10 +106,18 @@ func main() {
 	defer cancel()
 
 	disc := discovery.New(cfg.NodeID, cfg.Name, cfg.Platform, *port, *iface, *advertiseIP)
-	if err := disc.Start(ctx); err != nil {
-		log.Printf("mDNS discovery failed to start: %v", err)
+	if *externalDiscovery {
+		if err := disc.StartExternal(ctx, os.Stdin); err != nil {
+			log.Printf("external discovery failed to start: %v", err)
+		} else {
+			log.Printf("external discovery feed started")
+		}
 	} else {
-		log.Printf("mDNS discovery started")
+		if err := disc.Start(ctx); err != nil {
+			log.Printf("mDNS discovery failed to start: %v", err)
+		} else {
+			log.Printf("mDNS discovery started")
+		}
 	}
 	go syncDiscoveredNodes(ctx, s, srv, disc, cfg)
 
@@ -168,6 +177,13 @@ func syncDiscoveredNodes(ctx context.Context, s *store.Store, srv *server.Server
 		select {
 		case <-ctx.Done():
 			return
+		case nodeID := <-disc.Removed():
+			if nodeID == cfg.NodeID {
+				continue
+			}
+			if err := s.DeleteUntrustedNode(nodeID); err != nil {
+				log.Printf("remove discovered node %s: %v", nodeID, err)
+			}
 		case <-ticker.C:
 			now := time.Now()
 			discovered := disc.Nodes()

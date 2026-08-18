@@ -72,6 +72,11 @@ func (s *Store) UpdateNodeLastWorkingAddress(nodeID, address string, lastSeen ti
 	return err
 }
 
+func (s *Store) DeleteUntrustedNode(nodeID string) error {
+	_, err := s.db.Exec(`DELETE FROM nodes WHERE node_id = ? AND trusted = 0`, nodeID)
+	return err
+}
+
 func (s *Store) MarkStaleNodesOffline(cutoff time.Time) (int64, error) {
 	res, err := s.db.Exec(`UPDATE nodes SET status = 'offline' WHERE status = 'online' AND trusted = 1 AND last_seen > 0 AND last_seen < ?`,
 		timeMillis(cutoff))

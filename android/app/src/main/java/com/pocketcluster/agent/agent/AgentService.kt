@@ -7,20 +7,26 @@ import android.content.Context
 import android.content.Intent
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import com.pocketcluster.agent.MainActivity
 import com.pocketcluster.agent.PocketClusterApp
 import com.pocketcluster.agent.R
 import java.io.BufferedReader
+import java.io.BufferedWriter
 import java.io.File
 import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.nio.charset.StandardCharsets
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import org.json.JSONObject
 
 class AgentService : Service() {
 
@@ -45,6 +51,10 @@ class AgentService : Service() {
     private var multicastLock: WifiManager.MulticastLock? = null
     private var logThread: Thread? = null
     private var monitorThread: Thread? = null
+    private var discoveryWriter: BufferedWriter? = null
+    private var nsdDiscovery: AndroidNsdDiscovery? = null
+    private val discoveryWriterLock = Any()
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val restartCount = AtomicInteger(0)
     private val shouldRun = AtomicBoolean(false)
     private var isStopping = false
@@ -115,14 +125,20 @@ class AgentService : Service() {
                 "-data", dataDir.absolutePath,
                 "-port", DEFAULT_PORT.toString(),
                 "-name", deviceName,
-                "-iface", "wlan0",
-                "-advertise-ip", wifiIP ?: "",
                 "-local-ip", wifiIP ?: "",
+                "-external-discovery",
             )
             pb.redirectErrorStream(true)
             pb.environment()["HOME"] = filesDir.absolutePath
 
-            process = pb.start()
+            val startedProcess = pb.start()
+            val startedDiscoveryWriter = BufferedWriter(
+                OutputStreamWriter(startedProcess.outputStream, StandardCharsets.UTF_8),
+            )
+            process = startedProcess
+            synchronized(discoveryWriterLock) {
+                discoveryWriter = startedDiscoveryWriter
+            }
             isRunning = true
             addLog("Agent started (port=$DEFAULT_PORT, ip=${wifiIP ?: "unknown"})")
             updateNotification("Running on port $DEFAULT_PORT")
@@ -130,15 +146,19 @@ class AgentService : Service() {
             // Read stdout for logging and nodeId extraction
             logThread = Thread {
                 try {
-                    val reader = BufferedReader(InputStreamReader(process!!.inputStream))
+                    val reader = BufferedReader(InputStreamReader(startedProcess.inputStream))
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
                         addLog("[agent] $line")
                         if (line?.contains("node_id=") == true) {
                             val match = Regex("node_id=([a-f0-9-]+)").find(line!!)
                             if (match != null) {
-                                nodeId = match.groupValues[1]
-                                addLog("Node ID: $nodeId")
+                                val discoveredNodeId = match.groupValues[1]
+                                nodeId = discoveredNodeId
+                                addLog("Node ID: $discoveredNodeId")
+                                mainHandler.post {
+                                    startNsdDiscovery(discoveredNodeId, deviceName)
+                                }
                             }
                         }
                     }
@@ -150,9 +170,16 @@ class AgentService : Service() {
             // Monitor process exit and auto-restart
             monitorThread = Thread {
                 try {
-                    val exitCode = process?.waitFor()
+                    val exitCode = startedProcess.waitFor()
                     isRunning = false
                     addLog("Agent exited with code $exitCode")
+                    synchronized(discoveryWriterLock) {
+                        if (discoveryWriter === startedDiscoveryWriter) {
+                            discoveryWriter = null
+                        }
+                    }
+                    runCatching { startedDiscoveryWriter.close() }
+                    mainHandler.post { stopNsdDiscovery() }
 
                     val fatalMessage = fatalExitMessage(exitCode)
                     if (fatalMessage != null) {
@@ -198,6 +225,12 @@ class AgentService : Service() {
         shouldRun.set(false)
         isRunning = false
         nodeId = null
+        stopNsdDiscovery()
+
+        synchronized(discoveryWriterLock) {
+            runCatching { discoveryWriter?.close() }
+            discoveryWriter = null
+        }
 
         process?.let {
             if (it.isAlive) {
@@ -220,14 +253,66 @@ class AgentService : Service() {
     }
 
     private fun acquireWakeLocks() {
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PocketCluster::Agent").apply {
-            acquire()
+        if (wakeLock?.isHeld != true) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PocketCluster::Agent").apply {
+                acquire()
+            }
         }
-        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        multicastLock = wm.createMulticastLock("PocketCluster::mDNS").apply {
-            setReferenceCounted(true)
-            acquire()
+        if (multicastLock?.isHeld != true) {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            multicastLock = wm.createMulticastLock("PocketCluster::mDNS").apply {
+                setReferenceCounted(true)
+                acquire()
+            }
+        }
+    }
+
+    private fun startNsdDiscovery(discoveredNodeId: String, deviceName: String) {
+        if (!shouldRun.get() || isStopping || nsdDiscovery != null) return
+        nsdDiscovery = AndroidNsdDiscovery(
+            context = applicationContext,
+            localNodeId = discoveredNodeId,
+            nodeName = deviceName,
+            port = DEFAULT_PORT,
+            log = { message -> addLog("[mDNS] $message") },
+            onUpsert = { id, name, platform, ip, port ->
+                writeDiscoveryEvent("upsert", id, name, platform, ip, port)
+            },
+            onRemove = { id -> writeDiscoveryEvent("remove", id) },
+        ).also { it.start() }
+    }
+
+    private fun stopNsdDiscovery() {
+        nsdDiscovery?.stop()
+        nsdDiscovery = null
+    }
+
+    private fun writeDiscoveryEvent(
+        op: String,
+        id: String,
+        name: String? = null,
+        platform: String? = null,
+        ip: String? = null,
+        port: Int? = null,
+    ) {
+        val event = JSONObject()
+            .put("op", op)
+            .put("node_id", id)
+        if (name != null) event.put("name", name)
+        if (platform != null) event.put("platform", platform)
+        if (ip != null) event.put("ip", ip)
+        if (port != null) event.put("port", port)
+
+        synchronized(discoveryWriterLock) {
+            val writer = discoveryWriter ?: return
+            try {
+                writer.write(event.toString())
+                writer.newLine()
+                writer.flush()
+            } catch (e: Exception) {
+                addLog("[mDNS] Failed to forward discovery event: ${e.message}")
+            }
         }
     }
 

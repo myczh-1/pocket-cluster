@@ -111,6 +111,35 @@ func TestUpsertNodePreservesTrustWhenDiscoveryUpdatesAddress(t *testing.T) {
 	}
 }
 
+func TestDeleteUntrustedNodePreservesTrustedNodes(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := s.UpsertNode(&types.Node{NodeID: "trusted", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertNode(&types.Node{NodeID: "discovered"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteUntrustedNode("trusted"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteUntrustedNode("discovered"); err != nil {
+		t.Fatal(err)
+	}
+
+	nodes, err := s.ListNodes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].NodeID != "trusted" {
+		t.Fatalf("nodes = %#v, want only trusted node", nodes)
+	}
+}
+
 func TestUpsertNodeZeroTimeDoesNotOverwriteLastSeen(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

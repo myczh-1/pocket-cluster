@@ -27,8 +27,9 @@ type Discovery struct {
 	ifaceName   string // optional: network interface name to use for mDNS
 	advertiseIP string // optional: IP address to advertise
 
-	mu    sync.RWMutex
-	nodes map[string]Node
+	mu      sync.RWMutex
+	nodes   map[string]Node
+	removed chan string
 
 	server *zeroconf.Server
 	cancel context.CancelFunc
@@ -43,6 +44,7 @@ func New(nodeID, name, platform string, port int, ifaceName, advertiseIP string)
 		ifaceName:   ifaceName,
 		advertiseIP: advertiseIP,
 		nodes:       make(map[string]Node),
+		removed:     make(chan string, 64),
 	}
 }
 
@@ -139,8 +141,20 @@ func (d *Discovery) SetNodeOnline(nodeID, name, platform, address string, port i
 
 func (d *Discovery) RemoveNode(nodeID string) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	_, existed := d.nodes[nodeID]
 	delete(d.nodes, nodeID)
+	d.mu.Unlock()
+	if existed {
+		select {
+		case d.removed <- nodeID:
+		default:
+			log.Printf("mDNS: removal queue full; dropped node %s", nodeID)
+		}
+	}
+}
+
+func (d *Discovery) Removed() <-chan string {
+	return d.removed
 }
 
 func (d *Discovery) browse(ctx context.Context, _ *net.Interface) {
