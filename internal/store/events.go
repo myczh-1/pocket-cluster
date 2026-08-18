@@ -146,6 +146,9 @@ func (s *Store) UpsertFileWithEvent(f *types.File, nodeID string, eventType type
 		Timestamp: timestamp,
 		Payload:   payload,
 	}
+	if err := recordFileVersionTx(tx, f); err != nil {
+		return nil, err
+	}
 	if err := upsertFileTx(tx, f); err != nil {
 		return nil, err
 	}

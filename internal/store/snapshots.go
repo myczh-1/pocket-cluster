@@ -12,6 +12,7 @@ type MetadataSnapshot struct {
 	LastEventID string
 	Nodes       []types.Node
 	Files       []types.File
+	Versions    []types.File
 	Chunks      []types.Chunk
 	Replicas    []types.Replica
 }
@@ -39,6 +40,10 @@ func (s *Store) MetadataSnapshot() (*MetadataSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	versions, err := listAllFileVersionsTx(tx)
+	if err != nil {
+		return nil, err
+	}
 	chunks, err := listChunksTx(tx)
 	if err != nil {
 		return nil, err
@@ -58,6 +63,7 @@ func (s *Store) MetadataSnapshot() (*MetadataSnapshot, error) {
 		LastEventID: lastEventID,
 		Nodes:       nodes,
 		Files:       files,
+		Versions:    versions,
 		Chunks:      chunks,
 		Replicas:    replicas,
 	}, nil
@@ -135,6 +141,9 @@ func (s *Store) LoadSnapshot(snap *MetadataSnapshot) error {
 	if _, err := tx.Exec(`DELETE FROM file_chunks`); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM file_versions`); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM files_fts`); err != nil {
 		return err
 	}
@@ -150,6 +159,19 @@ func (s *Store) LoadSnapshot(snap *MetadataSnapshot) error {
 		}
 		if err := upsertFileChunksTx(tx, f.FileID, f.ChunkIDs); err != nil {
 			return err
+		}
+	}
+	if len(snap.Versions) == 0 {
+		for _, file := range snap.Files {
+			if err := recordFileVersionTx(tx, &file); err != nil {
+				return err
+			}
+		}
+	} else {
+		for _, version := range snap.Versions {
+			if err := recordFileVersionTx(tx, &version); err != nil {
+				return err
+			}
 		}
 	}
 	for _, c := range snap.Chunks {

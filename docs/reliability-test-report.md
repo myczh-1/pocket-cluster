@@ -26,6 +26,7 @@ Fill this section for each run:
 | Two-node basic | Verify join, replicate, and read-after-node-loss | `scripts/e2e/two-node-basic.sh` | Passed locally | loopback-only validation |
 | Three-node offline deletion | Verify delete, immediate purge, and recovered-node chunk cleanup | `scripts/e2e/three-node-offline-delete.sh` | Passed locally | loopback-only validation |
 | Three-node offline rename | Verify rename convergence and no stale path after a node recovers | `scripts/e2e/three-node-offline-rename.sh` | Passed locally | loopback-only validation |
+| Three-node concurrent update | Verify two offline WebDAV edits converge regardless of recovery order | `scripts/e2e/three-node-offline-concurrent-update.sh` | Passed locally | main plus conflict, restart, continued edit |
 | WebDAV smoke | Verify upload, list, download, delete on one node | `scripts/e2e/webdav-smoke-test.sh` | Passed locally | single-node local validation |
 | Android manual | Verify Android join and carry behavior | `scripts/e2e/android-manual-test.md` | Pending |  |
 
@@ -70,6 +71,18 @@ Fill this section for each run:
   - node 2 received the original file, then was stopped before the rename
   - node 3 converged to the new path while node 2 remained offline
   - after node 2 restarted, it read the new path, rejected the old path, and listed exactly one live entry
+- Failure mode if any:
+  - none in the loopback scenario
+
+### Three-node concurrent update
+
+- Status: Passed locally
+- Evidence:
+  - two isolated nodes conditionally overwrote the same base ETag
+  - both recovery orders converged to identical normalized metadata
+  - one deterministic main file and one conflict copy preserved both contents
+  - a full-cluster restart kept the same projection
+  - a later update on the winning branch stayed on the main path
 - Failure mode if any:
   - none in the loopback scenario
 

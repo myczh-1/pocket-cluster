@@ -35,7 +35,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-var schemaVersion = 6
+var schemaVersion = 7
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
@@ -73,6 +73,11 @@ func (s *Store) migrate() error {
 	}
 	if current < 6 {
 		if err := s.migrateV6(); err != nil {
+			return err
+		}
+	}
+	if current < 7 {
+		if err := s.migrateV7(); err != nil {
 			return err
 		}
 	}
@@ -257,6 +262,38 @@ func (s *Store) migrateV6() error {
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *Store) migrateV7() error {
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS file_versions (
+		version_id TEXT PRIMARY KEY,
+		file_id TEXT NOT NULL,
+		parent_version_id TEXT NOT NULL DEFAULT '',
+		name TEXT NOT NULL DEFAULT '',
+		path TEXT NOT NULL DEFAULT '',
+		is_dir INTEGER NOT NULL DEFAULT 0,
+		size_bytes INTEGER NOT NULL DEFAULT 0,
+		mime_type TEXT NOT NULL DEFAULT '',
+		chunk_ids TEXT NOT NULL DEFAULT '[]',
+		created_at INTEGER NOT NULL DEFAULT 0,
+		modified_at INTEGER NOT NULL DEFAULT 0,
+		modified_by TEXT NOT NULL DEFAULT '',
+		deleted INTEGER NOT NULL DEFAULT 0,
+		conflict_of TEXT NOT NULL DEFAULT ''
+	)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_file_versions_file_id ON file_versions(file_id)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_file_versions_parent ON file_versions(parent_version_id)`); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO file_versions
+		(version_id, file_id, parent_version_id, name, path, is_dir, size_bytes, mime_type, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of)
+		SELECT version_id, file_id, parent_version_id, name, path, is_dir, size_bytes, mime_type, chunk_ids, created_at, modified_at, modified_by, deleted, conflict_of
+		FROM files WHERE version_id <> ''`)
+	return err
 }
 
 func (s *Store) addColumnIfMissing(table, column, definition string) error {

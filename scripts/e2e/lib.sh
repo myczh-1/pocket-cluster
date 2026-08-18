@@ -153,6 +153,42 @@ e2e_upload() {
     "http://127.0.0.1:${E2E_PORTS[index]}/api/files/upload" >/dev/null
 }
 
+e2e_webdav_put() {
+  local index=$1
+  local pool_path=$2
+  local source_file=$3
+  local etag=${4:-}
+  local -a command=(curl -fsS -u "${E2E_POOL_USER}:${E2E_POOL_PASS}")
+  if [[ -n "${etag}" ]]; then
+    command+=(-H "If-Match: ${etag}")
+  fi
+  command+=(-T "${source_file}" "http://127.0.0.1:${E2E_PORTS[index]}/dav${pool_path}")
+  "${command[@]}" >/dev/null
+}
+
+e2e_webdav_etag() {
+  local index=$1
+  local pool_path=$2
+  curl -fsSI -u "${E2E_POOL_USER}:${E2E_POOL_PASS}" \
+    "http://127.0.0.1:${E2E_PORTS[index]}/dav${pool_path}" \
+    | awk 'tolower($1) == "etag:" { gsub("\\r", ""); print $2; exit }'
+}
+
+e2e_wait_for_webdav_etag() {
+  local index=$1
+  local pool_path=$2
+  for _ in $(seq 1 45); do
+    local etag
+    etag="$(e2e_webdav_etag "${index}" "${pool_path}" 2>/dev/null || true)"
+    if [[ -n "${etag}" ]]; then
+      printf '%s\n' "${etag}"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 e2e_rename() {
   local index=$1
   local old_path=$2

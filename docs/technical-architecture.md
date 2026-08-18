@@ -248,49 +248,47 @@ A Snapshot represents the complete metadata state at a point in logical history.
 
 v1 does not use vector clocks.
 
-v1 uses:
+The current implementation uses an immutable per-file version graph:
 
 ```text
-parent_version_id + node_id + timestamp
+version_id -> parent_version_id
 ```
 
 ### Version ID
 
-```text
-sha256(file_id + parent_version_id + chunk_ids + node_id + timestamp)
-```
+Each committed content write receives a unique opaque `version_id`. `file_versions` keeps the immutable content graph while `files` stores the materialized user-visible path and conflict view. Rename and deletion are still event-driven operations rather than version nodes.
 
 Rationale:
 
-- Do not use pure timestamp because device time may be unreliable.
-- Do not require Lamport clock in v1.
-- Use `node_id:seq` as the local logical order carrier.
+- Do not use timestamps to choose a winner because device clocks may be unreliable.
+- Do not require a general vector-clock or CRDT framework for the current single-parent history.
+- Use `node_id:seq` for event identity and same-node order.
 
 ## Conflict Detection
 
-Conflict rule:
+Conflict rule for versions of the same logical file:
 
 ```text
-same path
-+ two different versions
-+ same parent_version_id
-= conflict
+one version descends from the other -> sequential update
+neither version descends from the other -> concurrent update
 ```
 
 When a conflict is detected:
 
 - Do not silently overwrite either version.
-- Keep the normal file entry.
-- Create a Syncthing-style conflict file.
+- Choose the same winning branch on every node from the version graph.
+- Keep the winning head on the normal path.
+- Create deterministic Syncthing-style conflict files for all other heads.
+- Keep the same projection after repeated sync and restart.
 
 Conflict filename pattern:
 
 ```text
 xxx.txt
-xxx.conflict.nodeA.timestamp.txt
+xxx.sync-conflict-nodeA-timestamp-version.txt
 ```
 
-The exact suffix may be refined, but it must include enough information to identify the conflicting node and time.
+The suffix includes node, time, and version identity so every node derives the same path without consulting arrival order.
 
 ## Chunk Storage
 

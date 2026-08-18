@@ -237,28 +237,24 @@ every 1000 events or every 24 hours
 
 v1 does not use vector clocks.
 
-v1 uses:
+The current implementation uses an immutable per-file version graph:
 
 ```text
-parent_version_id + node_id + timestamp
+version_id -> parent_version_id
 ```
 
-Version ID:
+Each content write receives a unique opaque `version_id`. The content-version metadata is retained in `file_versions`; `files` is the current materialized path and conflict view. Rename and deletion operations remain event-driven and are not yet separate version nodes.
+
+Conflict rule for versions of the same logical file:
 
 ```text
-sha256(file_id + parent_version_id + chunk_ids + node_id + timestamp)
+one version descends from the other -> descendant is the only head
+neither version descends from the other -> concurrent heads
 ```
 
-Conflict rule:
+Concurrent heads are projected as one normal file plus deterministic conflict copies. The winning branch is selected by the lexicographic path through the version graph, so later writes on that branch remain on the normal path. Timestamps are used only in conflict filenames, never to select a winner.
 
-```text
-same path
-+ two different versions
-+ same parent_version_id
-= conflict
-```
-
-`node_id:seq` carries local logical order. Pure timestamp is not trusted because device time may be unreliable.
+`node_id:seq` still carries event identity and same-node logical order. Cross-node arrival order must not change the final file projection.
 
 ### Chunk Policy
 

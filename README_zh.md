@@ -154,6 +154,9 @@ cd android && ./gradlew assembleDebug
 基于场景的 E2E 脚本位于 `scripts/e2e/`，覆盖：
 
 - **双节点基础** — 入池、副本复制、节点丢失后读测试（`two-node-basic.sh`）
+- **三节点离线删除** — 节点离线期间删除并立即回收，恢复后验证最终收敛（`three-node-offline-delete.sh`）
+- **三节点离线重命名** — 节点离线期间重命名，恢复后验证旧路径和重复条目消失（`three-node-offline-rename.sh`）
+- **三节点并发修改** — 隔离两个 WebDAV 写入端，验证两种恢复顺序都得到同一个主文件和冲突副本（`three-node-offline-concurrent-update.sh`）
 - **WebDAV 冒烟** — 上传、列表、下载、删除（`webdav-smoke-test.sh`）
 - **Android 手动** — 入池与携带流程清单（`android-manual-test.md`）
 

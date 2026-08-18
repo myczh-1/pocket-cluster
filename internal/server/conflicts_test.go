@@ -170,6 +170,122 @@ func TestRemoteSequentialFileUpdateKeepsMainPath(t *testing.T) {
 	}
 }
 
+func TestConcurrentSameFileUpdatesConvergeIndependentOfArrivalOrder(t *testing.T) {
+	base := &types.File{
+		FileID: "shared-file", Name: "report.txt", Path: "/report.txt",
+		VersionID: "version-base", ChunkIDs: []string{"chunk-base"},
+		CreatedAt: time.UnixMilli(1000), ModifiedAt: time.UnixMilli(1000), ModifiedBy: "node-base",
+	}
+	fromA := &types.File{
+		FileID: base.FileID, Name: base.Name, Path: base.Path,
+		VersionID: "version-a", ParentVersionID: base.VersionID, ChunkIDs: []string{"chunk-a"},
+		CreatedAt: base.CreatedAt, ModifiedAt: time.UnixMilli(2000), ModifiedBy: "node-a",
+	}
+	fromB := &types.File{
+		FileID: base.FileID, Name: base.Name, Path: base.Path,
+		VersionID: "version-b", ParentVersionID: base.VersionID, ChunkIDs: []string{"chunk-b"},
+		CreatedAt: base.CreatedAt, ModifiedAt: time.UnixMilli(3000), ModifiedBy: "node-b",
+	}
+
+	applyOrder := func(t *testing.T, versions ...*types.File) []types.File {
+		t.Helper()
+		_, st, srv := newJoinTestServer(t, "local")
+		defer st.Close()
+		if err := st.UpsertFile(base); err != nil {
+			t.Fatal(err)
+		}
+		for _, version := range versions {
+			if err := srv.applyEvent(types.Event{Type: types.EventFilePut, NodeID: version.ModifiedBy, Payload: mustJSON(t, version)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		files, err := st.ListFiles("/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return files
+	}
+
+	aThenB := applyOrder(t, fromA, fromB, fromB)
+	bThenA := applyOrder(t, fromB, fromA, fromA)
+	if got, want := normalizedFileViews(aThenB), normalizedFileViews(bThenA); got != want {
+		t.Fatalf("arrival order changed file views\nA then B: %s\nB then A: %s", got, want)
+	}
+	if len(aThenB) != 2 {
+		t.Fatalf("concurrent views = %d, want main plus conflict", len(aThenB))
+	}
+	main := fileAtPath(aThenB, base.Path)
+	if main == nil || main.VersionID != fromA.VersionID {
+		t.Fatalf("main view = %+v, want deterministic A branch", main)
+	}
+	var conflict *types.File
+	for i := range aThenB {
+		if aThenB[i].ConflictOf == base.FileID {
+			conflict = &aThenB[i]
+			break
+		}
+	}
+	if conflict == nil || conflict.VersionID != fromB.VersionID || conflict.FileID != concurrentConflictFileID(base.FileID, fromB.VersionID) {
+		t.Fatalf("conflict view = %+v, want deterministic B copy", conflict)
+	}
+}
+
+func TestConcurrentWinnerBranchStaysMainAfterLaterUpdate(t *testing.T) {
+	_, st, srv := newJoinTestServer(t, "local")
+	defer st.Close()
+	base := &types.File{FileID: "shared", Name: "shared.txt", Path: "/shared.txt", VersionID: "base", CreatedAt: time.UnixMilli(1000), ModifiedAt: time.UnixMilli(1000)}
+	branchA := &types.File{FileID: base.FileID, Name: base.Name, Path: base.Path, VersionID: "a-first", ParentVersionID: base.VersionID, CreatedAt: base.CreatedAt, ModifiedAt: time.UnixMilli(2000), ModifiedBy: "node-a"}
+	branchB := &types.File{FileID: base.FileID, Name: base.Name, Path: base.Path, VersionID: "b-first", ParentVersionID: base.VersionID, CreatedAt: base.CreatedAt, ModifiedAt: time.UnixMilli(3000), ModifiedBy: "node-b"}
+	branchANext := &types.File{FileID: base.FileID, Name: base.Name, Path: base.Path, VersionID: "z-later", ParentVersionID: branchA.VersionID, CreatedAt: base.CreatedAt, ModifiedAt: time.UnixMilli(4000), ModifiedBy: "node-a"}
+	if err := st.UpsertFile(base); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []*types.File{branchB, branchA, branchANext} {
+		if err := srv.applyEvent(types.Event{Type: types.EventFilePut, NodeID: version.ModifiedBy, Payload: mustJSON(t, version)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	main, err := st.GetFile(base.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if main.VersionID != branchANext.VersionID {
+		t.Fatalf("main version = %q, want later A version %q", main.VersionID, branchANext.VersionID)
+	}
+	files, err := st.ListFiles("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("views after continuing winner branch = %d, want 2", len(files))
+	}
+}
+
+func normalizedFileViews(files []types.File) string {
+	type view struct {
+		Path            string
+		FileID          string
+		VersionID       string
+		ParentVersionID string
+		ConflictOf      string
+	}
+	views := make([]view, 0, len(files))
+	for _, file := range files {
+		views = append(views, view{file.Path, file.FileID, file.VersionID, file.ParentVersionID, file.ConflictOf})
+	}
+	body, _ := json.Marshal(views)
+	return string(body)
+}
+
+func fileAtPath(files []types.File, path string) *types.File {
+	for i := range files {
+		if files[i].Path == path {
+			return &files[i]
+		}
+	}
+	return nil
+}
+
 func uploadRequest(t *testing.T, targetPath, filename string, content []byte) *http.Request {
 	t.Helper()
 	var body bytes.Buffer

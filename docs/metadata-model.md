@@ -80,7 +80,7 @@ Fields:
 - `is_dir`: true for directories.
 - `size_bytes`: total file size (0 for directories).
 - `mime_type`: detected MIME type (empty for directories).
-- `version_id`: `sha256(file_id + parent_version_id + chunk_ids + node_id + timestamp)`.
+- `version_id`: unique opaque ID assigned to one immutable file version.
 - `parent_version_id`: version_id this update was based on. Empty for first version.
 - `chunk_ids`: ordered list of chunk hashes that make up this file.
 - `created_at`: unix millis.
@@ -88,6 +88,8 @@ Fields:
 - `modified_by`: node_id that produced the latest version.
 - `deleted`: soft-delete flag. Deleted files remain in metadata until event log cleanup.
 - `conflict_of`: if this is a conflict file, points to the original file_id.
+
+`files` is the materialized current view. Immutable entries for committed content versions are stored separately in `file_versions`, allowing nodes to determine ancestry and concurrent heads without relying on event arrival order. Rename and deletion remain event-driven in the current schema.
 
 ### Chunk
 
@@ -158,6 +160,7 @@ Fields:
   "cluster": {},
   "nodes": [],
   "files": [],
+  "versions": [],
   "chunks": [],
   "replicas": []
 }
@@ -172,6 +175,7 @@ Fields:
 - `cluster`: cluster metadata at snapshot time.
 - `nodes`: all node records.
 - `files`: all file records (including deleted).
+- `versions`: immutable file-version records required to reconstruct deterministic conflict projections.
 - `chunks`: all chunk records known at snapshot time.
 - `replicas`: all replica records at snapshot time.
 
@@ -330,6 +334,10 @@ Each agent stores data in a local data directory.
 | modified_by | TEXT | |
 | deleted | INTEGER | |
 | conflict_of | TEXT | |
+
+### file_versions
+
+`file_versions` uses the same content and lineage fields as `files`, but `version_id` is the primary key and `path` is not unique. Rows are immutable after insertion. `file_id` groups versions of one logical file; `parent_version_id` links each update to the version it observed.
 
 ### chunks
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +15,155 @@ import (
 )
 
 const maxConflictPathAttempts = 1000
+
+// applyRemoteFilePut records immutable file versions before rebuilding the
+// materialized file view. This makes same-file concurrent WebDAV updates
+// converge independently of event arrival order.
+func (s *Server) applyRemoteFilePut(incoming *types.File) error {
+	if err := s.store.RecordFileVersion(incoming); err != nil {
+		return err
+	}
+	existing, err := s.store.GetFile(incoming.Path)
+	if err == sql.ErrNoRows {
+		existing, err = s.store.GetFileByID(incoming.FileID)
+	}
+	if err == sql.ErrNoRows {
+		return s.store.UpsertFile(incoming)
+	}
+	if err != nil {
+		return err
+	}
+	if existing.FileID != incoming.FileID {
+		if err := s.prepareFilePut(incoming); err != nil {
+			return err
+		}
+		return s.store.UpsertFile(incoming)
+	}
+	if err := s.store.EnsureFileVersion(existing); err != nil {
+		return err
+	}
+	return s.rebuildConcurrentFileViews(existing.FileID, existing.Path)
+}
+
+func (s *Server) rebuildConcurrentFileViews(fileID, mainPath string) error {
+	versions, err := s.store.ListFileVersions(fileID)
+	if err != nil {
+		return err
+	}
+	if len(versions) == 0 {
+		return fmt.Errorf("file %s has no recorded versions", fileID)
+	}
+	byID := make(map[string]*types.File, len(versions))
+	hasChild := make(map[string]bool, len(versions))
+	for i := range versions {
+		version := &versions[i]
+		byID[version.VersionID] = version
+		if version.ParentVersionID != "" {
+			hasChild[version.ParentVersionID] = true
+		}
+	}
+	var heads []*types.File
+	for i := range versions {
+		if !hasChild[versions[i].VersionID] {
+			heads = append(heads, &versions[i])
+		}
+	}
+	if len(heads) == 0 {
+		return fmt.Errorf("file %s version graph has no head", fileID)
+	}
+	sort.Slice(heads, func(i, j int) bool {
+		return compareVersionPaths(versionPath(heads[i].VersionID, byID), versionPath(heads[j].VersionID, byID)) < 0
+	})
+
+	winner := *heads[0]
+	winner.FileID = fileID
+	winner.Path = mainPath
+	winner.Name = path.Base(mainPath)
+	winner.ConflictOf = ""
+	views := []*types.File{&winner}
+	for _, loser := range heads[1:] {
+		conflict := *loser
+		conflict.FileID = concurrentConflictFileID(fileID, loser.VersionID)
+		conflict.Path = concurrentConflictPath(mainPath, loser)
+		conflict.Name = path.Base(conflict.Path)
+		conflict.ConflictOf = fileID
+		views = append(views, &conflict)
+	}
+	oldChunkIDs, err := s.store.ReplaceConcurrentFileViews(fileID, views)
+	if err != nil {
+		return err
+	}
+	s.cleanupUnreferencedChunks(context.Background(), oldChunkIDs)
+	return nil
+}
+
+func versionPath(versionID string, versions map[string]*types.File) []string {
+	var reversed []string
+	seen := make(map[string]bool)
+	for versionID != "" && !seen[versionID] {
+		seen[versionID] = true
+		reversed = append(reversed, versionID)
+		version, ok := versions[versionID]
+		if !ok {
+			break
+		}
+		versionID = version.ParentVersionID
+	}
+	result := make([]string, len(reversed))
+	for i := range reversed {
+		result[len(reversed)-1-i] = reversed[i]
+	}
+	return result
+}
+
+func compareVersionPaths(a, b []string) int {
+	limit := len(a)
+	if len(b) < limit {
+		limit = len(b)
+	}
+	for i := 0; i < limit; i++ {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+	}
+	if len(a) < len(b) {
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+	return 0
+}
+
+func concurrentConflictFileID(fileID, versionID string) string {
+	return fileID + ".conflict." + versionID
+}
+
+func concurrentConflictPath(originalPath string, version *types.File) string {
+	dir := path.Dir(originalPath)
+	if dir == "." {
+		dir = "/"
+	}
+	base := path.Base(originalPath)
+	ext := path.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	node := sanitizeConflictPart(version.ModifiedBy)
+	if len(node) > 8 {
+		node = node[:8]
+	}
+	versionPart := sanitizeConflictPart(version.VersionID)
+	if len(versionPart) > 8 {
+		versionPart = versionPart[:8]
+	}
+	name := fmt.Sprintf("%s.sync-conflict-%s-%s-%s%s", stem, node, version.ModifiedAt.UTC().Format("20060102-150405"), versionPart, ext)
+	if dir == "/" {
+		return "/" + name
+	}
+	return dir + "/" + name
+}
 
 func (s *Server) prepareFilePut(f *types.File) error {
 	existing, err := s.store.GetFile(f.Path)
