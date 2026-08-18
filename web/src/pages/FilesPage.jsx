@@ -3,6 +3,18 @@ import { API, api } from "../api";
 import { cx, formatBytes } from "../utils";
 import { ConfirmDialog, EmptyState, InlineMessage, PageHeader, ProgressBar, Section } from "../components/common";
 
+function ReplicaReadiness({ status }) {
+  const states = {
+    healthy: { label: "副本已就绪", className: "bg-emerald-50 text-emerald-700" },
+    under_replicated: { label: "正在复制", className: "bg-amber-50 text-amber-700" },
+    repairing: { label: "正在修复", className: "bg-blue-50 text-blue-700" },
+    unavailable: { label: "暂不可用", className: "bg-red-50 text-red-700" },
+  };
+  const state = states[status];
+  if (!state) return null;
+  return <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${state.className}`}>{state.label}</span>;
+}
+
 function FileCard({ file, onDownload, onDelete, onRename, onPreview, onHistory }) {
   const canPreview = !file.is_dir && file.mime_type && (
     file.mime_type.startsWith("image/") || file.mime_type.startsWith("text/") || file.mime_type === "application/json"
@@ -20,7 +32,10 @@ function FileCard({ file, onDownload, onDelete, onRename, onPreview, onHistory }
           {file.is_dir ? "目录" : "文件"}
         </div>
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-950">{file.name}</p>
+          <div className="flex min-w-0 items-center gap-2">
+            <p className="truncate text-sm font-semibold text-slate-950">{file.name}</p>
+            {!file.is_dir && <ReplicaReadiness status={file.replica_status} />}
+          </div>
           <p className="truncate text-xs text-slate-500">
             {file.is_dir ? "目录" : formatBytes(file.size_bytes)}
             {file.modified_at && ` · 修改于 ${new Date(file.modified_at).toLocaleDateString()}`}
@@ -285,8 +300,8 @@ export default function FilesPage() {
     return () => clearTimeout(id);
   }, [search]);
 
-  const loadFiles = useCallback(async () => {
-    setLoading(true);
+  const loadFiles = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const q = debouncedSearch ? `?q=${encodeURIComponent(debouncedSearch)}` : `?path=${encodeURIComponent(path)}`;
       const res = await api(viewMode === "trash" ? "/trash" : `/files${q}`);
@@ -298,10 +313,16 @@ export default function FilesPage() {
     } catch (err) {
       setMessage({ tone: "error", text: err.message || (viewMode === "trash" ? "加载回收站失败" : "加载文件失败") });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [path, debouncedSearch, viewMode]);
   useEffect(() => { loadFiles(); }, [loadFiles]);
+  const needsSafetyRefresh = viewMode === "files" && files.some((file) => !file.is_dir && file.replica_status !== "healthy");
+  useEffect(() => {
+    if (!needsSafetyRefresh) return undefined;
+    const id = setInterval(() => loadFiles(true), 3000);
+    return () => clearInterval(id);
+  }, [needsSafetyRefresh, loadFiles]);
   const handleRefresh = async () => {
     setRefreshing(true);
     await loadFiles();
@@ -335,8 +356,13 @@ export default function FilesPage() {
       }
       try {
         const data = JSON.parse(xhr.responseText);
-        if (!data.ok) setMessage({ tone: "error", text: `上传失败：${data.error?.message || "未知错误"}` });
-        else setMessage({ tone: "success", text: `已上传 ${file.name}` });
+        if (!data.ok) {
+          setMessage({ tone: "error", text: `上传失败：${data.error?.message || "未知错误"}` });
+        } else if (data.data?.replica_status === "healthy") {
+          setMessage({ tone: "success", text: `已上传 ${file.name}，安全副本已就绪。` });
+        } else {
+          setMessage({ tone: "warning", text: `已上传 ${file.name}，正在生成安全副本，请暂时保持设备在线。` });
+        }
       } catch {
         setMessage({ tone: "error", text: "上传完成，但返回结果异常。" });
       }

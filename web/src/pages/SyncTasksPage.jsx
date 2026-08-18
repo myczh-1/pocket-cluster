@@ -26,6 +26,25 @@ function kindLabel(kind) {
   }
 }
 
+function jobLabel(kind) {
+  switch (kind) {
+    case "rescan": return "健康重扫";
+    case "repair_under_replicated": return "副本修复";
+    case "integrity_check": return "完整性校验";
+    case "purge_retained_data": return "清理保留数据";
+    case "node_evacuation": return "设备安全退出";
+    default: return kind || "任务";
+  }
+}
+
+function jobMessage(job) {
+  if (job.kind !== "node_evacuation") return job.message;
+  if (job.status === "done") return "数据迁移与校验已经完成。";
+  if (job.status === "blocked") return "在线目标设备不足，或部分数据目前无法读取。";
+  if (job.status === "failed") return "迁移失败，请检查下方错误和同步任务。";
+  return "正在把这台设备的数据复制到其他在线设备并校验。";
+}
+
 export default function SyncTasksPage() {
   const [tasks, setTasks] = useState([]);
   const [jobs, setJobs] = useState([]);
@@ -138,13 +157,13 @@ export default function SyncTasksPage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold text-slate-950">{job.title || job.kind}</span>
+                      <span className="text-sm font-semibold text-slate-950">{jobLabel(job.kind)}</span>
                       <StatusBadge status={job.status} />
                       <span className="rounded-full bg-slate-200 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                        {job.kind}
+                        {jobLabel(job.kind)}
                       </span>
                     </div>
-                    {job.message && <p className="mt-2 text-sm leading-6 text-slate-600">{job.message}</p>}
+                    {jobMessage(job) && <p className="mt-2 text-sm leading-6 text-slate-600">{jobMessage(job)}</p>}
                     {job.error && <p className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{job.error}</p>}
                   </div>
                   <div className="shrink-0 text-xs text-slate-500">

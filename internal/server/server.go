@@ -279,6 +279,8 @@ type Server struct {
 	webDAVLocks      webdav.LockSystem
 	loginLimiter     *loginLimiter
 	lastRecovery     time.Time // last time offline nodes were pinged for recovery
+	evacuationMu     sync.Mutex
+	evacuatingNodes  map[string]bool
 }
 
 type Option func(*Server)
@@ -309,18 +311,19 @@ func WithPeerHTTPClient(client peerHTTPDoer) Option {
 }
 func New(cfg *config.Config, s *store.Store, c *chunk.Storage, opts ...Option) *Server {
 	srv := &Server{
-		cfg:            cfg,
-		store:          s,
-		chunks:         c,
-		sessions:       newSessionStore(),
-		health:         newHealthScanner(),
-		started:        time.Now(),
-		uploadProgress: newUploadProgressStore(),
-		syncTasks:      newSyncTaskStore(),
-		jobs:           newJobStore(),
-		peerHTTPClient: peernet.NewHTTPClient(),
-		webDAVLocks:    webdav.NewMemLS(),
-		loginLimiter:   newLoginLimiter(5, time.Minute),
+		cfg:             cfg,
+		store:           s,
+		chunks:          c,
+		sessions:        newSessionStore(),
+		health:          newHealthScanner(),
+		started:         time.Now(),
+		uploadProgress:  newUploadProgressStore(),
+		syncTasks:       newSyncTaskStore(),
+		jobs:            newJobStore(),
+		peerHTTPClient:  peernet.NewHTTPClient(),
+		webDAVLocks:     webdav.NewMemLS(),
+		loginLimiter:    newLoginLimiter(5, time.Minute),
+		evacuatingNodes: make(map[string]bool),
 	}
 	for _, opt := range opts {
 		opt(srv)

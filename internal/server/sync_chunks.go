@@ -99,7 +99,7 @@ func (s *Server) repairChunkReplicas(ctx context.Context, chunkID string, nodes 
 	return s.fetchChunkFromReplica(ctx, chunkID)
 }
 
-func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing map[string]struct{}, nodes []types.Node) (bool, error) {
+func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing map[string]struct{}, nodes []types.Node) (string, error) {
 	type candidate struct {
 		node           types.Node
 		availableBytes int64
@@ -108,7 +108,7 @@ func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing m
 	var candidates []candidate
 	chunk, err := s.store.GetChunk(chunkID)
 	if err != nil {
-		return false, fmt.Errorf("get chunk %s: %w", chunkID, err)
+		return "", fmt.Errorf("get chunk %s: %w", chunkID, err)
 	}
 	for _, n := range nodes {
 		if n.NodeID == s.cfg.NodeID || n.Status == "offline" || !n.Trusted || len(nodeDialAddresses(n)) == 0 {
@@ -124,7 +124,7 @@ func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing m
 		candidates = append(candidates, candidate{node: n, availableBytes: n.AvailableBytes, isDesktop: isDesktop})
 	}
 	if len(candidates) == 0 {
-		return false, nil
+		return "", nil
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].isDesktop != candidates[j].isDesktop {
@@ -136,9 +136,9 @@ func (s *Server) pushChunkToPeer(ctx context.Context, chunkID string, existing m
 		if err := s.storeChunkToPeer(ctx, c.node, chunkID); err != nil {
 			continue
 		}
-		return true, nil
+		return c.node.NodeID, nil
 	}
-	return false, fmt.Errorf("push chunk %s: all %d candidates rejected", chunkID, len(candidates))
+	return "", fmt.Errorf("push chunk %s: all %d candidates rejected", chunkID, len(candidates))
 }
 
 func (s *Server) fetchChunkFromReplica(ctx context.Context, chunkID string) error {

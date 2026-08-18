@@ -3,8 +3,10 @@ import { api } from "../api";
 import { formatBytes, formatLastSeen } from "../utils";
 import { EmptyState, InlineMessage, PageHeader, ProgressBar, Section, StatusBadge } from "../components/common";
 
-function NodeCard({ node }) {
+function NodeCard({ node, evacuation, evacuating, onEvacuate }) {
   const usedPct = node.total_bytes > 0 ? Math.round((node.used_bytes / node.total_bytes) * 100) : 0;
+  const safeToExit = evacuation?.safe_to_exit;
+  const blocked = evacuation?.state === "blocked";
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -24,6 +26,29 @@ function NodeCard({ node }) {
           <span>已用 {formatBytes(node.used_bytes)}</span>
           <span>总计 {formatBytes(node.total_bytes)}</span>
         </div>
+        {evacuation && (
+          <div className={`mt-3 rounded-lg p-3 ${safeToExit ? "bg-emerald-50 text-emerald-700" : blocked ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700"}`}>
+            <p className="font-semibold">
+              {safeToExit ? "可以安全退出" : blocked ? "暂时不能退出" : evacuating ? "正在准备安全退出" : "尚未准备退出"}
+            </p>
+            <p className="mt-1 leading-5">
+              {safeToExit
+                ? `本设备的 ${evacuation.total_chunks} 个数据块均已在其他设备留有安全副本。`
+                : blocked
+                  ? `还需要更多在线设备，当前仍有 ${evacuation.pending_chunks} 个数据块不能安全迁出。`
+                  : `已有 ${evacuation.safe_chunks}/${evacuation.total_chunks} 个数据块完成迁出。`}
+            </p>
+            {!safeToExit && (
+              <button
+                onClick={() => onEvacuate(node)}
+                disabled={evacuating || blocked}
+                className="mt-2 w-full rounded-md bg-white px-3 py-2 font-semibold shadow-sm ring-1 ring-current/15 hover:bg-white/70 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {evacuating ? "迁移中..." : blocked ? "需要更多在线设备" : "准备安全退出"}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -44,6 +69,9 @@ export default function NodesPage() {
   const [switchError, setSwitchError] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [scanMessage, setScanMessage] = useState(null);
+  const [evacuation, setEvacuation] = useState({});
+  const [evacuationJob, setEvacuationJob] = useState(null);
+  const [nodeActionMessage, setNodeActionMessage] = useState(null);
 
   const handleSwitch = async (e) => {
     e.preventDefault();
@@ -65,10 +93,33 @@ export default function NodesPage() {
     }
   };
 
-  const loadNodes = useCallback(() => {
-    api("/nodes").then((r) => { if (r.ok) setNodes(r.data || []); });
-    api("/join/pending").then((r) => { if (r.ok) setPendingJoins(r.data || []); });
+  const loadNodes = useCallback(async () => {
+    const [nodeResult, pendingResult, evacuationResult] = await Promise.all([
+      api("/nodes"),
+      api("/join/pending"),
+      api("/nodes/evacuation"),
+    ]);
+    if (nodeResult.ok) setNodes(nodeResult.data || []);
+    if (pendingResult.ok) setPendingJoins(pendingResult.data || []);
+    if (evacuationResult.ok) {
+      setEvacuation(Object.fromEntries((evacuationResult.data?.nodes || []).map((item) => [item.node_id, item])));
+    }
   }, []);
+
+  const evacuateNode = async (node) => {
+    setNodeActionMessage(null);
+    try {
+      const result = await api(`/nodes/${node.node_id}/evacuate`, { method: "POST" });
+      if (!result.ok) {
+        setNodeActionMessage({ tone: "error", text: result.error?.message || "无法开始迁移。" });
+        return;
+      }
+      setEvacuationJob({ id: result.data.id, nodeId: node.node_id });
+      setNodeActionMessage({ tone: "success", text: `正在为 ${node.name || node.node_id.slice(0, 8)} 准备安全退出。` });
+    } catch (error) {
+      setNodeActionMessage({ tone: "error", text: error.message || "无法开始迁移。" });
+    }
+  };
 
   const approveJoin = async (nodeId) => {
     try {
@@ -84,6 +135,25 @@ export default function NodesPage() {
     const id = setInterval(loadNodes, 3000);
     return () => clearInterval(id);
   }, [loadNodes]);
+
+  useEffect(() => {
+    if (!evacuationJob) return undefined;
+    const id = setInterval(async () => {
+      const result = await api(`/jobs/${evacuationJob.id}`);
+      if (!result.ok || !["done", "blocked", "failed"].includes(result.data?.status)) return;
+      clearInterval(id);
+      await loadNodes();
+      if (result.data.status === "done") {
+        setNodeActionMessage({ tone: "success", text: "迁移和校验完成，这台设备现在可以安全退出。" });
+      } else if (result.data.status === "blocked") {
+        setNodeActionMessage({ tone: "warning", text: "迁移尚未完成，请保持设备在线并检查其他节点。" });
+      } else {
+        setNodeActionMessage({ tone: "error", text: result.data.error || "迁移失败，请检查同步任务。" });
+      }
+      setEvacuationJob(null);
+    }, 2000);
+    return () => clearInterval(id);
+  }, [evacuationJob, loadNodes]);
 
   const totalBytes = nodes.reduce((s, n) => s + (n.total_bytes || 0), 0);
   const usedBytes = nodes.reduce((s, n) => s + (n.used_bytes || 0), 0);
@@ -128,6 +198,8 @@ export default function NodesPage() {
           </button>
         }
       />
+
+      {nodeActionMessage && <InlineMessage tone={nodeActionMessage.tone}>{nodeActionMessage.text}</InlineMessage>}
 
       <div className="grid gap-3 md:grid-cols-4">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -281,7 +353,15 @@ export default function NodesPage() {
       </Section>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {nodes.length > 0 ? nodes.map((n) => <NodeCard key={n.node_id} node={n} />) : (
+        {nodes.length > 0 ? nodes.map((n) => (
+          <NodeCard
+            key={n.node_id}
+            node={n}
+            evacuation={evacuation[n.node_id]}
+            evacuating={evacuationJob?.nodeId === n.node_id}
+            onEvacuate={evacuateNode}
+          />
+        )) : (
           <EmptyState title="还没有节点" description="创建存储池或加入已有存储池后，这里会显示设备。" />
         )}
       </div>

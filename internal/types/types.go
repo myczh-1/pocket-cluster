@@ -151,6 +151,7 @@ const (
 	JobRepairUnderReplicated JobKind = "repair_under_replicated"
 	JobIntegrityCheck        JobKind = "integrity_check"
 	JobPurgeRetainedData     JobKind = "purge_retained_data"
+	JobNodeEvacuation        JobKind = "node_evacuation"
 )
 
 type Job struct {

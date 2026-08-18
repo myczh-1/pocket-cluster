@@ -2,6 +2,37 @@ package server
 
 import "github.com/pocketcluster/agent/internal/types"
 
+func (s *Server) replicaReadinessForChunks(chunkIDs []string) types.ReplicaStatus {
+	status := s.replicaStatusForChunks(chunkIDs)
+	if s.HealthSummarySnapshot().LastScanAt.IsZero() {
+		return status
+	}
+	health := s.ChunkHealthSnapshot()
+	for _, chunkID := range chunkIDs {
+		detail, ok := health[chunkID]
+		if !ok {
+			return types.ReplicaUnavailable
+		}
+		if replicaStatusRank(detail.Status) > replicaStatusRank(status) {
+			status = detail.Status
+		}
+	}
+	return status
+}
+
+func replicaStatusRank(status types.ReplicaStatus) int {
+	switch status {
+	case types.ReplicaUnavailable:
+		return 3
+	case types.ReplicaRepairing:
+		return 2
+	case types.ReplicaUnderReplicated:
+		return 1
+	default:
+		return 0
+	}
+}
+
 func (s *Server) replicaStatusForChunks(chunkIDs []string) types.ReplicaStatus {
 	if len(chunkIDs) == 0 {
 		return types.ReplicaHealthy

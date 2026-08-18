@@ -282,7 +282,7 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
-		writeOK(w, http.StatusOK, map[string]any{"path": path, "entries": files})
+		writeOK(w, http.StatusOK, map[string]any{"path": path, "entries": s.filesWithReplicaStatus(files)})
 		return
 	}
 	files, err := s.store.ListFiles(path)
@@ -290,7 +290,24 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	writeOK(w, http.StatusOK, map[string]any{"path": path, "entries": files})
+	writeOK(w, http.StatusOK, map[string]any{"path": path, "entries": s.filesWithReplicaStatus(files)})
+}
+
+type fileListEntry struct {
+	types.File
+	ReplicaStatus types.ReplicaStatus `json:"replica_status,omitempty"`
+}
+
+func (s *Server) filesWithReplicaStatus(files []types.File) []fileListEntry {
+	entries := make([]fileListEntry, 0, len(files))
+	for _, file := range files {
+		entry := fileListEntry{File: file}
+		if !file.IsDir {
+			entry.ReplicaStatus = s.replicaReadinessForChunks(file.ChunkIDs)
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 func (s *Server) handleUploadProgress(w http.ResponseWriter, r *http.Request) {

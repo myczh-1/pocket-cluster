@@ -16,6 +16,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	mux.HandleFunc("POST /api/settings", s.handleUpdateSettings)
 	mux.HandleFunc("GET /api/nodes", s.handleListNodes)
+	mux.HandleFunc("GET /api/nodes/evacuation", s.handleListNodeEvacuation)
+	mux.HandleFunc("POST /api/nodes/{nodeId}/evacuate", s.handleEvacuateNode)
 	mux.HandleFunc("GET /api/nodes/discovered", s.handleListDiscovered)
 	mux.HandleFunc("POST /api/invites", s.handleCreateInvite)
 	mux.HandleFunc("POST /api/cluster", s.handleCreateCluster)
