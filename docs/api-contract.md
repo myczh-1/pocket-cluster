@@ -12,7 +12,7 @@ All responses use `Content-Type: application/json` unless noted otherwise.
 
 All requests between nodes must include a signature header for authentication.
 
-## Current v0.1 Scope
+## Current v0.8 Scope
 
 This contract describes the current MVP snapshot that backs the existing Web UI and WebDAV flow.
 
@@ -21,13 +21,14 @@ This contract describes the current MVP snapshot that backs the existing Web UI 
 - Pool bootstrap, invite join, authentication, file browsing, upload, download, delete, and rename
 - Peer-to-peer event sync, chunk transfer, snapshot bootstrap, and basic replica health visibility
 - WebDAV access under `/dav/` using the same pool credentials as the Web UI
+- File-level replica readiness and verified node evacuation
 
 ### Experimental / Rough Edges
 
 - Android interoperability and background reliability remain environment-dependent
 - Operator-triggered jobs (rescan, repair, integrity check) are available via `/api/jobs/*` but the task model may still evolve
 
-### Explicitly Out Of Scope For v0.1
+### Explicitly Out Of Scope For v0.8
 
 - Public Internet relay, NAT traversal, or cloud-hosted coordination
 - Multi-user permissions, ACLs, or sharing APIs
@@ -83,8 +84,7 @@ Returns this node's own info.
     "total_bytes": 500000000000,
     "used_bytes": 120000000000,
     "available_bytes": 380000000000,
-    "status": "online",
-    "version": "0.7.0"
+    "status": "online"
   }
 }
 ```
@@ -124,6 +124,36 @@ Returns all known nodes.
   ]
 }
 ```
+
+### GET /api/nodes/evacuation
+
+Returns the safe-exit readiness of every trusted node. A node is safe to exit only when every Chunk it holds has two verified copies on other online nodes.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "nodes": [
+      {
+        "node_id": "nodeA",
+        "state": "needs_migration",
+        "total_chunks": 120,
+        "safe_chunks": 96,
+        "pending_chunks": 24,
+        "required_other_replicas": 2,
+        "eligible_destination_nodes": 2,
+        "safe_to_exit": false
+      }
+    ]
+  }
+}
+```
+
+### POST /api/nodes/{nodeId}/evacuate
+
+Starts a background job that copies the target node's Chunks to other online nodes. The job never deletes the target node or its local data.
+
+Returns `202 Accepted` with a normal job record. Poll `GET /api/jobs/{jobId}` and then refresh `GET /api/nodes/evacuation`.
 
 ### POST /api/invites
 

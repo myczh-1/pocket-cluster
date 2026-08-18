@@ -111,8 +111,6 @@ class AgentService : Service() {
                 return
             }
 
-            addAbiCompatibilityWarning(binary)
-
             val dataDir = File(filesDir, "pocketcluster")
             dataDir.mkdirs()
 
@@ -321,20 +319,6 @@ class AgentService : Service() {
         multicastLock = null
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-    }
-
-    private fun addAbiCompatibilityWarning(binary: File) {
-        val primaryAbi = Build.SUPPORTED_ABIS.firstOrNull() ?: return
-        val expectedDir = when (primaryAbi) {
-            "arm64-v8a" -> "/arm64-v8a/"
-            "x86_64" -> "/x86_64/"
-            "x86" -> "/x86/"
-            "armeabi-v7a" -> "/armeabi-v7a/"
-            else -> "/$primaryAbi/"
-        }
-        if (!binary.absolutePath.contains(expectedDir)) {
-            addLog("WARNING: Device primary ABI is $primaryAbi but binary is from a different ABI directory. Performance or stability may be affected.")
-        }
     }
 
     private fun fatalExitMessage(exitCode: Int?): String? {

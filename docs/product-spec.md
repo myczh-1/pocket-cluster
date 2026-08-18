@@ -125,7 +125,7 @@ PocketCluster 是一个客户端 + Agent 形态的家庭闲置设备资源池产
 
 ## MVP Scope
 
-### Current v0.1 Snapshot - Supported
+### Current v0.8 Snapshot - Supported
 
 - Windows Agent
 - Mac Agent
@@ -145,23 +145,24 @@ PocketCluster 是一个客户端 + Agent 形态的家庭闲置设备资源池产
 - 节点离线恢复
 - Syncthing 式冲突处理
 - Health 汇总、Chunk 详情与基础修复状态展示
+- 文件列表展示副本是否已经就绪
+- 设备安全退出前自动创建并校验替代副本
 
-### Current v0.1 Snapshot - Experimental / Rough
+### Current v0.8 Snapshot - Experimental / Rough
 
 - Android 后台稳定性仍依赖前台服务、电池设置和厂商 ROM 行为
-- Health 视图可以帮助排障，但尚未形成完整的文件级可信度面板
-- 自动副本修复已存在，但显式的任务列表、手动重扫和修复作业接口还未提供
+- 文件页已经显示副本就绪状态，复杂故障仍需进入 Health 与同步任务排查
+- 自动副本修复、显式任务列表、手动重扫和修复作业接口已经可用
 - WebDAV 主要面向局域网客户端，兼容性矩阵仍待补齐
 
-### Explicitly Not In Current v0.1
+### Explicitly Not In Current v0.8
 
 - 本地文件浏览与迁移到资源池工作流
 - SMB
 - 自动均衡
-- 自动迁移
+- 通用自动均衡与容量驱动迁移
 - Android 电池检测
 - 节点评级
-- 独立的同步任务页面
 - Chunk 可视化
 - 权限系统
 - 纠删码
@@ -174,7 +175,7 @@ PocketCluster 是一个客户端 + Agent 形态的家庭闲置设备资源池产
 
 ## Data / Content
 
-当前 v0.1 需要处理和同步的数据包括：
+当前 v0.8 需要处理和同步的数据包括：
 
 - 资源池信息
 - 节点信息

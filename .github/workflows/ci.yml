@@ -22,6 +22,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
+      - name: Check version consistency
+        run: scripts/check-version-consistency.sh
+
       - name: Build web UI
         run: |
           cd web
@@ -37,6 +40,7 @@ jobs:
       - name: Run loopback multi-node E2E scenarios
         run: |
           scripts/e2e/two-node-basic.sh
+          scripts/e2e/webdav-smoke-test.sh
           scripts/e2e/three-node-offline-delete.sh
           scripts/e2e/three-node-offline-rename.sh
           scripts/e2e/three-node-offline-concurrent-update.sh

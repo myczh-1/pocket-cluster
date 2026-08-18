@@ -1,6 +1,6 @@
 # Reliability Test Report
 
-This document records scenario-based validation for PocketCluster `v0.2.x`.
+This document records scenario-based validation for PocketCluster `v0.8.x`.
 
 It is not a marketing artifact. Its purpose is to answer:
 
@@ -12,12 +12,12 @@ It is not a marketing artifact. Its purpose is to answer:
 
 Fill this section for each run:
 
-- Date: 2026-06-29
-- Commit: local working tree after `b65fb45` plus `v0.2.4` reliability scripts/docs changes
-- OS / hardware: macOS local development machine
+- Date: 2026-08-18
+- Commit: `61a0b4e` plus the v0.8 readiness and safe-exit work
+- OS / hardware: macOS development machine and Xiaomi Android 16 phone
 - Agent binary source: `go build ./cmd/agent`
-- Pool topology: loopback-hosted one-node and two-node local agents
-- Network assumptions: local-only validation on `127.0.0.1`
+- Pool topology: loopback-hosted multi-node agents plus a real Wi-Fi desktop/Android pool
+- Network assumptions: loopback automation and same-LAN Wi-Fi validation
 
 ## Scenario Matrix
 
@@ -30,7 +30,9 @@ Fill this section for each run:
 | Three-node offline restore | Verify trash restore converges after an offline node recovers | `scripts/e2e/three-node-offline-restore.sh` | Passed locally | directory tree and retained chunks |
 | Three-node version restore | Verify superseded content restore converges after an offline node recovers | `scripts/e2e/three-node-offline-version-restore.sh` | Passed locally | bounded history retention and lineage |
 | WebDAV smoke | Verify upload, list, download, delete on one node | `scripts/e2e/webdav-smoke-test.sh` | Passed locally | single-node local validation |
-| Android manual | Verify Android join and carry behavior | `scripts/e2e/android-manual-test.md` | Pending |  |
+| Android manual | Verify Android join, background survival, native restart, discovery, and bidirectional replication | real device plus `scripts/e2e/android-manual-test.md` | Passed | Xiaomi Android 16 on Wi-Fi |
+| Android connected smoke | Verify install/start and agent health over ADB | `scripts/e2e/android-connected-smoke.sh` | Available | connected-device regression helper |
+| Node safe exit | Verify one node's chunk is copied and verified on two other nodes | `go test ./internal/server` | Passed locally | three real HTTP agent instances in test |
 
 ## Latest Run Summary
 
@@ -115,9 +117,14 @@ Fill this section for each run:
 
 ### Android manual
 
-- Status:
+- Status: Passed on one Xiaomi Android 16 device
 - Evidence:
+  - upgrade install preserved the node and pool state
+  - the foreground agent survived screen-off/background use and recovered from a native-process restart
+  - Android and desktop discovered each other through mDNS on real Wi-Fi
+  - file replication worked in both directions and remained readable after the source node stopped
 - Failure mode if any:
+  - the initial Android mDNS path did not work; the Android NSD bridge now performs native discovery and registration
 
 ## Known Reliability Gaps
 

@@ -2,158 +2,58 @@
 
 ## Project Direction
 
-PocketCluster is currently optimizing for one thing: a trustworthy local storage pool built from existing devices on reachable local networks.
+PocketCluster is a LAN-first storage pool built from devices the user already owns. The current priority is trustworthy daily use, not expansion into a general cloud-storage product.
 
-The next phase is not about expanding into a broader cloud-storage product. It is about making the current pool understandable and safe enough that an advanced user can trust it with real files.
+Principles:
 
-Current principles:
+- Keep the no-leader, no-central-server model.
+- Keep the reachable-network scope.
+- Prefer visible safety and repairability over new protocol surface.
+- Treat Android as an advanced-user node with platform constraints.
 
-- Keep the no-leader, no-central-server model
-- Keep LAN-first scope
-- Prefer observability and repairability over new feature surface
-- Treat Android as a constrained advanced-user target, not as a background-reliable mobile product
+## Current v0.8
 
-## v0.1.x - MVP Stabilization
+The storage and recovery core is implemented:
 
-Goal: freeze the current MVP boundary and describe it accurately.
+- mDNS discovery on desktop and Android
+- authenticated pool join
+- chunked storage with two-replica target
+- metadata convergence and deterministic conflict handling
+- offline delete, rename, trash restore, and version restore
+- WebDAV access
+- health, repair, integrity, retention, and sync-task views
+- file-level replica readiness in the main file view
+- verified evacuation of a node before it is retired
+- loopback multi-node and WebDAV regression coverage
+- connected-device Android smoke helper
+- signed Android release workflow and release checksums
 
-Scope:
+The v0.8 release boundary is complete when the full automated suite passes and the connected Android smoke test has been rerun with the release candidate.
 
-- Align `README.md`, `README_zh.md`, `docs/api-contract.md`, `docs/product-spec.md`, and `docs/feature-list.md`
-- Clarify what is supported, experimental, and explicitly not supported
-- Make WebDAV, Android, dual replicas, and health visibility status consistent across docs
-- Cut `v0.1.0` only after the documentation matches actual behavior
+## Next: v0.9 Daily Operation
 
-Exit criteria:
+Only pursue these after v0.8 has been used with real files:
 
-- No major contradictions between README, product spec, feature list, and API contract
-- A new user can tell whether the current version fits their use case
+- one-command desktop installation and background service setup on Windows and macOS
+- clearer recovery actions for blocked node evacuation
+- broader Finder, Windows Explorer, and Android WebDAV compatibility evidence
+- guided upgrade and rollback instructions
+- focused fixes driven by dogfooding evidence
 
-## v0.2.0 - Trustworthy Local Storage Pool
+## v1 Decision
 
-Goal: answer two user questions clearly:
+Consider v1 after a period of normal use confirms that:
 
-- Are my files safe right now?
-- If not, what is the system doing about it?
-
-### v0.2.1 Documentation and State Model
-
-Goal: define one shared language before building more UI or operations.
-
-Canonical health states:
-
-- `healthy`
-- `under_replicated`
-- `unavailable`
-- `repairing`
-
-Canonical sync task states:
-
-- `pending`
-- `running`
-- `retrying`
-- `blocked`
-- `failed`
-- `done`
-
-Notes:
-
-- `orphan` should be treated as a diagnostic finding, not a top-level health state
-- `missing` should be represented through `unavailable` unless a lower-level diagnostic report needs more detail
-
-### v0.2.2 Observability
-
-Goal: expose the current state of the pool without forcing users to infer it from raw logs.
-
-Primary surfaces:
-
-- `Health` page
-- `Sync Tasks` page
-
-Health should answer:
-
-- Is a file currently readable?
-- Is it fully replicated?
-- Which files are at risk?
-- Which nodes are contributing to that risk?
-
-Sync Tasks should answer:
-
-- What is currently syncing?
-- What is currently repairing?
-- What is waiting to retry?
-- What is blocked and why?
-
-### v0.2.3 Repair and Operations
-
-Goal: unify manual and automatic repair entry points behind one backend action model.
-
-Initial job types:
-
-- `rescan`
-- `repair_under_replicated`
-- `integrity_check`
-
-Target API shape:
-
-- `POST /api/jobs/rescan`
-- `POST /api/jobs/repair-under-replicated`
-- `POST /api/jobs/integrity-check`
-- `GET /api/jobs`
-- `GET /api/jobs/{jobId}`
-
-The same backend model should be reusable from:
-
-- Web UI
-- CLI
-- background scheduling
-
-### v0.2.4 Reliability Validation
-
-Goal: prove trustworthy behavior with scenario-based testing instead of only feature completeness.
-
-Minimum validation areas:
-
-- two-node upload and read-after-node-loss
-- three-node replica recovery
-- WebDAV smoke coverage
-- Android manual validation
-
-Expected artifacts:
-
-- `scripts/e2e/`
-- `docs/reliability-test-report.md`
-- `docs/troubleshooting.md`
-- `docs/limitations.md`
-
-## v0.3.0 - Usability
-
-Reserved for later. Likely focus:
-
-- smoother onboarding
-- better Android guidance
-- better mount/setup guidance
-- simpler diagnostics for non-authors
-
-## v0.4.0 - Project Presentation
-
-Reserved for later. Likely focus:
-
-- screenshots
-- short demo video
-- architecture diagram
-- polished reliability evidence
+- users can tell when a file is safe without opening diagnostics
+- a device can be retired without losing current, trashed, or versioned content
+- upgrades preserve pool identity and stored data
+- failures become visible and recoverable instead of silent
 
 ## Explicitly Not Planned Yet
 
-The following are intentionally outside the current roadmap:
-
-- public Internet relay
-- NAT traversal
-- multi-user permissions
-- ACLs
-- share links
-- automatic balancing
+- public Internet relay or NAT traversal
+- multi-user permissions, ACLs, or share links
+- SMB
+- automatic balancing or node scoring
 - erasure coding
-- Raft or leader-based coordination
-- central metadata index or control plane
+- leader-based coordination or a central control plane

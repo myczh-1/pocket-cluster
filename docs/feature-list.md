@@ -1,6 +1,6 @@
 # Feature List
 
-## Current v0.1 Snapshot
+## Current v0.8 Snapshot
 
 ### Supported
 
@@ -12,6 +12,8 @@
 - Chunk splitting, SHA256 addressing, dual replicas, metadata sync, and offline recovery
 - WebDAV access for standard desktop and Android clients
 - Basic advanced diagnostics for node status, replica health, and repair progress
+- File-level replica readiness in the main file view
+- Verified node evacuation before a device is retired
 
 ### Experimental / Rough
 
@@ -20,7 +22,7 @@
 - Health visibility beyond chunk-focused diagnosis
 - Operator-triggered jobs (rescan, repair, integrity check) with sync task visibility, still maturing
 
-### Explicitly Not In Current v0.1
+### Explicitly Not In Current v0.8
 
 - Local file browser and move-to-pool workflow as a primary supported feature
 - Public Internet relay or NAT traversal
@@ -232,13 +234,14 @@ Scope note: 普通上传是网盘式上传，只把用户选择的文件内容�
   - [ ] 系统可以识别明显不均衡的节点容量。
   - [ ] 系统可以在不破坏双副本的前提下调整副本位置。
 
-### 3. Automatic Migration
+### 3. Safe Node Exit
 
-- User story: 作为用户，我希望节点空间不足或准备下线时系统自动迁移数据。
-- Description: 将副本从风险节点迁移到其他节点。
+- User story: 作为用户，我希望设备准备永久停用时，系统先把数据安全迁移出去。
+- Description: 将目标节点的 Chunk 复制到至少两个其他在线节点，完成现场校验后才允许用户安全退出。
 - Acceptance criteria:
-  - [ ] 用户可以标记节点准备退出。
-  - [ ] 系统可以为该节点上的 Chunk 创建替代副本。
+  - [x] 用户可以启动节点安全退出准备。
+  - [x] 系统可以为该节点上的 Chunk 创建替代副本。
+  - [x] 每个 Chunk 在两个其他在线节点完成验证后才显示可以安全退出。
 
 ### 4. Android Battery Detection
 

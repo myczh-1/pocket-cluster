@@ -36,7 +36,10 @@ type snapshotCluster struct {
 func (s *Server) StartSnapshotScheduler(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-	var lastSnapshotAt time.Time
+	lastSnapshotAt := time.Now()
+	if latest, err := s.store.LoadLatestSnapshot(); err == nil && latest != nil {
+		lastSnapshotAt = latest.CreatedAt
+	}
 	for {
 		select {
 		case <-ctx.Done():

@@ -23,6 +23,8 @@ No NAS. No cloud. No central server. Just your devices.
 - **Invite Join** — approve new nodes from any existing member, or use one-time invite tokens
 - **Recoverable Trash** — restore deleted files or complete directory trees during the retention window
 - **Version History** — restore recently superseded file content without rewriting version lineage
+- **Replica Readiness** — see whether each file is still copying or already safe across devices
+- **Safe Node Exit** — copy and verify a device's chunks elsewhere before shutting it down permanently
 - **Cross-Platform** — single static binary for each platform, no runtime dependencies
 
 ## Example Use Cases
@@ -38,7 +40,7 @@ No NAS. No cloud. No central server. Just your devices.
 - Portable sync works only after the carrying device, such as a phone, has finished receiving the needed metadata and chunk replicas before leaving the previous network.
 - Android is still geek-mode: background execution depends on foreground service, battery settings, vendor ROM behavior, and the device staying online long enough to sync.
 
-## Current v0.1 Snapshot
+## Current v0.8 Snapshot
 
 ### Supported
 
@@ -51,6 +53,8 @@ No NAS. No cloud. No central server. Just your devices.
 - WebDAV mount from standard desktop and Android WebDAV clients
 - Health visibility for replica summary, chunk detail, file/node risk, and sync task tracking
 - Operator-triggered jobs: rescan, repair under-replicated, and integrity check (chunk hash verification)
+- File-level replica readiness in the main file view
+- Verified safe-exit preparation for retiring a node
 
 ### Experimental / Rough Edges
 
@@ -69,7 +73,7 @@ No NAS. No cloud. No central server. Just your devices.
 
 ### Download
 
-Grab the latest binary for your platform from [Releases](#).
+Grab the latest binary for your platform from [Releases](https://github.com/myczh-1/pocket-cluster/releases).
 
 | Platform | Binary |
 |----------|--------|
@@ -93,7 +97,7 @@ open http://localhost:7788
 1. **Create a pool** — set a username and password
 2. **Add more devices** — run the agent on another machine, open the Web UI, enter the pool address + credentials
 3. **Approve** — the first device shows a pending join request, click Approve
-4. **Done** — files uploaded to any node are replicated across the pool
+4. **Wait for readiness** — keep the source online until the file shows `Replica ready`
 
 ### WebDAV
 
@@ -165,6 +169,7 @@ Scenario-based E2E scripts live in `scripts/e2e/` and cover:
 - **Three-node version restore** — restore superseded file content while one node is offline, then verify all nodes converge (`three-node-offline-version-restore.sh`)
 - **WebDAV smoke** — upload, list, download, delete (`webdav-smoke-test.sh`)
 - **Android manual** — join and carry checklist (`android-manual-test.md`)
+- **Android connected smoke** — install, start, forward the agent port, and verify health on a connected device (`android-connected-smoke.sh`)
 
 Results and known gaps are recorded in [docs/reliability-test-report.md](docs/reliability-test-report.md). See also [docs/troubleshooting.md](docs/troubleshooting.md) and [docs/limitations.md](docs/limitations.md).
 

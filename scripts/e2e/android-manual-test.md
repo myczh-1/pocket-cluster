@@ -1,5 +1,7 @@
 # Android Manual Test
 
+For the repeatable install/start/health portion, run `scripts/e2e/android-connected-smoke.sh` with one authorized device attached. The scenarios below cover behavior that still needs a real LAN and user-visible device state.
+
 This checklist is for validating the current advanced-user Android flow in a real local-network pool.
 
 ## Environment
