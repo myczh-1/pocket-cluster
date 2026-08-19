@@ -32,8 +32,8 @@ function FileCard({ file, onDownload, onDelete, onRename, onPreview, onHistory }
           {file.is_dir ? "目录" : "文件"}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
-            <p className="truncate text-sm font-semibold text-slate-950">{file.name}</p>
+          <div className="flex w-full min-w-0 flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <p className="w-full min-w-0 max-w-full truncate text-sm font-semibold text-slate-950 sm:flex-1">{file.name}</p>
             {!file.is_dir && <ReplicaReadiness status={file.replica_status} />}
           </div>
           <p className="truncate text-xs text-slate-500">
